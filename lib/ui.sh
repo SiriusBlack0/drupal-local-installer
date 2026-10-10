@@ -917,46 +917,53 @@ if [ "$DATABASE_ENGINE" != "sqlite" ]; then
     prompt_database_password
 fi
 
-# --------------------------------------------------
 # Final configuration summary
 # --------------------------------------------------
 
-while true; do
-    echo
-    echo "======================================"
-    echo "        Project configuration"
-    echo "======================================"
-    echo
-    echo "Project:  $PROJECT_NAME"
-    echo "Machine:  $PROJECT_MACHINE_NAME"
-    echo "Drupal:   $DRUPAL_VERSION"
-    echo "PHP:      $PHP_VERSION [$PHP_STATUS]"
-    echo "Database: $DATABASE_ENGINE $DATABASE_VERSION [$DATABASE_STATUS]"
+confirm_installation() {
+    while true; do
+        echo
+        echo "======================================"
+        echo "        Project configuration"
+        echo "======================================"
+        echo
+        echo "Project:  $PROJECT_NAME"
+        echo "Machine:  $PROJECT_MACHINE_NAME"
+        echo "Drupal:   $DRUPAL_VERSION"
+        echo "PHP:      $PHP_VERSION [$PHP_STATUS]"
+        echo "Database: $DATABASE_ENGINE $DATABASE_VERSION [$DATABASE_STATUS]"
 
-    if [ "$DATABASE_ENGINE" = "sqlite" ]; then
-        echo "DB File:  $SQLITE_DATABASE_PATH"
-    else
-        echo "DB Name:  $DATABASE_NAME"
-        echo "DB User:  $DATABASE_USER"
-    fi
+        if [ "$DATABASE_ENGINE" = "sqlite" ]; then
+            echo "DB File:  $SQLITE_DATABASE_PATH"
+        else
+            echo "DB Name:  $DATABASE_NAME"
+            echo "DB User:  $DATABASE_USER"
+        fi
 
-    echo
-    echo "======================================"
-    echo
+        echo
+        echo "======================================"
+        echo
 
-    read -r -p "Proceed with installation? [Y/n]: " PROCEED_CHOICE
-    case "$PROCEED_CHOICE" in
-        y|Y|"")
-            break
-            ;;
-        n|N)
-            echo "Installation cancelled."
+        if ! read -r -p "Proceed with installation? [Y/n]: " PROCEED_CHOICE; then
+            echo
+            echo "Input cancelled."
             exit 0
-            ;;
-        *)
-            echo "Please enter y or n."
-            ;;
-    esac
-done
+        fi
 
+        case "$PROCEED_CHOICE" in
+            y|Y|"")
+                break
+                ;;
+            n|N)
+                echo "Installation cancelled."
+                exit 0
+                ;;
+            *)
+                echo "Please enter y or n."
+                ;;
+        esac
+    done
+}
+
+confirm_installation
 
