@@ -12,29 +12,36 @@
 # Project name
 # --------------------------------------------------
 
-PROJECT_NAME_PATTERN='^[a-zA-Z0-9][a-zA-Z0-9 _-]*$'
+prompt_project_name() {
+    PROJECT_NAME_PATTERN='^[a-zA-Z0-9][a-zA-Z0-9 _-]*$'
 
-while true; do
+    while true; do
 
-    read -r -p "Project name: " PROJECT_NAME
+        if ! read -r -p "Project name: " PROJECT_NAME; then
+            echo "Input cancelled."
+            exit 0
+        fi
 
-    if [ -z "$PROJECT_NAME" ]; then
-        echo "Project name cannot be empty."
-        continue
-    fi
+        if [ -z "$PROJECT_NAME" ]; then
+            echo "Project name cannot be empty."
+            continue
+        fi
 
-    if ! [[ "$PROJECT_NAME" =~ $PROJECT_NAME_PATTERN ]]; then
-        echo "Invalid project name."
-        echo "Use Latin letters, numbers, spaces, underscores or hyphens."
-        echo "The name must start with a letter or number."
-        continue
-    fi
+        if ! [[ "$PROJECT_NAME" =~ $PROJECT_NAME_PATTERN ]]; then
+            echo "Invalid project name."
+            echo "Use Latin letters, numbers, spaces, underscores or hyphens."
+            echo "The name must start with a letter or number."
+            continue
+        fi
 
-    break
+        break
 
-done
+    done
 
-PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+    PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+}
+
+prompt_project_name
 
 
 # --------------------------------------------------
