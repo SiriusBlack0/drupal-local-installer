@@ -14,7 +14,7 @@ bash tests/syntax.sh
 
 echo
 echo "[2/2] ShellCheck"
-shellcheck -S style install.sh lib/*.sh
+shellcheck -S style -x install.sh
 echo "[OK] ShellCheck passed."
 
 echo
