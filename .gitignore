@@ -1,0 +1,24 @@
+# Local backups
+*.backup
+*.bak
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Logs
+*.log
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
