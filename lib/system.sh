@@ -216,11 +216,13 @@ get_ubuntu_codename() {
     [ -f /etc/os-release ] || return 1
 
     distro_id=$(
+        # shellcheck source=/dev/null
         . /etc/os-release
         echo "$ID"
     )
 
     codename=$(
+        # shellcheck source=/dev/null
         . /etc/os-release
         echo "$VERSION_CODENAME"
     )
@@ -238,6 +240,7 @@ get_ubuntu_codename() {
 
 get_ubuntu_version() {
     (
+        # shellcheck source=/dev/null
         . /etc/os-release
 
         if [ "$ID" != "ubuntu" ] || [ -z "$VERSION_ID" ]; then
@@ -252,6 +255,7 @@ get_linux_distribution() {
     (
         [ -f /etc/os-release ] || return 1
 
+        # shellcheck source=/dev/null
         . /etc/os-release
 
         printf 'Distribution: %s\n' "$ID"
@@ -266,6 +270,7 @@ is_ubuntu_system() {
     [ -f /etc/os-release ] || return 1
 
     distro_id=$(
+        # shellcheck source=/dev/null
         . /etc/os-release
         echo "$ID"
     )
@@ -433,7 +438,7 @@ get_mismatched_ubuntu_suites() {
     local ubuntu_codename
     local suite
 
-    ubuntu_codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+    ubuntu_codename="$(get_ubuntu_codename)" || return 1
 
     while IFS= read -r suite; do
         case "$suite" in
