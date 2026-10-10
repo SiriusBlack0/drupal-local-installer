@@ -749,16 +749,7 @@ fi
 
 
 
-SUGGESTED_DATABASE_NAME="$(
-
-    get_project_database_name "$PROJECT_NAME"
-
-)"
-
-
-
-if [ "$DATABASE_ENGINE" = "sqlite" ]; then
-
+configure_sqlite_database() {
     DATABASE_NAME=""
     DATABASE_USER=""
     DATABASE_PASSWORD=""
@@ -767,11 +758,14 @@ if [ "$DATABASE_ENGINE" = "sqlite" ]; then
     echo
     echo "SQLite selected."
     echo "SQLite does not require a database server, user, or password."
+}
 
-else
+prompt_database_name() {
+    SUGGESTED_DATABASE_NAME="$(
+        get_project_database_name "$PROJECT_NAME"
+    )"
 
     while true; do
-
         echo
         echo "Database name:"
         echo
@@ -779,17 +773,21 @@ else
         echo "2) Enter custom database name"
         echo
 
-        read -r -p "Select [1-2]: " DATABASE_NAME_CHOICE
+        if ! read -r -p "Select [1-2]: " DATABASE_NAME_CHOICE; then
+            echo "Input cancelled."
+            exit 0
+        fi
 
         case "$DATABASE_NAME_CHOICE" in
-
             1)
                 DATABASE_NAME="$SUGGESTED_DATABASE_NAME"
                 break
                 ;;
-
             2)
-                read -r -p "Enter database name: " DATABASE_NAME
+                if ! read -r -p "Enter database name: " DATABASE_NAME; then
+                    echo "Input cancelled."
+                    exit 0
+                fi
 
                 if ! is_valid_database_name "$DATABASE_NAME"; then
                     echo "Invalid database name."
@@ -799,17 +797,18 @@ else
 
                 break
                 ;;
-
             *)
                 echo "Invalid selection. Please choose 1 or 2."
                 ;;
-
         esac
-
     done
+}
 
+if [ "$DATABASE_ENGINE" = "sqlite" ]; then
+    configure_sqlite_database
+else
+    prompt_database_name
 fi
-
 
 
 # --------------------------------------------------
@@ -819,15 +818,12 @@ fi
 # --------------------------------------------------
 
 
-
-if [ "$DATABASE_ENGINE" != "sqlite" ]; then
-
+prompt_database_user() {
     SUGGESTED_DATABASE_USER="$(
         get_project_database_user "$PROJECT_NAME"
     )"
 
     while true; do
-
         echo
         echo "Database user:"
         echo
@@ -835,17 +831,22 @@ if [ "$DATABASE_ENGINE" != "sqlite" ]; then
         echo "2) Enter custom database user"
         echo
 
-        read -r -p "Select [1-2]: " DATABASE_USER_CHOICE
+        if ! read -r -p "Select [1-2]: " DATABASE_USER_CHOICE; then
+            echo "Input cancelled."
+            exit 0
+        fi
 
         case "$DATABASE_USER_CHOICE" in
-
             1)
                 DATABASE_USER="$SUGGESTED_DATABASE_USER"
                 break
                 ;;
 
             2)
-                read -r -p "Enter database user: " DATABASE_USER
+                if ! read -r -p "Enter database user: " DATABASE_USER; then
+                    echo "Input cancelled."
+                    exit 0
+                fi
 
                 if ! is_valid_database_user "$DATABASE_USER"; then
                     echo "Invalid database user."
@@ -859,13 +860,13 @@ if [ "$DATABASE_ENGINE" != "sqlite" ]; then
             *)
                 echo "Invalid selection. Please choose 1 or 2."
                 ;;
-
         esac
-
     done
+}
 
+if [ "$DATABASE_ENGINE" != "sqlite" ]; then
+    prompt_database_user
 fi
-
 
 
 # --------------------------------------------------
@@ -874,17 +875,16 @@ fi
 
 # --------------------------------------------------
 
-
-if [ "$DATABASE_ENGINE" != "sqlite" ]; then
-
+prompt_database_password() {
     while true; do
-
-        echo
-        read -r -s -p "Database password: " DATABASE_PASSWORD
         echo
 
-        # Validate the first password before asking
-        # the user to type it again.
+        if ! read -r -s -p "Database password: " DATABASE_PASSWORD; then
+            echo
+            echo "Input cancelled."
+            exit 0
+        fi
+        echo
 
         if [ -z "$DATABASE_PASSWORD" ]; then
             echo "Database password cannot be empty."
@@ -897,7 +897,11 @@ if [ "$DATABASE_ENGINE" != "sqlite" ]; then
             continue
         fi
 
-        read -r -s -p "Confirm database password: " DATABASE_PASSWORD_CONFIRM
+        if ! read -r -s -p "Confirm database password: " DATABASE_PASSWORD_CONFIRM; then
+            echo
+            echo "Input cancelled."
+            exit 0
+        fi
         echo
 
         if [ "$DATABASE_PASSWORD" != "$DATABASE_PASSWORD_CONFIRM" ]; then
@@ -906,9 +910,11 @@ if [ "$DATABASE_ENGINE" != "sqlite" ]; then
         fi
 
         break
-
     done
+}
 
+if [ "$DATABASE_ENGINE" != "sqlite" ]; then
+    prompt_database_password
 fi
 
 # --------------------------------------------------
