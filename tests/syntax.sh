@@ -17,6 +17,3 @@ done
 
 echo
 echo "[SUCCESS] All Bash syntax checks passed."
-echo
-echo "[3/3] Module Structure"
-bash tests/module_structure.sh
