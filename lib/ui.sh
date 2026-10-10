@@ -658,85 +658,59 @@ prompt_php_version
 
 echo
 
-echo "Detecting compatible databases..."
-
-
-
-DRUPAL_MAJOR="${DRUPAL_VERSION%%.*}"
-
-
-
-mapfile -t DATABASE_OPTIONS < <(
-
-    get_compatible_database_options "$DRUPAL_MAJOR"
-
-)
-
-
-
-if [ "${#DATABASE_OPTIONS[@]}" -eq 0 ]; then
-
-    echo "No compatible database options were found."
-
-    exit 1
-
-fi
-
-
-
-
-
-while true; do
-
-
-
+detect_compatible_databases() {
     echo
+    echo "Detecting compatible databases..."
 
-    echo "Compatible databases:"
+    DRUPAL_MAJOR="${DRUPAL_VERSION%%.*}"
 
-    echo
+    mapfile -t DATABASE_OPTIONS < <(
+        get_compatible_database_options "$DRUPAL_MAJOR"
+    )
 
-
-
-    for i in "${!DATABASE_OPTIONS[@]}"; do
-
-        IFS='|' read -r engine version status <<< "${DATABASE_OPTIONS[$i]}"
-        echo "$((i + 1))) $engine $version [$status]"
-
-    done
-
-
-
-    echo
-
-    read -r -p "Select database: " DATABASE_CHOICE
-
-
-
-    if ! [[ "$DATABASE_CHOICE" =~ ^[0-9]+$ ]] ||
-
-       (( DATABASE_CHOICE < 1 ||
-
-          DATABASE_CHOICE > ${#DATABASE_OPTIONS[@]} )); then
-
-
-
-        echo "Invalid selection. Try again."
-
-        continue
-
-
-
+    if [ "${#DATABASE_OPTIONS[@]}" -eq 0 ]; then
+        echo "No compatible database options were found."
+        exit 1
     fi
+}
 
-    IFS='|' read -r DATABASE_ENGINE DATABASE_VERSION DATABASE_STATUS <<< "${DATABASE_OPTIONS[$((DATABASE_CHOICE - 1))]}"
-    
-    break
+prompt_database_selection() {
+    while true; do
+        echo
+        echo "Compatible databases:"
+        echo
 
-done
+        for i in "${!DATABASE_OPTIONS[@]}"; do
+            IFS='|' read -r engine version status <<< "${DATABASE_OPTIONS[$i]}"
+            echo "$((i + 1))) $engine $version [$status]"
+        done
 
+        echo
 
+        if ! read -r -p "Select database: " DATABASE_CHOICE; then
+            echo "Input cancelled."
+            exit 0
+        fi
 
+        if ! [[ "$DATABASE_CHOICE" =~ ^[0-9]+$ ]] ||
+           (( DATABASE_CHOICE < 1 ||
+              DATABASE_CHOICE > ${#DATABASE_OPTIONS[@]} )); then
+            echo "Invalid selection. Try again."
+            continue
+        fi
+
+        IFS='|' read -r \
+            DATABASE_ENGINE \
+            DATABASE_VERSION \
+            DATABASE_STATUS \
+            <<< "${DATABASE_OPTIONS[$((DATABASE_CHOICE - 1))]}"
+
+        break
+    done
+}
+
+detect_compatible_databases
+prompt_database_selection
 
 
 # --------------------------------------------------
