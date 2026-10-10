@@ -454,174 +454,109 @@ prompt_drupal_version
 
 echo
 
-echo "Detecting PHP requirements..."
+detect_php_requirements() {
+    echo "Detecting PHP requirements..."
 
 
 
-PHP_CONSTRAINT="$(get_drupal_php_constraint "$DRUPAL_VERSION")"
+    PHP_CONSTRAINT="$(get_drupal_php_constraint "$DRUPAL_VERSION")"
 
 
 
-if [ -z "$PHP_CONSTRAINT" ]; then
+    if [ -z "$PHP_CONSTRAINT" ]; then
 
-    echo "Could not determine PHP requirements for Drupal $DRUPAL_VERSION."
+        echo "Could not determine PHP requirements for Drupal $DRUPAL_VERSION."
 
-    exit 1
+        exit 1
 
-fi
-
-
-
-DRUPAL_MINOR="$(get_drupal_minor "$DRUPAL_VERSION")"
+    fi
 
 
 
-if has_php_support_policy "$DRUPAL_MINOR"; then
+    DRUPAL_MINOR="$(get_drupal_minor "$DRUPAL_VERSION")"
+}
+
+resolve_compatible_php_versions() {
+    if has_php_support_policy "$DRUPAL_MINOR"; then
 
 
 
-    mapfile -t PHP_VERSIONS < <(
+        mapfile -t PHP_VERSIONS < <(
 
-        get_supported_php_versions "$DRUPAL_MINOR"
+            get_supported_php_versions "$DRUPAL_MINOR"
 
-    )
-
-
-
-else
+        )
 
 
 
-    echo
-
-    echo "WARNING:"
-
-    echo "Drupal $DRUPAL_MINOR is not listed in the current PHP support policy."
-
-    echo "This may be an older or unsupported Drupal release."
-
-    echo
-
-    echo "The installer can fall back to the Composer requirement:"
-
-    echo "PHP $PHP_CONSTRAINT"
-
-
-
-    while true; do
+    else
 
 
 
         echo
 
-        read -r -p "Continue using Composer compatibility? [y/N]: " LEGACY_CHOICE
+        echo "WARNING:"
+
+        echo "Drupal $DRUPAL_MINOR is not listed in the current PHP support policy."
+
+        echo "This may be an older or unsupported Drupal release."
+
+        echo
+
+        echo "The installer can fall back to the Composer requirement:"
+
+        echo "PHP $PHP_CONSTRAINT"
 
 
 
-        case "$LEGACY_CHOICE" in
+        while true; do
 
-            y|Y)
 
-                break
 
-                ;;
+            echo
 
-            n|N|"")
-
-                echo "Installation cancelled."
-
+            if ! read -r -p "Continue using Composer compatibility? [y/N]: " LEGACY_CHOICE; then
+                echo "Input cancelled."
                 exit 0
-
-                ;;
-
-            *)
-
-                echo "Please enter y or n."
-
-                ;;
-
-        esac
+            fi
 
 
 
-    done
+            case "$LEGACY_CHOICE" in
+
+                y|Y)
+
+                    break
+
+                    ;;
+
+                n|N|"")
+
+                    echo "Installation cancelled."
+
+                    exit 0
+
+                    ;;
+
+                *)
+
+                    echo "Please enter y or n."
+
+                    ;;
+
+            esac
 
 
 
-    mapfile -t PHP_VERSIONS < <(
-
-        get_compatible_php_versions "$PHP_CONSTRAINT"
-
-    )
+        done
 
 
 
-fi
+        mapfile -t PHP_VERSIONS < <(
 
+            get_compatible_php_versions "$PHP_CONSTRAINT"
 
-
-
-
-echo
-
-echo "Drupal $DRUPAL_VERSION requires PHP $PHP_CONSTRAINT"
-
-
-
-if [ "${#PHP_VERSIONS[@]}" -eq 0 ]; then
-
-    echo
-
-    echo "No compatible PHP-FPM version was found on this system."
-
-    exit 1
-
-fi
-
-
-
-
-
-while true; do
-
-
-
-    echo
-
-    echo "Compatible PHP versions:"
-
-    echo
-
-
-
-    for i in "${!PHP_VERSIONS[@]}"; do
-
-        php_version="${PHP_VERSIONS[$i]}"
-        php_status="$(get_php_version_status "$php_version")"
-
-        echo "$((i + 1))) PHP $php_version [$php_status]"
-
-    done
-
-
-
-    echo
-
-    read -r -p "Select PHP version: " PHP_CHOICE
-
-
-
-    if ! [[ "$PHP_CHOICE" =~ ^[0-9]+$ ]] ||
-
-       (( PHP_CHOICE < 1 ||
-
-          PHP_CHOICE > ${#PHP_VERSIONS[@]} )); then
-
-
-
-        echo "Invalid selection. Try again."
-
-        continue
+        )
 
 
 
@@ -629,16 +564,92 @@ while true; do
 
 
 
-    PHP_VERSION="${PHP_VERSIONS[$((PHP_CHOICE - 1))]}"
-    PHP_STATUS="$(get_php_version_status "$PHP_VERSION")"
 
-    break
 
-done
+    echo
 
+    echo "Drupal $DRUPAL_VERSION requires PHP $PHP_CONSTRAINT"
+
+
+
+    if [ "${#PHP_VERSIONS[@]}" -eq 0 ]; then
+
+        echo
+
+        echo "No compatible PHP-FPM version was found on this system."
+
+        exit 1
+
+    fi
+}
+
+prompt_php_version() {
+    while true; do
+
+
+
+        echo
+
+        echo "Compatible PHP versions:"
+
+        echo
+
+
+
+        for i in "${!PHP_VERSIONS[@]}"; do
+
+            php_version="${PHP_VERSIONS[$i]}"
+            php_status="$(get_php_version_status "$php_version")"
+
+            echo "$((i + 1))) PHP $php_version [$php_status]"
+
+        done
+
+
+
+        echo
+
+        if ! read -r -p "Select PHP version: " PHP_CHOICE; then
+            echo "Input cancelled."
+            exit 0
+        fi
+
+
+
+        if ! [[ "$PHP_CHOICE" =~ ^[0-9]+$ ]] ||
+
+           (( PHP_CHOICE < 1 ||
+
+              PHP_CHOICE > ${#PHP_VERSIONS[@]} )); then
+
+
+
+            echo "Invalid selection. Try again."
+
+            continue
+
+
+
+        fi
+
+
+
+        PHP_VERSION="${PHP_VERSIONS[$((PHP_CHOICE - 1))]}"
+        PHP_STATUS="$(get_php_version_status "$PHP_VERSION")"
+
+        break
+
+    done
+
+
+    # --------------------------------------------------
+}
+
+detect_php_requirements
+resolve_compatible_php_versions
+prompt_php_version
 
 # --------------------------------------------------
-
 # Database compatibility
 
 # --------------------------------------------------
