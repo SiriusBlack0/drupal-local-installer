@@ -192,6 +192,7 @@ fi
 if [ "$DATABASE_ENGINE" != "sqlite" ]; then
     if [ "$DATABASE_NEEDS_INSTALL" = "yes" ]; then
         echo "[MISSING] $DATABASE_ENGINE - installation required"
+        add_service_after_install "$DATABASE_ENGINE"
     elif is_database_service_running "$DATABASE_ENGINE"; then
         echo "[RUNNING] $DATABASE_ENGINE"
     else

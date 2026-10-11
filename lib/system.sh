@@ -471,3 +471,66 @@ check_apt_repository_compatibility() {
 
     return 1
 }
+
+# --------------------------------------------------
+# Start a system service
+# --------------------------------------------------
+
+start_system_service() {
+    local service="$1"
+
+    if systemctl is-active --quiet "$service"; then
+        echo "[OK] Service '$service' is already running."
+        return 0
+    fi
+
+    echo "[STARTING] Service '$service'..."
+
+    if sudo systemctl start "$service"; then
+        if systemctl is-active --quiet "$service"; then
+            echo "[OK] Service '$service' started successfully."
+            return 0
+        fi
+    fi
+
+    echo "[ERROR] Failed to start service '$service'."
+    return 1
+}
+
+# --------------------------------------------------
+# Start services from the installation plan
+# --------------------------------------------------
+
+start_planned_services() {
+    local service
+    local existing
+    local already_processed
+    local -a processed_services=()
+
+    for service in \
+        "${INSTALL_SERVICES_TO_START[@]}" \
+        "${INSTALL_SERVICES_AFTER_INSTALL[@]}"; do
+
+        already_processed=false
+
+        for existing in "${processed_services[@]}"; do
+            if [ "$existing" = "$service" ]; then
+                already_processed=true
+                break
+            fi
+        done
+
+        if [ "$already_processed" = true ]; then
+            continue
+        fi
+
+        processed_services+=("$service")
+
+        if ! start_system_service "$service"; then
+            echo "[ERROR] Required service '$service' could not be started."
+            return 1
+        fi
+    done
+
+    return 0
+}

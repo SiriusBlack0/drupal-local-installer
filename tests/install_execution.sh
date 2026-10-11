@@ -31,7 +31,12 @@ execute_apt_package_installation() {{
     echo "MOCK_INSTALLATION"
 }}
 
-''' + section + '\nprintf "EXECUTION_COMPLETED\\n"\n'
+start_planned_services() {{
+    echo "MOCK_SERVICES_STARTED"
+    return 0
+}}
+
+''' + section + '\nexecute_installation_plan\nprintf "EXECUTION_COMPLETED\\n"\n'
 
     result = subprocess.run(
         ["bash", "-c", script],
@@ -41,7 +46,8 @@ execute_apt_package_installation() {{
         timeout=5,
     )
 
-    passed = result.returncode == 0
+    expected_returncode = 1 if label == "Packages unavailable" else 0
+    passed = result.returncode == expected_returncode
 
     if label == "Warnings declined":
         passed = (
@@ -49,11 +55,16 @@ execute_apt_package_installation() {{
             and "[CANCELLED]" in result.stdout
             and "EXECUTION_COMPLETED" not in result.stdout
         )
-    else:
+    elif label != "Packages unavailable":
         passed = passed and "EXECUTION_COMPLETED" in result.stdout
 
     if label == "Packages unavailable":
-        passed = passed and "[SKIPPED] Package installation cannot proceed." in result.stdout
+        passed = (
+            passed
+            and "[BLOCKED] Package installation cannot proceed." in result.stdout
+            and "[ERROR] Some required packages are unavailable." in result.stdout
+            and "EXECUTION_COMPLETED" not in result.stdout
+        )
 
     if label == "All packages ready":
         passed = passed and "[READY] Package availability and repository checks passed." in result.stdout
@@ -92,7 +103,12 @@ execute_apt_package_installation() {{
     return 0
 }}
 
-''' + section + '\nprintf "EXECUTION_COMPLETED\\n"\n'
+start_planned_services() {{
+    echo "MOCK_SERVICES_STARTED"
+    return 0
+}}
+
+''' + section + '\nexecute_installation_plan\nprintf "EXECUTION_COMPLETED\\n"\n'
 
     result = subprocess.run(
         ["bash", "-c", script],
@@ -114,6 +130,14 @@ execute_apt_package_installation() {{
             passed
             and result.returncode == 1
             and "[ERROR] APT installation simulation failed." in result.stdout
+            and "EXECUTION_COMPLETED" not in result.stdout
+        )
+    elif label in ("Installation declined", "Actual installation declined"):
+        passed = (
+            passed
+            and result.returncode == 1
+            and "[BLOCKED] Package installation declined." in result.stdout
+            and "MOCK_INSTALLATION" not in result.stdout
             and "EXECUTION_COMPLETED" not in result.stdout
         )
     else:
@@ -148,7 +172,7 @@ execute_apt_package_installation() {
     return 1
 }
 
-''' + section + '\nprintf "UNEXPECTED_COMPLETION\\n"\n'
+''' + section + '\nexecute_installation_plan\nprintf "UNEXPECTED_COMPLETION\\n"\n'
 
 result = subprocess.run(
     ["bash", "-c", script],
@@ -176,8 +200,8 @@ if not passed:
 # EOF handling tests.
 eof_cases = [
     ("Warnings confirmation EOF", "false", "false", [], "", "[CANCELLED]"),
-    ("Package approval EOF", "true", "true", ["php8.5-cli"], "", "[SKIPPED] Package installation declined."),
-    ("Actual installation EOF", "true", "true", ["php8.5-cli"], "y\n", "[SKIPPED] Actual package installation cancelled."),
+    ("Package approval EOF", "true", "true", ["php8.5-cli"], "", "[BLOCKED] Package installation declined."),
+    ("Actual installation EOF", "true", "true", ["php8.5-cli"], "y\n", "[BLOCKED] Package installation declined."),
 ]
 
 for label, repos_ok, packages_ok, packages, user_input, expected in eof_cases:
@@ -199,7 +223,7 @@ execute_apt_package_installation() {{
     return 0
 }}
 
-''' + section + '\nprintf "EXECUTION_COMPLETED\\n"\n'
+''' + section + '\nexecute_installation_plan\nprintf "EXECUTION_COMPLETED\\n"\n'
 
     result = subprocess.run(
         ["bash", "-c", script],
@@ -209,16 +233,15 @@ execute_apt_package_installation() {{
         timeout=5,
     )
 
+    expected_returncode = 0 if label == "Warnings confirmation EOF" else 1
+
     passed = (
-        result.returncode == 0
+        result.returncode == expected_returncode
         and expected in result.stdout
         and "MOCK_INSTALLATION" not in result.stdout
     )
 
-    if label == "Warnings confirmation EOF":
-        passed = passed and "EXECUTION_COMPLETED" not in result.stdout
-    else:
-        passed = passed and "EXECUTION_COMPLETED" in result.stdout
+    passed = passed and "EXECUTION_COMPLETED" not in result.stdout
 
     print(f"[{'PASS' if passed else 'FAIL'}] {label}")
 
@@ -227,5 +250,42 @@ execute_apt_package_installation() {{
         print(result.stderr)
         raise SystemExit(1)
 
+# Service startup failure.
+script = '''
+set -e
+
+APT_REPOSITORIES_COMPATIBLE=true
+PACKAGES_AVAILABLE=true
+INSTALL_PACKAGES=()
+
+start_planned_services() {
+    echo "MOCK_SERVICE_FAILURE"
+    return 1
+}
+
+''' + section + '\nexecute_installation_plan\nprintf "UNEXPECTED_COMPLETION\\n"\n'
+
+result = subprocess.run(
+    ["bash", "-c", script],
+    text=True,
+    capture_output=True,
+    timeout=5,
+)
+
+passed = (
+    result.returncode == 1
+    and "MOCK_SERVICE_FAILURE" in result.stdout
+    and "[ERROR] Required services could not be started." in result.stdout
+    and "UNEXPECTED_COMPLETION" not in result.stdout
+)
+
+print(f"[{'PASS' if passed else 'FAIL'}] Service startup failure")
+
+if not passed:
+    print(result.stdout)
+    print(result.stderr)
+    raise SystemExit(1)
+
 print("\n[SUCCESS] Installation execution baseline tests passed.")
+
 PY

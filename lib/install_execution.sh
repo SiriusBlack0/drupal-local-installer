@@ -41,16 +41,24 @@ check_package_installation_readiness() {
     fi
 }
 
-check_package_installation_readiness
 
 prepare_package_installation() {
 
     echo
     echo "Preparing package installation..."
 
+    if [ "$APT_REPOSITORIES_COMPATIBLE" = false ] &&
+    [ "${#INSTALL_PACKAGES[@]}" -gt 0 ]; then
+        echo "[BLOCKED] Incompatible APT repositories detected."
+        echo "[ERROR] Package installation cannot proceed safely."
+        return 1
+    fi
+
     if [ "$PACKAGES_AVAILABLE" = false ]; then
-        echo "[SKIPPED] Package installation cannot proceed."
-        echo "Some required packages are unavailable."
+        echo "[BLOCKED] Package installation cannot proceed."
+        echo "[ERROR] Some required packages are unavailable."
+        echo "[INFO] Resolve the missing dependencies before installing Drupal."
+        return 1
 
     elif [ "${#INSTALL_PACKAGES[@]}" -eq 0 ]; then
         echo "[OK] No additional packages need installation."
@@ -85,25 +93,47 @@ prepare_package_installation() {
                                 echo "[OK] Package installation completed."
                             else
                                 echo "[ERROR] Package installation failed."
-                                exit 1
+                                return 1
                             fi
                             ;;
                         *)
-                            echo "[SKIPPED] Actual package installation cancelled."
+                            echo "[BLOCKED] Package installation declined."
+                            echo "[INFO] Required dependencies must be installed before Drupal."
+                            return 1
                             ;;
                     esac
 
                 else
                     echo
                     echo "[ERROR] APT installation simulation failed."
-                    exit 1
+                    return 1
                 fi
                 ;;
             *)
-                echo "[SKIPPED] Package installation declined."
+                echo "[BLOCKED] Package installation declined."
+                echo "[INFO] Required dependencies must be installed before Drupal."
+                return 1
                 ;;
         esac
     fi
 }
 
-prepare_package_installation
+execute_installation_plan() {
+
+    check_package_installation_readiness
+
+    if ! prepare_package_installation; then
+        echo "[ERROR] Package preparation failed. Installation stopped."
+        return 1
+    fi
+
+    echo
+    echo "Starting required services..."
+
+    if ! start_planned_services; then
+        echo "[ERROR] Required services could not be started."
+        return 1
+    fi
+
+    echo "[OK] All planned services are running."
+}
