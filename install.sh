@@ -65,23 +65,14 @@ source "$SCRIPT_DIR/lib/ui.sh"
 
 
 source "$SCRIPT_DIR/lib/preflight.sh"
-
 source "$SCRIPT_DIR/lib/plan.sh"
-prepare_installation_plan
-
 source "$SCRIPT_DIR/lib/install_execution.sh"
-if ! execute_installation_plan; then
-    echo "[ERROR] Installation execution failed."
-    exit 1
-fi
 source "$SCRIPT_DIR/lib/readiness.sh"
+source "$SCRIPT_DIR/lib/project.sh"
+source "$SCRIPT_DIR/lib/workflow.sh"
 
-# --------------------------------------------------
-# Verify environment before Drupal provisioning
-# --------------------------------------------------
-
-if ! verify_environment_ready; then
-    echo "[BLOCKED] Drupal provisioning cannot continue."
+if ! run_installation_workflow; then
+    echo "[ERROR] Installation workflow failed."
     exit 1
 fi
 

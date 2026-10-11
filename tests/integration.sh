@@ -426,3 +426,63 @@ else
     echo "[FAIL] Successful installation execution"
     exit 1
 fi
+
+# Test 16: Drupal project creation with mocked Composer.
+
+if output="$(
+    bash -c '
+        set -euo pipefail
+
+        source lib/project.sh
+
+        composer() {
+            printf "[MOCK] Composer:"
+            printf " <%s>" "$@"
+            printf "\n"
+        }
+
+        project_path="$(mktemp -d)"
+        rmdir "$project_path"
+
+        create_drupal_project "11.4.8" "$project_path"
+    '
+)" &&
+   [[ "$output" == *"[MOCK] Composer: <create-project> <drupal/recommended-project:11.4.8>"* ]]; then
+    echo "[PASS] Drupal project creation integration"
+else
+    echo "[FAIL] Drupal project creation integration"
+    exit 1
+fi
+
+# Test 17: Drupal project creation fails when Composer fails.
+
+if output="$(
+    bash -c '
+        set -euo pipefail
+
+        source lib/project.sh
+
+        composer() {
+            echo "[MOCK] Composer installation failed."
+            return 1
+        }
+
+        project_path="$(mktemp -d)"
+        rmdir "$project_path"
+
+        if create_drupal_project "11.4.8" "$project_path"; then
+            echo "[FAIL] Composer failure was ignored."
+            exit 1
+        else
+            echo "[PASS] Composer failure propagated."
+        fi
+    '
+)" &&
+   [[ "$output" == *"[MOCK] Composer installation failed."* ]] &&
+   [[ "$output" == *"[PASS] Composer failure propagated."* ]] &&
+   [[ "$output" != *"[FAIL]"* ]]; then
+    echo "[PASS] Drupal project creation failure integration"
+else
+    echo "[FAIL] Drupal project creation failure integration"
+    exit 1
+fi

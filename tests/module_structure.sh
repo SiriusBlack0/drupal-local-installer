@@ -21,6 +21,9 @@ modules = [
     "lib/preflight.sh",
     "lib/plan.sh",
     "lib/install_execution.sh",
+    "lib/readiness.sh",
+    "lib/project.sh",
+    "lib/workflow.sh",
 ]
 
 positions = []

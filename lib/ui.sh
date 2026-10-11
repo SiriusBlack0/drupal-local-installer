@@ -39,6 +39,7 @@ prompt_project_name() {
     done
 
     PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+    PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
 }
 
 prompt_project_name
