@@ -227,14 +227,46 @@ is_valid_database_user() {
 
     [[ "$database_user" =~ ^[a-zA-Z0-9_]+$ ]]
 }
+
 create_project_database() {
     local engine="$1"
     local database_name="$2"
 
-    if database_exists "$database_name"; then
-        echo "Database '$database_name' already exists."
+    if [[ "$engine" != "mariadb" && "$engine" != "mysql" ]]; then
+        echo "[ERROR] Unsupported database engine: $engine"
         return 1
     fi
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid database name."
+        return 1
+    fi
+
+    local database_lookup_status
+
+    if database_exists "$database_name"; then
+        database_lookup_status=0
+    else
+        database_lookup_status=$?
+    fi
+
+    case "$database_lookup_status" in
+        0)
+            echo "Database '$database_name' already exists."
+            return 1
+            ;;
+        1)
+            # Database does not exist. Creation can continue.
+            ;;
+        2)
+            echo "[ERROR] Database lookup failed."
+            return 1
+            ;;
+        *)
+            echo "[ERROR] Unexpected database lookup status: $database_lookup_status"
+            return 1
+            ;;
+    esac
 
     case "$engine" in
         mariadb|mysql)
@@ -249,18 +281,34 @@ create_project_database() {
 
 database_exists() {
     local database_name="$1"
+    local result
 
-    sudo mysql -N -e \
-        "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '$database_name';" \
-        | grep -Fxq "$database_name"
+    if ! result="$(sudo mysql -N -e \
+        "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '$database_name';")"; then
+        return 2
+    fi
+
+    if [[ "$result" == "$database_name" ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 database_user_exists() {
     local database_user="$1"
+    local result
 
-    sudo mysql -N -e \
-        "SELECT User FROM mysql.user WHERE User = '$database_user';" \
-        | grep -Fxq "$database_user"
+    if ! result="$(sudo mysql -N -e \
+        "SELECT User FROM mysql.user WHERE User = '$database_user';")"; then
+        return 2
+    fi
+
+    if [[ "$result" == "$database_user" ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 create_database_user() {
@@ -268,15 +316,51 @@ create_database_user() {
     local database_user="$2"
     local database_password="$3"
 
-    if database_user_exists "$database_user"; then
-        echo "Database user '$database_user' already exists."
+    if [[ "$engine" != "mariadb" && "$engine" != "mysql" ]]; then
+        echo "[ERROR] Unsupported database engine: $engine"
         return 1
     fi
 
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid database username."
+        return 1
+    fi
+
+    if ! is_valid_database_password "$database_password"; then
+        echo "[ERROR] Invalid database password."
+        return 1
+    fi
+
+    local user_lookup_status
+
+    if database_user_exists "$database_user"; then
+        user_lookup_status=0
+    else
+        user_lookup_status=$?
+    fi
+
+    case "$user_lookup_status" in
+        0)
+            echo "Database user '$database_user' already exists."
+            return 1
+            ;;
+        1)
+            # User does not exist. Creation can continue.
+            ;;
+        2)
+            echo "[ERROR] Database user lookup failed."
+            return 1
+            ;;
+        *)
+            echo "[ERROR] Unexpected database user lookup status: $user_lookup_status"
+            return 1
+            ;;
+    esac
+
     case "$engine" in
         mariadb|mysql)
-            sudo mysql -e \
-                "CREATE USER '$database_user'@'localhost' IDENTIFIED BY '$database_password';"
+            printf "CREATE USER '%s'@'localhost' IDENTIFIED BY '%s';\n" \
+                "$database_user" "$database_password" | sudo mysql
             ;;
         *)
             echo "Unsupported database engine: $engine"
@@ -309,4 +393,97 @@ get_database_engine_status() {
     fi
 
     echo "not_available"
+}
+
+grant_database_privileges() {
+    local engine="$1"
+    local database_name="$2"
+    local database_user="$3"
+
+    if [[ "$engine" != "mariadb" && "$engine" != "mysql" ]]; then
+        echo "[ERROR] Unsupported database engine: $engine"
+        return 1
+    fi
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid database name."
+        return 1
+    fi
+
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid database username."
+        return 1
+    fi
+
+    sudo mysql -e "GRANT ALL PRIVILEGES ON \`$database_name\`.* TO '$database_user'@'localhost';"
+}
+
+provision_project_database() {
+    local engine="$1"
+    local database_name="$2"
+    local database_user="$3"
+    local database_password="$4"
+
+    if [[ "$engine" != "mariadb" && "$engine" != "mysql" ]]; then
+        echo "[ERROR] Unsupported database engine: $engine"
+        return 1
+    fi
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid database name."
+        return 1
+    fi
+
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid database username."
+        return 1
+    fi
+
+    if ! is_valid_database_password "$database_password"; then
+        echo "[ERROR] Invalid database password."
+        return 1
+    fi
+
+    local user_lookup_status
+
+    if database_user_exists "$database_user"; then
+        user_lookup_status=0
+    else
+        user_lookup_status=$?
+    fi
+
+    case "$user_lookup_status" in
+        0)
+            echo "[ERROR] Database user already exists: $database_user"
+            return 1
+            ;;
+        1)
+            # User does not exist. Provisioning can continue.
+            ;;
+        2)
+            echo "[ERROR] Database user lookup failed."
+            return 1
+            ;;
+        *)
+            echo "[ERROR] Unexpected database user lookup status: $user_lookup_status"
+            return 1
+            ;;
+    esac
+
+    if ! create_project_database "$engine" "$database_name"; then
+        echo "[ERROR] Database creation failed."
+        return 1
+    fi
+
+    if ! create_database_user "$engine" "$database_user" "$database_password"; then
+        echo "[ERROR] Database user creation failed."
+        return 1
+    fi
+
+    if ! grant_database_privileges "$engine" "$database_name" "$database_user"; then
+        echo "[ERROR] Database privileges assignment failed."
+        return 1
+    fi
+
+    echo "[SUCCESS] Database provisioning completed."
 }
