@@ -557,3 +557,202 @@ else
         exit 1
     fi
 fi
+
+# Test 24: PostgreSQL user exists.
+
+: > "$mock_log"
+
+sudo() {
+    local sql
+    sql="$(cat)"
+
+    echo "$*" >> "$mock_log"
+    echo "$sql" >> "$mock_log"
+
+    echo "1"
+    return 0
+}
+
+if postgresql_user_exists "drupal_user"; then
+    echo "[PASS] PostgreSQL existing user detected"
+else
+    echo "[FAIL] PostgreSQL existing user not detected"
+    exit 1
+fi
+
+# Test 25: PostgreSQL user does not exist.
+
+: > "$mock_log"
+
+sudo() {
+    echo "sudo_called" >> "$mock_log"
+
+    # PostgreSQL returns no rows.
+    return 0
+}
+
+if postgresql_user_exists "missing_user"; then
+    echo "[FAIL] Non-existing PostgreSQL user detected"
+    exit 1
+else
+    status=$?
+
+    if [[ "$status" -eq 1 ]] &&
+       [[ "$(cat "$mock_log")" == "sudo_called" ]]; then
+        echo "[PASS] Non-existing PostgreSQL user correctly detected"
+    else
+        echo "[FAIL] Unexpected PostgreSQL user lookup result: $status"
+        exit 1
+    fi
+fi
+
+# Test 26: PostgreSQL user lookup failure.
+
+: > "$mock_log"
+
+sudo() {
+    echo "sudo_called" >> "$mock_log"
+    return 1
+}
+
+if postgresql_user_exists "drupal_user"; then
+    echo "[FAIL] PostgreSQL lookup failure ignored"
+    exit 1
+else
+    status=$?
+
+    if [[ "$status" -eq 2 ]] &&
+       [[ "$(cat "$mock_log")" == "sudo_called" ]]; then
+        echo "[PASS] PostgreSQL user lookup failure detected"
+    else
+        echo "[FAIL] Unexpected PostgreSQL lookup status: $status"
+        exit 1
+    fi
+fi
+
+# Test 27: Existing PostgreSQL user prevents role creation.
+
+: > "$mock_log"
+
+postgresql_user_exists() {
+    echo "user_lookup" >> "$mock_log"
+    return 0
+}
+
+sudo() {
+    echo "sudo_called" >> "$mock_log"
+    return 0
+}
+
+if output="$(create_postgresql_user "existing_user" "TestPassword123")"; then
+    echo "[FAIL] Existing PostgreSQL user accepted"
+    exit 1
+else
+    if [[ "$output" == *"[ERROR] PostgreSQL user already exists: existing_user"* ]] &&
+       [[ "$(cat "$mock_log")" == "user_lookup" ]]; then
+        echo "[PASS] Existing PostgreSQL user prevents role creation"
+    else
+        echo "[FAIL] Unexpected PostgreSQL role creation result"
+        exit 1
+    fi
+fi
+
+# Test 28: PostgreSQL lookup failure prevents role creation.
+
+: > "$mock_log"
+
+postgresql_user_exists() {
+    echo "user_lookup" >> "$mock_log"
+    return 2
+}
+
+sudo() {
+    echo "sudo_called" >> "$mock_log"
+    return 0
+}
+
+if output="$(create_postgresql_user "drupal_user" "TestPassword123")"; then
+    echo "[FAIL] PostgreSQL role creation continued after lookup failure"
+    exit 1
+else
+    if [[ "$output" == *"[ERROR] PostgreSQL user lookup failed."* ]] &&
+       [[ "$(cat "$mock_log")" == "user_lookup" ]]; then
+        echo "[PASS] PostgreSQL lookup failure prevents role creation"
+    else
+        echo "[FAIL] Unexpected PostgreSQL lookup failure result"
+        exit 1
+    fi
+fi
+
+# Test 29: Successful PostgreSQL role creation.
+
+: > "$mock_log"
+
+postgresql_user_exists() {
+    echo "user_lookup" >> "$mock_log"
+    return 1
+}
+
+sudo() {
+    local sql
+    sql="$(cat)"
+
+    echo "create_role" >> "$mock_log"
+
+    if [[ "$*" == *"psql -X -v ON_ERROR_STOP=1"* ]] &&
+       [[ "$sql" == *"CREATE ROLE %I LOGIN PASSWORD %L"* ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+if create_postgresql_user "drupal_user" "TestPassword123"; then
+    expected_order="$(printf '%s\n' \
+        "user_lookup" \
+        "create_role")"
+
+    if [[ "$(cat "$mock_log")" == "$expected_order" ]]; then
+        echo "[PASS] PostgreSQL role creation executed correctly"
+    else
+        echo "[FAIL] Incorrect PostgreSQL role creation order"
+        exit 1
+    fi
+else
+    echo "[FAIL] PostgreSQL role creation failed"
+    exit 1
+fi
+
+# Test 30: PostgreSQL CREATE ROLE failure.
+
+: > "$mock_log"
+
+postgresql_user_exists() {
+    echo "user_lookup" >> "$mock_log"
+    return 1
+}
+
+sudo() {
+    local sql
+    sql="$(cat)"
+
+    echo "create_role" >> "$mock_log"
+    return 1
+}
+
+if output="$(create_postgresql_user "drupal_user" "TestPassword123")"; then
+    echo "[FAIL] PostgreSQL CREATE ROLE failure ignored"
+    exit 1
+else
+    expected_order="$(printf '%s\n' \
+        "user_lookup" \
+        "create_role")"
+
+    if [[ "$output" == *"[ERROR] PostgreSQL user creation failed."* ]] &&
+       [[ "$(cat "$mock_log")" == "$expected_order" ]]; then
+        echo "[PASS] PostgreSQL CREATE ROLE failure detected"
+    else
+        echo "[FAIL] Unexpected PostgreSQL CREATE ROLE failure result"
+        exit 1
+    fi
+fi

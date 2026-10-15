@@ -11,17 +11,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 source "$SCRIPT_DIR/lib/drupal.sh"
-
 source "$SCRIPT_DIR/lib/php.sh"
-
+source "$SCRIPT_DIR/lib/php_fpm.sh"
+source "$SCRIPT_DIR/lib/nginx.sh"
 source "$SCRIPT_DIR/lib/database.sh"
-
 source "$SCRIPT_DIR/lib/compatibility.sh"
-
 source "$SCRIPT_DIR/lib/system.sh"
-
 source "$SCRIPT_DIR/lib/registry.sh"
-
 source "$SCRIPT_DIR/lib/packages.sh"
 
 

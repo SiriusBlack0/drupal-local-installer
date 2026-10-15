@@ -279,6 +279,72 @@ create_project_database() {
     esac
 }
 
+create_postgresql_user() {
+    local database_user="$1"
+    local database_password="$2"
+    local lookup_status
+
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid PostgreSQL username."
+        return 1
+    fi
+
+    if ! is_valid_database_password "$database_password"; then
+        echo "[ERROR] Invalid PostgreSQL password."
+        return 1
+    fi
+
+    # Check whether the PostgreSQL user already exists.
+    if postgresql_user_exists "$database_user"; then
+        echo "[ERROR] PostgreSQL user already exists: $database_user"
+        return 1
+    else
+        lookup_status=$?
+
+        if [[ "$lookup_status" -ne 1 ]]; then
+            echo "[ERROR] PostgreSQL user lookup failed."
+            return 1
+        fi
+    fi
+
+    # Create the PostgreSQL user without putting the password in process arguments.
+    if ! {
+        printf '\\set role_name %s\n' "$database_user"
+        printf '\\set role_password %s\n' "$database_password"
+        printf '%s\n' \
+            "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role_name', :'role_password') \gexec"
+    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -f /dev/stdin; then
+        echo "[ERROR] PostgreSQL user creation failed."
+        return 1
+    fi
+
+    return 0
+}
+
+postgresql_user_exists() {
+    local database_user="$1"
+    local result
+
+    if ! is_valid_database_user "$database_user"; then
+        return 2
+    fi
+
+    if ! result="$(sudo -u postgres psql -X -t -A \
+        -v ON_ERROR_STOP=1 \
+        -v role_name="$database_user" <<'SQL'
+SELECT 1 FROM pg_roles WHERE rolname = :'role_name';
+SQL
+)"; then
+        return 2
+    fi
+
+    if [[ "$result" == "1" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
 database_exists() {
     local database_name="$1"
     local result
