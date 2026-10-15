@@ -12,6 +12,8 @@ content = Path("install.sh").read_text()
 modules = [
     "lib/drupal.sh",
     "lib/php.sh",
+    "lib/php_fpm.sh",
+    "lib/nginx.sh",
     "lib/database.sh",
     "lib/compatibility.sh",
     "lib/system.sh",
