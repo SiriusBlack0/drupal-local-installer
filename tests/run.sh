@@ -4,90 +4,54 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Each entry: "Title|command". Numbering is computed automatically.
+SUITES=(
+    "Bash Syntax|bash tests/syntax.sh"
+    "Module Structure|bash tests/module_structure.sh"
+    "ShellCheck|shellcheck -S style -x install.sh lib/*.sh tests/*.sh"
+    "Project Name Functional Tests|bash tests/project_name.sh"
+    "Drupal Version Selection Tests|bash tests/drupal_version_selection.sh"
+    "PHP Compatibility & Selection Tests|bash tests/php_selection.sh"
+    "Database Compatibility & Selection Tests|bash tests/database_selection.sh"
+    "Database Configuration Tests|bash tests/database_configuration.sh"
+    "Final Confirmation Tests|bash tests/final_confirmation.sh"
+    "Installation Execution Tests|bash tests/install_execution.sh"
+    "Service Start Tests|bash tests/service_start.sh"
+    "Service Plan Tests|bash tests/service_plan.sh"
+    "Preflight Tests|bash tests/preflight.sh"
+    "Environment Readiness Tests|bash tests/readiness.sh"
+    "Project Directory Tests|bash tests/project.sh"
+    "Installation Workflow Tests|bash tests/workflow.sh"
+    "Database Provisioning Tests|bash tests/database_provisioning.sh"
+    "Nginx Configuration Tests|bash tests/nginx.sh"
+    "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
+    "Confirmation Integration Tests|bash tests/integration.sh"
+)
+
 echo "======================================"
 echo "     Drupal Installer Test Suite"
 echo "======================================"
 
-echo
-echo "[1/19] Bash Syntax"
-bash tests/syntax.sh
+total="${#SUITES[@]}"
+index=0
+
+for suite in "${SUITES[@]}"; do
+    index=$((index + 1))
+    title="${suite%%|*}"
+    command="${suite#*|}"
+
+    echo
+    echo "[$index/$total] $title"
+
+    # Word splitting is intentional: the command and its file globs expand here.
+    # shellcheck disable=SC2086
+    if ! $command; then
+        echo
+        echo "[FAILED] Suite $index/$total: $title"
+        exit 1
+    fi
+done
 
 echo
-echo "[2/19] Module Structure"
-bash tests/module_structure.sh
-
-echo
-echo "[3/19] ShellCheck"
-shellcheck -S style -x install.sh
-echo "[OK] ShellCheck passed."
-
-echo
-echo "[4/19] Project Name Functional Tests"
-bash tests/project_name.sh
-
-echo
-echo
-echo "[5/19] Drupal Version Selection Tests"
-bash tests/drupal_version_selection.sh
-
-echo "======================================"
-echo
-echo "[6/19] PHP Compatibility & Selection Tests"
-bash tests/php_selection.sh
-
-echo
-echo "[7/19] Database Compatibility & Selection Tests"
-bash tests/database_selection.sh
-
-echo
-echo "[8/19] Database Configuration Tests"
-bash tests/database_configuration.sh
-
-echo
-echo "[9/19] Final Confirmation Tests"
-bash tests/final_confirmation.sh
-
-echo
-echo "[10/19] Installation Execution Tests"
-bash tests/install_execution.sh
-
-echo
-echo "[11/19] Service Start Tests"
-bash tests/service_start.sh
-
-echo
-echo "[12/19] Service Plan Tests"
-bash tests/service_plan.sh
-
-echo
-echo "[13/19] Preflight Tests"
-bash tests/preflight.sh
-
-echo
-echo "[14/19] Environment Readiness Tests"
-bash tests/readiness.sh
-
-echo
-echo "[15/19] Project Directory Tests"
-bash tests/project.sh
-
-echo
-echo "[16/19] Installation Workflow Tests"
-bash tests/workflow.sh
-
-echo
-echo "[17/19] Database Provisioning Tests"
-bash tests/database_provisioning.sh
-
-echo
-echo "[18/19] Nginx Configuration Tests"
-bash tests/nginx.sh
-
-echo
-echo "[19/19] PHP-FPM Configuration Tests"
-bash tests/php_fpm.sh
-
-echo
-
-echo "[SUCCESS] All checks passed."
+echo "[SUCCESS] All $total suites passed."
 echo "======================================"

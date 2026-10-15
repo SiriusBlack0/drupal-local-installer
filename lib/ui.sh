@@ -39,6 +39,7 @@ prompt_project_name() {
     done
 
     PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+    # shellcheck disable=SC2034  # Used by lib/workflow.sh
     PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
 }
 
@@ -735,7 +736,7 @@ DATABASE_NEEDS_INSTALL="no"
 
 
 if [ "$DATABASE_STATUS" != "installed" ]; then
-
+    # shellcheck disable=SC2034  # Used by lib/preflight.sh
     DATABASE_NEEDS_INSTALL="yes"
 
 fi
