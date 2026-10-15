@@ -534,3 +534,30 @@ start_planned_services() {
 
     return 0
 }
+
+
+# --------------------------------------------------
+# Detect the real (non-root) user running the installer
+# --------------------------------------------------
+
+get_runtime_user() {
+    local runtime_user
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        runtime_user="${SUDO_USER:-}"
+
+        if [[ -z "$runtime_user" || "$runtime_user" == "root" ]]; then
+            echo "[ERROR] Run the installer as a normal user, not as root." >&2
+            return 1
+        fi
+    else
+        runtime_user="$(id -un)"
+    fi
+
+    if [[ ! "$runtime_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] Unsupported username: $runtime_user" >&2
+        return 1
+    fi
+
+    printf '%s\n' "$runtime_user"
+}
