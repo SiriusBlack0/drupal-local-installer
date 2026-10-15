@@ -7,6 +7,10 @@ for scenario in already_running starts_successfully start_fails remains_inactive
 
         source lib/system.sh
 
+        has_systemd() {
+            return 0
+        }
+
         systemctl() {
             if [[ "$1" != "is-active" ]]; then
                 return 1

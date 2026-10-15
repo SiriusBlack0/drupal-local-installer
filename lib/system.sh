@@ -100,6 +100,36 @@ check_php_extensions() {
 }
 
 # --------------------------------------------------
+# Service management (systemd or SysV "service")
+# --------------------------------------------------
+
+# Native Ubuntu runs systemd; WSL may not. This is the standard
+# systemd check (same test that sd_booted() performs).
+has_systemd() {
+    [[ -d /run/systemd/system ]]
+}
+
+is_service_active() {
+    local service="$1"
+
+    if has_systemd; then
+        systemctl is-active --quiet "$service"
+    else
+        service "$service" status >/dev/null 2>&1
+    fi
+}
+
+run_service_start() {
+    local service="$1"
+
+    if has_systemd; then
+        sudo systemctl start "$service"
+    else
+        sudo service "$service" start
+    fi
+}
+
+# --------------------------------------------------
 # Check whether PHP-FPM service is running
 # --------------------------------------------------
 
@@ -108,7 +138,7 @@ is_php_fpm_running() {
 
     [[ "$php_version" =~ ^[0-9]+\.[0-9]+$ ]] || return 2
 
-    systemctl is-active --quiet "php${php_version}-fpm"
+    is_service_active "php${php_version}-fpm"
 }
 
 # --------------------------------------------------
@@ -116,7 +146,7 @@ is_php_fpm_running() {
 # --------------------------------------------------
 
 is_nginx_running() {
-    systemctl is-active --quiet nginx
+    is_service_active nginx
 }
 
 # --------------------------------------------------
@@ -145,7 +175,7 @@ is_database_service_running() {
             ;;
     esac
 
-    systemctl is-active --quiet "$service_name"
+    is_service_active "$service_name"
 }
 
 # --------------------------------------------------
@@ -479,15 +509,15 @@ check_apt_repository_compatibility() {
 start_system_service() {
     local service="$1"
 
-    if systemctl is-active --quiet "$service"; then
+    if is_service_active "$service"; then
         echo "[OK] Service '$service' is already running."
         return 0
     fi
 
     echo "[STARTING] Service '$service'..."
 
-    if sudo systemctl start "$service"; then
-        if systemctl is-active --quiet "$service"; then
+    if run_service_start "$service"; then
+        if is_service_active "$service"; then
             echo "[OK] Service '$service' started successfully."
             return 0
         fi
