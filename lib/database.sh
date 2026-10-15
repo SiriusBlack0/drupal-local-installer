@@ -313,7 +313,7 @@ create_postgresql_user() {
         printf '\\set role_password %s\n' "$database_password"
         printf '%s\n' \
             "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role_name', :'role_password') \gexec"
-    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -f /dev/stdin; then
+    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1; then
         echo "[ERROR] PostgreSQL user creation failed."
         return 1
     fi

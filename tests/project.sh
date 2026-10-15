@@ -5,10 +5,16 @@ source lib/project.sh
 
 # Test 1: Existing directory must be rejected.
 
-if output="$(check_project_directory "/var/www")"; then
+# Test 1: Existing directory must be rejected.
+
+existing_dir="$(mktemp -d)"
+
+if output="$(check_project_directory "$existing_dir")"; then
     echo "[FAIL] Existing directory was accepted."
+    rmdir "$existing_dir"
     exit 1
 else
+    rmdir "$existing_dir"
     if [[ "$output" == *"[ERROR] Project path already exists:"* ]]; then
         echo "[PASS] Existing directory rejected"
     else

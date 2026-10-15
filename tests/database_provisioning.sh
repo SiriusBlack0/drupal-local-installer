@@ -699,7 +699,9 @@ sudo() {
 
     echo "create_role" >> "$mock_log"
 
-    if [[ "$*" == *"psql -X -v ON_ERROR_STOP=1"* ]] &&
+    if [[ "$*" == "-u postgres psql -X -q -v ON_ERROR_STOP=1" ]] &&
+       [[ "$sql" == *'\set role_name drupal_user'* ]] &&
+       [[ "$sql" == *'\set role_password TestPassword123'* ]] &&
        [[ "$sql" == *"CREATE ROLE %I LOGIN PASSWORD %L"* ]]; then
         return 0
     fi
