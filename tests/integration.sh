@@ -433,6 +433,7 @@ if output="$(
     bash -c '
         set -euo pipefail
 
+        source lib/output.sh
         source lib/project.sh
 
         stub_bin="$(mktemp -d)"
@@ -465,6 +466,7 @@ if output="$(
     bash -c '
         set -euo pipefail
 
+        source lib/output.sh
         source lib/project.sh
 
         stub_bin="$(mktemp -d)"

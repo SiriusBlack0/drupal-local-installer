@@ -89,7 +89,10 @@ check_php_extensions() {
 
     for extension in "$@"; do
         if is_php_extension_loaded "$php_version" "$extension"; then
-            echo "[OK] $extension"
+            # Only listed one by one with --verbose; missing ones always.
+            if [[ "${VERBOSE:-0}" == "1" ]]; then
+                echo "[OK] $extension"
+            fi
         else
             echo "[MISSING] $extension"
             missing=1

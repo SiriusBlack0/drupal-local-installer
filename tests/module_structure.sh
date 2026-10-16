@@ -10,6 +10,7 @@ from pathlib import Path
 content = Path("install.sh").read_text()
 
 modules = [
+    "lib/output.sh",
     "lib/drupal.sh",
     "lib/php.sh",
     "lib/php_fpm.sh",

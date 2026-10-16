@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+source lib/output.sh
+
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+pass() { echo "[PASS] $1"; }
+fail() { echo "[FAIL] $1"; exit 1; }
+
+# Test 1: Command line options.
+
+VERBOSE=0 STEP_MODE=0
+parse_options --verbose --step
+if [[ "$VERBOSE" == "1" && "$STEP_MODE" == "1" ]]; then
+    pass "--verbose and --step recognised"
+else
+    fail "options not set"
+fi
+
+if output="$(parse_options --help)"; then
+    fail "--help did not stop the installer"
+else
+    status=$?
+    if [[ "$status" -eq 2 && "$output" == *"Usage: ./install.sh"* ]]; then
+        pass "--help shows usage"
+    else
+        fail "--help result"
+    fi
+fi
+
+if output="$(parse_options --wrong)"; then
+    fail "Unknown option accepted"
+else
+    status=$?
+    if [[ "$status" -eq 1 && "$output" == *"[ERROR] Unknown option: --wrong"* ]]; then
+        pass "Unknown option rejected"
+    else
+        fail "unknown option result"
+    fi
+fi
+
+VERBOSE=0 STEP_MODE=0
+
+# Test 2: Log file is private.
+
+export XDG_STATE_HOME="$work_dir/state"
+init_log "mysite"
+
+if [[ "$LOG_FILE" == "$XDG_STATE_HOME/drupal-local-installer/logs/"*"-mysite.log" ]] &&
+   [[ "$(stat -c '%a' "$LOG_FILE")" == "600" ]] &&
+   [[ "$(stat -c '%a' "$(dirname "$LOG_FILE")")" == "700" ]]; then
+    pass "Log file created with private permissions"
+else
+    fail "Log file location or permissions"
+fi
+
+# Test 3: Numbered steps.
+
+STEP_INDEX=0 STEP_TOTAL=4
+output="$(step "Checking the system"; step "Installing required packages")"
+
+if [[ "$output" == *"[1/4] Checking the system"* && "$output" == *"[2/4] Installing required packages"* ]]; then
+    pass "Steps are numbered"
+else
+    fail "step numbering: $output"
+fi
+
+# Test 4: Long command output goes to the log, one line on screen.
+
+: > "$LOG_FILE"
+output="$(run_logged "Downloading" bash -c 'echo package-line-1; echo package-line-2')"
+
+if [[ "$output" == "Downloading ... OK ("*")" ]] &&
+   [[ "$output" != *"package-line"* ]] &&
+   grep -q "package-line-2" "$LOG_FILE"; then
+    pass "Command output kept in the log, summary on screen"
+else
+    fail "quiet run_logged: $output"
+fi
+
+# Test 5: Failure shows the last lines and the log path.
+
+: > "$LOG_FILE"
+
+if output="$(run_logged "Downloading" bash -c 'echo something broke >&2; exit 3')"; then
+    fail "Failure reported as success"
+else
+    status=$?
+
+    if [[ "$status" -eq 3 ]] &&
+       [[ "$output" == *"Downloading ... FAILED"* ]] &&
+       [[ "$output" == *"something broke"* ]] &&
+       [[ "$output" == *"Full log: $LOG_FILE"* ]]; then
+        pass "Failure shows last lines, log path and exit code"
+    else
+        fail "failure output: $output"
+    fi
+fi
+
+# Test 6: --verbose shows the output on screen and keeps it in the log.
+
+: > "$LOG_FILE"
+output="$(VERBOSE=1 run_logged "Downloading" bash -c 'echo visible-line')"
+
+if [[ "$output" == *"visible-line"* ]] && grep -q "visible-line" "$LOG_FILE"; then
+    pass "--verbose shows output and logs it"
+else
+    fail "verbose output: $output"
+fi
+
+# Test 7: Without a log file, output is shown on screen.
+
+output="$(LOG_FILE="" run_logged "Downloading" bash -c 'echo no-log-line')"
+
+if [[ "$output" == *"no-log-line"* ]]; then
+    pass "No log file: output shown on screen"
+else
+    fail "no-log output"
+fi
+
+# Test 8: --step waits for Enter before the next step.
+
+STEP_INDEX=1 STEP_TOTAL=4
+output="$(STEP_MODE=1 step "Next step" <<< "")"
+
+if [[ "$output" == *"Press Enter to continue"*"[2/4] Next step"* ]]; then
+    pass "--step pauses before the next step"
+else
+    fail "step mode: $output"
+fi
+
+echo "[SUCCESS] Output tests passed."

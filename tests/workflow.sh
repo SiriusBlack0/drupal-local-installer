@@ -3,6 +3,8 @@ set -e
 
 source lib/workflow.sh
 
+step() { :; }
+
 DRUPAL_VERSION="11.4.8"
 PROJECT_PATH="/tmp/test-drupal"
 PHP_VERSION="8.5"

@@ -147,7 +147,7 @@ plan_php_extensions() {
             fi
         done
     elif check_php_extensions "$PHP_VERSION" "${REQUIRED_PHP_EXTENSIONS[@]}"; then
-        echo "All checked PHP extensions are available."
+        echo "[OK] PHP $PHP_VERSION extensions (${#REQUIRED_PHP_EXTENSIONS[@]} checked)"
     else
         echo "[MISSING] Some required PHP extensions."
         echo "Planning PHP extension packages..."

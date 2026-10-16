@@ -3,6 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+source lib/output.sh
 source lib/registry.sh
 source lib/project.sh
 

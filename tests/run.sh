@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 SUITES=(
     "Bash Syntax|bash tests/syntax.sh"
     "Module Structure|bash tests/module_structure.sh"
+    "Output Tests|bash tests/output.sh"
     "ShellCheck|shellcheck -S style -x install.sh lib/*.sh tests/*.sh"
     "Project Name Functional Tests|bash tests/project_name.sh"
     "Drupal Version Selection Tests|bash tests/drupal_version_selection.sh"

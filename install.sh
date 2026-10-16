@@ -5,6 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Modules only define functions; main() decides what runs and when.
+source "$SCRIPT_DIR/lib/output.sh"
 source "$SCRIPT_DIR/lib/drupal.sh"
 source "$SCRIPT_DIR/lib/php.sh"
 source "$SCRIPT_DIR/lib/php_fpm.sh"
@@ -44,6 +45,16 @@ print_banner() {
 }
 
 main() {
+    local options_status=0
+
+    parse_options "$@" || options_status=$?
+
+    case "$options_status" in
+        0) ;;
+        2) exit 0 ;;
+        *) exit 1 ;;
+    esac
+
     if ! check_operating_system; then
         exit 1
     fi
@@ -58,7 +69,18 @@ main() {
     # Phase 1: questions only, no system changes.
     run_configuration_ui
 
+    # Detailed command output goes to a private log file.
+    init_log "$PROJECT_MACHINE_NAME"
+    STEP_TOTAL=4
+
+    if [[ -n "$LOG_FILE" ]]; then
+        echo
+        echo "Full output is written to: $LOG_FILE"
+    fi
+
     # Phase 2: checks and installation plan, no system changes.
+    step "Checking the system"
+
     if ! run_preflight; then
         echo "Installation stopped."
         exit 1
@@ -67,8 +89,15 @@ main() {
     # Phase 3: approved installation and project creation.
     if ! run_installation_workflow; then
         echo "[ERROR] Installation workflow failed."
+        [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
         exit 1
     fi
+
+    echo
+    echo "======================================"
+    echo "[DONE] $PROJECT_PATH"
+    [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
+    echo "======================================"
 }
 
 main "$@"

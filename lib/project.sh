@@ -114,9 +114,8 @@ create_drupal_project() {
         return 1
     fi
 
-    echo "Creating Drupal $drupal_version with PHP $php_version..."
-
-    run_as_project_user "$run_user" \
+    run_logged "Downloading Drupal $drupal_version (PHP $php_version)" \
+        run_as_project_user "$run_user" \
         "php${php_version}" "$composer_path" create-project \
         --no-interaction \
         "drupal/recommended-project:$drupal_version" \
@@ -136,9 +135,8 @@ install_drush() {
         return 1
     fi
 
-    echo "Adding Drush to the project..."
-
-    run_as_project_user "$run_user" \
+    run_logged "Adding Drush" \
+        run_as_project_user "$run_user" \
         "php${php_version}" "$composer_path" require \
         --no-interaction \
         --working-dir="$project_path" \
