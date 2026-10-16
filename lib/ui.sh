@@ -473,110 +473,57 @@ detect_php_requirements() {
     DRUPAL_MINOR="$(get_drupal_minor "$DRUPAL_VERSION")"
 }
 
+# PHP versions come from config/compatibility.conf (via
+# get_supported_php_versions). Only versions that are installed or
+# installable from the configured package sources are offered.
 resolve_compatible_php_versions() {
-    if has_php_support_policy "$DRUPAL_MINOR"; then
+    local version
+    local status
+    local found_versions
+    local -a required_versions=()
+    local -a unavailable_versions=()
 
-
-
-        mapfile -t PHP_VERSIONS < <(
-
-            get_supported_php_versions "$DRUPAL_MINOR"
-
-        )
-
-
-
-    else
-
-
-
+    if ! has_php_support_policy "$DRUPAL_MINOR"; then
         echo
-
-        echo "WARNING:"
-
-        echo "Drupal $DRUPAL_MINOR is not listed in the current PHP support policy."
-
-        echo "This may be an older or unsupported Drupal release."
-
-        echo
-
-        echo "The installer can fall back to the Composer requirement:"
-
-        echo "PHP $PHP_CONSTRAINT"
-
-
-
-        while true; do
-
-
-
-            echo
-
-            if ! read -r -p "Continue using Composer compatibility? [y/N]: " LEGACY_CHOICE; then
-                echo "Input cancelled."
-                exit 0
-            fi
-
-
-
-            case "$LEGACY_CHOICE" in
-
-                y|Y)
-
-                    break
-
-                    ;;
-
-                n|N|"")
-
-                    echo "Installation cancelled."
-
-                    exit 0
-
-                    ;;
-
-                *)
-
-                    echo "Please enter y or n."
-
-                    ;;
-
-            esac
-
-
-
-        done
-
-
-
-        mapfile -t PHP_VERSIONS < <(
-
-            get_compatible_php_versions "$PHP_CONSTRAINT"
-
-        )
-
-
-
+        echo "[UNSUPPORTED] Drupal $DRUPAL_MINOR is not supported by this installer."
+        echo "Supported Drupal releases: $(get_supported_drupal_minors | paste -sd ' ' -)"
+        echo "Older releases no longer receive security fixes."
+        echo "For a new project, choose the latest release of a supported version."
+        exit 1
     fi
 
+    mapfile -t required_versions < <(get_supported_php_versions "$DRUPAL_MINOR")
 
+    PHP_VERSIONS=()
 
+    for version in "${required_versions[@]}"; do
+        status="$(get_php_version_status "$version")"
 
+        if [ "$status" = "not_available" ]; then
+            unavailable_versions+=("$version")
+        else
+            PHP_VERSIONS+=("$version")
+        fi
+    done
 
     echo
-
-    echo "Drupal $DRUPAL_VERSION requires PHP $PHP_CONSTRAINT"
-
-
+    echo "Drupal $DRUPAL_VERSION supports PHP: ${required_versions[*]}"
 
     if [ "${#PHP_VERSIONS[@]}" -eq 0 ]; then
+        found_versions="$(get_php_candidate_versions | paste -sd ' ' -)"
 
         echo
-
-        echo "No compatible PHP-FPM version was found on this system."
-
+        echo "[BLOCKED] No supported PHP version is installed or available."
+        echo "Required PHP version(s): ${required_versions[*]}"
+        echo "PHP versions on this system or in its package sources: ${found_versions:-none}"
+        echo
+        echo "Install one of the required PHP versions first."
+        echo "This installer does not add package sources automatically."
         exit 1
+    fi
 
+    if [ "${#unavailable_versions[@]}" -gt 0 ]; then
+        echo "Not available on this system: ${unavailable_versions[*]}"
     fi
 }
 

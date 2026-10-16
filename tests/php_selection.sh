@@ -15,11 +15,10 @@ end = source.index("# Database compatibility", start)
 section = source[start:end]
 calls = "\ndetect_php_requirements\nresolve_compatible_php_versions\nprompt_php_version\n"
 
+# Mocked system: PHP 8.5 installed, 8.4 installable, everything else missing.
 helpers = r'''
 get_drupal_php_constraint() {
     case "$1" in
-        11.4.9) echo ">=8.3.0" ;;
-        11.0.11) echo ">=8.3.0" ;;
         99.0.0) echo "" ;;
         *) echo ">=8.1.0" ;;
     esac
@@ -30,41 +29,75 @@ get_drupal_minor() {
 }
 
 has_php_support_policy() {
-    [[ "$1" == "11.4" ]]
+    [[ "$1" == "11.4" || "$1" == "10.4" ]]
+}
+
+get_supported_drupal_minors() {
+    printf '%s\n' 10.4 11.4
 }
 
 get_supported_php_versions() {
-    printf '%s\n' 8.3 8.4 8.5
+    case "$1" in
+        11.4) printf '%s\n' 8.3 8.4 8.5 ;;
+        10.4) printf '%s\n' 8.1 8.2 8.3 8.4 ;;
+        *) return 1 ;;
+    esac
 }
 
-get_compatible_php_versions() {
-    printf '%s\n' 8.3 8.5
+get_php_candidate_versions() {
+    printf '%s\n' 8.4 8.5
 }
 
 get_php_version_status() {
     case "$1" in
         8.5) echo installed ;;
-        *) echo available ;;
+        8.4) echo available ;;
+        *) echo not_available ;;
     esac
 }
 '''
 
+# Only PHP 8.5 exists on the system (like a fresh Ubuntu 26.04).
+only_85 = r'''
+get_php_candidate_versions() {
+    printf '%s\n' 8.5
+}
+
+get_php_version_status() {
+    case "$1" in
+        8.5) echo installed ;;
+        *) echo not_available ;;
+    esac
+}
+'''
+
+# (label, drupal version, extra mocks, input, exit code, expected PHP,
+#  text that must appear, text that must not appear)
 cases = [
-    ("Supported PHP selection", "11.4.9", "3\n", 0, "8.5"),
-    ("Invalid selection retry", "11.4.9", "9\n3\n", 0, "8.5"),
-    ("Legacy fallback accepted", "11.0.11", "y\n2\n", 0, "8.5"),
-    ("Legacy fallback rejected", "11.0.11", "n\n", 0, None),
-    ("Missing PHP constraint", "99.0.0", "", 1, None),
-    ("Legacy fallback EOF", "11.0.11", "", 0, None),
-    ("PHP selection EOF", "11.4.9", "", 0, None),
+    ("Supported PHP selection", "11.4.9", "", "2\n", 0, "8.5",
+     "Drupal 11.4.9 supports PHP: 8.3 8.4 8.5", None),
+    ("Invalid selection retry", "11.4.9", "", "9\n2\n", 0, "8.5",
+     "Invalid selection. Try again.", None),
+    ("Unavailable PHP versions are not offered", "11.4.9", "", "1\n", 0, "8.4",
+     "Not available on this system: 8.3", "PHP 8.3 ["),
+    ("Unsupported Drupal release rejected", "9.0.0", "", "", 1, None,
+     "[UNSUPPORTED] Drupal 9.0 is not supported", "Select PHP version"),
+    ("Missing PHP shows required versions", "10.4.1", only_85, "", 1, None,
+     "Required PHP version(s): 8.1 8.2 8.3 8.4", "Select PHP version"),
+    ("Missing PHP lists what the system has", "10.4.1", only_85, "", 1, None,
+     "PHP versions on this system or in its package sources: 8.5", None),
+    ("Missing PHP constraint", "99.0.0", "", "", 1, None,
+     "Could not determine PHP requirements", None),
+    ("PHP selection EOF", "11.4.9", "", "", 0, None,
+     "Input cancelled.", None),
 ]
 
-# Run the existing PHP selection tests.
-for label, drupal_version, user_input, expected_code, expected_php in cases:
+for label, version, extra, user_input, code, php, must, must_not in cases:
     script = (
         "set -e\n"
         + helpers
-        + f'\nDRUPAL_VERSION="{drupal_version}"\n'
+        + extra
+        + f'\nDRUPAL_VERSION="{version}"\n'
         + section
         + calls
         + '\nprintf "RESULT:%s:%s\\n" "$PHP_VERSION" "$PHP_STATUS"\n'
@@ -78,13 +111,16 @@ for label, drupal_version, user_input, expected_code, expected_php in cases:
         timeout=5,
     )
 
-    passed = result.returncode == expected_code
+    passed = result.returncode == code
 
-    if expected_php is not None:
-        passed = passed and f"RESULT:{expected_php}:" in result.stdout
+    if php is not None:
+        passed = passed and f"RESULT:{php}:" in result.stdout
 
-    if "EOF" in label:
-        passed = passed and "Input cancelled." in result.stdout
+    if must is not None:
+        passed = passed and must in result.stdout
+
+    if must_not is not None:
+        passed = passed and must_not not in result.stdout
 
     print(f"[{'PASS' if passed else 'FAIL'}] {label}")
 
@@ -92,37 +128,6 @@ for label, drupal_version, user_input, expected_code, expected_php in cases:
         print(result.stdout)
         print(result.stderr)
         raise SystemExit(1)
-
-
-# Test when no compatible PHP versions are available.
-script = (
-    "set -e\n"
-    + helpers
-    + '\nget_supported_php_versions() { return 0; }\n'
-    + '\nDRUPAL_VERSION="11.4.9"\n'
-    + section
-    + calls
-)
-
-result = subprocess.run(
-    ["bash", "-c", script],
-    input="",
-    text=True,
-    capture_output=True,
-    timeout=5,
-)
-
-passed = (
-    result.returncode == 1
-    and "No compatible PHP-FPM version was found" in result.stdout
-)
-
-print(f"[{'PASS' if passed else 'FAIL'}] No compatible PHP versions")
-
-if not passed:
-    print(result.stdout)
-    print(result.stderr)
-    raise SystemExit(1)
 
 print("\n[SUCCESS] PHP selection functional tests passed.")
 PY

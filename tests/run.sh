@@ -11,6 +11,7 @@ SUITES=(
     "ShellCheck|shellcheck -S style -x install.sh lib/*.sh tests/*.sh"
     "Project Name Functional Tests|bash tests/project_name.sh"
     "Drupal Version Selection Tests|bash tests/drupal_version_selection.sh"
+    "Compatibility Matrix Tests|bash tests/compatibility.sh"
     "PHP Compatibility & Selection Tests|bash tests/php_selection.sh"
     "Database Compatibility & Selection Tests|bash tests/database_selection.sh"
     "Database Configuration Tests|bash tests/database_configuration.sh"

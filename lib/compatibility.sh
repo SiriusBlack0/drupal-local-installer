@@ -1,25 +1,64 @@
 #!/usr/bin/env bash
 
-get_supported_php_versions() {
+# --------------------------------------------------
+# Compatibility matrix (config/compatibility.conf)
+# --------------------------------------------------
+
+# Resolved once, when the module is loaded, so later "cd" calls do not
+# break the path. DRUPAL_COMPATIBILITY_FILE can override it (tests).
+COMPATIBILITY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+get_compatibility_file() {
+    printf '%s\n' "${DRUPAL_COMPATIBILITY_FILE:-$COMPATIBILITY_LIB_DIR/../config/compatibility.conf}"
+}
+
+# Prints the matrix rows without comments or blank lines.
+get_compatibility_rows() {
+    local file
+
+    file="$(get_compatibility_file)"
+
+    if [[ ! -r "$file" ]]; then
+        echo "[ERROR] Compatibility file not found: $file" >&2
+        return 1
+    fi
+
+    grep -Ev '^[[:space:]]*(#|$)' "$file"
+}
+
+get_compatibility_row() {
     local drupal_minor="$1"
 
-    case "$drupal_minor" in
-        11.1|11.2)
-            printf '%s\n' "8.3" "8.4"
-            ;;
+    [[ "$drupal_minor" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
 
-        11.3|11.4)
-            printf '%s\n' "8.3" "8.4" "8.5"
-            ;;
+    get_compatibility_rows | awk -F'|' -v minor="$drupal_minor" '
+        $1 == minor { print; found = 1; exit }
+        END { exit !found }
+    '
+}
 
-        10.4|10.5|10.6)
-            printf '%s\n' "8.1" "8.2" "8.3" "8.4"
-            ;;
+get_supported_drupal_minors() {
+    get_compatibility_rows | cut -d'|' -f1
+}
 
-        *)
-            return 1
-            ;;
-    esac
+get_supported_php_versions() {
+    local drupal_minor="$1"
+    local row
+
+    row="$(get_compatibility_row "$drupal_minor")" || return 1
+
+    printf '%s\n' "$row" | cut -d'|' -f2 | tr ',' '\n'
+}
+
+# True when version $1 is greater than or equal to version $2.
+# Uses sort -V, so it works before PHP is installed.
+version_at_least() {
+    local version="$1"
+    local minimum="$2"
+
+    [[ -n "$version" && -n "$minimum" ]] || return 1
+
+    [[ "$(printf '%s\n%s\n' "$minimum" "$version" | sort -V | head -n 1)" == "$minimum" ]]
 }
 
 get_supported_system_php_versions() {
@@ -47,61 +86,33 @@ has_php_support_policy() {
     get_supported_php_versions "$drupal_minor" >/dev/null 2>&1
 }
 
+# Database minimums are defined per Drupal major version.
 get_database_minimum_version() {
     local drupal_major="$1"
     local database_engine="$2"
+    local field
+    local row
 
-    case "$drupal_major:$database_engine" in
-
-        10:mariadb)
-            echo "10.3.7"
-            ;;
-
-        10:mysql)
-            echo "5.7.8"
-            ;;
-
-        10:postgresql)
-            echo "12"
-            ;;
-
-        10:sqlite)
-            echo "3.26"
-            ;;
-
-        11:mariadb)
-            echo "10.6"
-            ;;
-
-        11:mysql)
-            echo "8.0"
-            ;;
-
-        11:postgresql)
-            echo "16"
-            ;;
-
-        11:sqlite)
-            echo "3.45"
-            ;;
-
-        *)
-            return 1
-            ;;
+    case "$database_engine" in
+        mariadb) field=3 ;;
+        mysql) field=4 ;;
+        postgresql) field=5 ;;
+        sqlite) field=6 ;;
+        *) return 1 ;;
     esac
+
+    [[ "$drupal_major" =~ ^[0-9]+$ ]] || return 1
+
+    row="$(get_compatibility_rows | grep -m 1 "^${drupal_major}\.")" || return 1
+
+    printf '%s\n' "$row" | cut -d'|' -f"$field"
 }
 
 database_version_meets_minimum() {
     local installed_version="$1"
     local minimum_version="$2"
 
-    php -r "
-        exit(
-            version_compare('$installed_version', '$minimum_version', '>=')
-            ? 0
-            : 1
-        );
-    "
+    version_at_least "$installed_version" "$minimum_version"
 }
 
 is_installed_database_compatible() {
