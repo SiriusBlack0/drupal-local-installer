@@ -640,8 +640,12 @@ is_valid_sqlite_database_path() {
     [[ "$database_path" != *"/web/"* ]] || return 1
 }
 
+# Optional second argument: the project owner. When the installer runs
+# as another user (started with sudo), the directory is handed to the
+# owner, because PHP-FPM runs as the owner and must write the database.
 provision_sqlite_database() {
     local database_path="$1"
+    local owner="${2:-}"
     local database_dir
 
     if ! is_valid_sqlite_database_path "$database_path"; then
@@ -661,6 +665,17 @@ provision_sqlite_database() {
     if [[ ! -d "$database_dir" ]] && ! mkdir -m 0700 "$database_dir"; then
         echo "[ERROR] Could not create SQLite directory: $database_dir"
         return 1
+    fi
+
+    if [[ -n "$owner" && "$owner" != "$(id -un)" ]]; then
+        if [[ ! "$owner" =~ ^[a-z_][a-z0-9_-]*$ ]] ||
+           ! sudo chown "$owner" "$database_dir"; then
+            echo "[ERROR] Could not give $database_dir to $owner"
+            return 1
+        fi
+
+        echo "[SUCCESS] SQLite database directory ready: $database_dir (owner $owner)"
+        return 0
     fi
 
     if [[ ! -w "$database_dir" ]]; then
@@ -829,8 +844,9 @@ provision_project_database() {
             return
             ;;
         sqlite)
-            # For SQLite the second argument is the database file path.
-            provision_sqlite_database "$database_name"
+            # For SQLite: second argument is the database file path,
+            # third (optional) is the project owner.
+            provision_sqlite_database "$database_name" "$database_user"
             return
             ;;
         *)

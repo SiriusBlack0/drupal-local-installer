@@ -1,5 +1,28 @@
 #!/usr/bin/env bash
 
+# Creates the project database for the selected engine.
+# Called directly (not through run_logged) so that the database
+# password never appears in the log or in a process list.
+setup_project_database() {
+    log_line "Database: $DATABASE_ENGINE (credentials are not logged)"
+
+    case "$DATABASE_ENGINE" in
+        sqlite)
+            provision_project_database \
+                sqlite \
+                "$SQLITE_DATABASE_PATH" \
+                "$PROJECT_USER"
+            ;;
+        *)
+            provision_project_database \
+                "$DATABASE_ENGINE" \
+                "$DATABASE_NAME" \
+                "$DATABASE_USER" \
+                "$DATABASE_PASSWORD"
+            ;;
+    esac
+}
+
 run_installation_workflow() {
     step "Installing required packages"
     prepare_installation_plan
@@ -24,6 +47,24 @@ run_installation_workflow() {
         "$PHP_VERSION" \
         "$PROJECT_USER"; then
         echo "[ERROR] Drupal provisioning failed."
+        return 1
+    fi
+
+    step "Creating the database"
+
+    # The database functions roll back what they created themselves;
+    # here the project directory from the previous step is removed too.
+    if ! setup_project_database; then
+        echo "[ERROR] Database creation failed."
+        echo "Rolling back: removing $PROJECT_PATH..."
+
+        if remove_project_directory "$PROJECT_PATH"; then
+            echo "[OK] Rollback completed."
+        else
+            echo "[WARNING] Rollback failed. Remove the directory manually:"
+            echo "  sudo rm -rf -- '$PROJECT_PATH'"
+        fi
+
         return 1
     fi
 

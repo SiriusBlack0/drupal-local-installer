@@ -109,6 +109,37 @@ else
     fi
 fi
 
+# Test 7b: The directory is handed to the project owner when needed.
+
+sudo_log="$work_dir/sudo.log"
+sudo() { echo "sudo $*" >> "$sudo_log"; }
+
+owner_project="$work_dir/owner_site"
+mkdir "$owner_project"
+: > "$sudo_log"
+
+if provision_sqlite_database "$owner_project/private/database.sqlite" "otheruser" > /dev/null &&
+   [[ "$(cat "$sudo_log")" == "sudo chown otheruser $owner_project/private" ]]; then
+    echo "[PASS] SQLite directory given to the project owner"
+else
+    echo "[FAIL] SQLite owner handling: $(cat "$sudo_log")"
+    exit 1
+fi
+
+same_project="$work_dir/same_site"
+mkdir "$same_project"
+: > "$sudo_log"
+
+if provision_sqlite_database "$same_project/private/database.sqlite" "$(id -un)" > /dev/null &&
+   [[ ! -s "$sudo_log" ]]; then
+    echo "[PASS] No sudo when the owner runs the installer"
+else
+    echo "[FAIL] Unexpected sudo for the same owner"
+    exit 1
+fi
+
+unset -f sudo
+
 # Test 8: Dispatcher routes SQLite with the file path.
 
 provision_sqlite_database() {

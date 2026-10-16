@@ -77,7 +77,7 @@ main() {
 
     # Detailed command output goes to a private log file.
     init_log "$PROJECT_MACHINE_NAME"
-    STEP_TOTAL=4
+    STEP_TOTAL=5
 
     if [[ -n "$LOG_FILE" ]]; then
         echo

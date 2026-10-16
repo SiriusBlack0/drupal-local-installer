@@ -6,7 +6,7 @@ is missing (only after you approve), and creates the project with the
 correct PHP version.
 
 > **Status:** work in progress. The installer currently creates the project
-> files (Drupal + Drush). Database creation, Nginx/PHP-FPM setup and
+> files (Drupal + Drush) and the database. Nginx/PHP-FPM setup and
 > `drush site:install` are being added. See [Roadmap](#roadmap).
 
 ## Requirements
@@ -32,7 +32,7 @@ The installer works in three phases:
    PHP extensions, services. Nothing is changed on the system.
 3. **Installation** – only after you confirm: missing packages (with a
    simulation and a second confirmation first), project directory,
-   Drupal, Drush.
+   Drupal, Drush, database.
 
 ## Supported versions
 
@@ -95,12 +95,21 @@ The location follows `XDG_STATE_HOME` if it is set.
 
 ## Removing a test project (manual, for now)
 
-Until the "remove project" feature exists, a project created by the
-current version only has its directory:
+Until the "remove project" feature exists, remove the directory and,
+for MariaDB/MySQL or PostgreSQL, the database and its user:
 
 ```bash
 sudo rm -rf -- /var/www/<project>
+
+# MariaDB / MySQL
+sudo mysql -e "DROP DATABASE IF EXISTS \`<db_name>\`; DROP USER IF EXISTS '<db_user>'@'localhost';"
+
+# PostgreSQL
+sudo -u postgres psql -c 'DROP DATABASE IF EXISTS "<db_name>";' -c 'DROP ROLE IF EXISTS "<db_user>";'
 ```
+
+SQLite needs nothing extra: the database file is inside the project
+directory.
 
 ## Development
 
@@ -117,7 +126,7 @@ temporary directories.
 - [x] Questions, compatibility matrix, PHP selection
 - [x] Project directory, Composer and Drush with the project PHP
 - [x] Readable output, logs, `--verbose`, `--step`
-- [ ] Database creation (MariaDB/MySQL, PostgreSQL, SQLite) in the workflow
+- [x] Database creation (MariaDB/MySQL, PostgreSQL, SQLite) in the workflow
 - [ ] Nginx site and PHP-FPM pool, validated before activation
 - [ ] `drush site:install`
 - [ ] Final checks and project registry
