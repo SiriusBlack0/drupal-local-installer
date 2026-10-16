@@ -24,7 +24,7 @@ else
     exit 1
 fi
 
-config=$(generate_php_fpm_pool_config "mydrupal" "8.5")
+config=$(generate_php_fpm_pool_config "mydrupal" "8.5" "developer")
 
 if [[ "$config" == *"[mydrupal]"* ]]; then
     echo "[PASS] PHP-FPM pool name generated correctly"
@@ -45,7 +45,7 @@ fi
 source lib/nginx.sh
 
 nginx_config=$(generate_nginx_config "mydrupal" "/var/www/mydrupal" "8.5")
-fpm_config=$(generate_php_fpm_pool_config "mydrupal" "8.5")
+fpm_config=$(generate_php_fpm_pool_config "mydrupal" "8.5" "developer")
 
 socket=$(get_project_php_fpm_socket "mydrupal" "8.5")
 
@@ -59,7 +59,7 @@ fi
 
 test_file=$(mktemp)
 
-if write_php_fpm_pool_config "mydrupal" "8.5" "$test_file" 2>/dev/null; then
+if write_php_fpm_pool_config "mydrupal" "8.5" "developer" "$test_file" 2>/dev/null; then
     echo "[FAIL] Existing PHP-FPM config was overwritten"
     rm -f "$test_file"
     exit 1
@@ -72,7 +72,7 @@ rm -f "$test_file"
 test_dir=$(mktemp -d)
 test_file="$test_dir/mydrupal.conf"
 
-if write_php_fpm_pool_config "mydrupal" "8.5" "$test_file" &&
+if write_php_fpm_pool_config "mydrupal" "8.5" "developer" "$test_file" &&
    [[ -f "$test_file" ]] &&
    grep -qFx "[mydrupal]" "$test_file" &&
    grep -qFx "listen = /run/php/php8.5-fpm-mydrupal.sock" "$test_file"; then
@@ -81,6 +81,51 @@ else
     echo "[FAIL] New PHP-FPM pool config creation failed"
     rm -rf "$test_dir"
     exit 1
+fi
+
+rm -rf "$test_dir"
+
+# Pool runs as the given user; Nginx keeps socket access.
+
+config=$(generate_php_fpm_pool_config "mydrupal" "8.5" "developer")
+
+if grep -qFx "user = developer" <<< "$config" &&
+   grep -qFx "group = www-data" <<< "$config" &&
+   grep -qFx "listen.owner = www-data" <<< "$config"; then
+    echo "[PASS] PHP-FPM pool runs as the given user"
+else
+    echo "[FAIL] PHP-FPM pool user/group incorrect"
+    exit 1
+fi
+
+# Invalid input is rejected.
+
+for case in "my-drupal|8.5|developer" "mydrupal|8.x|developer" "mydrupal|8.5|bad user" "mydrupal|8.5|"; do
+    IFS='|' read -r name version user <<< "$case"
+
+    if generate_php_fpm_pool_config "$name" "$version" "$user" >/dev/null 2>&1; then
+        echo "[FAIL] Invalid input accepted: $case"
+        exit 1
+    fi
+done
+
+echo "[PASS] Invalid pool name, PHP version and user rejected"
+
+# Invalid input must not leave an empty config file.
+
+test_dir=$(mktemp -d)
+test_file="$test_dir/bad.conf"
+
+if write_php_fpm_pool_config "bad name" "8.5" "developer" "$test_file" 2>/dev/null; then
+    echo "[FAIL] Invalid pool config was written"
+    rm -rf "$test_dir"
+    exit 1
+elif [[ -e "$test_file" ]]; then
+    echo "[FAIL] Empty config file left behind"
+    rm -rf "$test_dir"
+    exit 1
+else
+    echo "[PASS] No file written for invalid input"
 fi
 
 rm -rf "$test_dir"

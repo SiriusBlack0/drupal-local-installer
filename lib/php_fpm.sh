@@ -21,14 +21,33 @@ get_php_fpm_pool_config_path() {
 generate_php_fpm_pool_config() {
     local machine_name="$1"
     local php_version="$2"
+    local run_user="$3"
 
     local socket
+
+    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
+        echo "[ERROR] Invalid project machine name: $machine_name" >&2
+        return 1
+    fi
+
+    if [[ ! "$php_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        echo "[ERROR] Invalid PHP version: $php_version" >&2
+        return 1
+    fi
+
+    if [[ ! "$run_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] Invalid PHP-FPM pool user: $run_user" >&2
+        return 1
+    fi
+
     socket="$(get_project_php_fpm_socket "$machine_name" "$php_version")"
 
+    # PHP runs as the developer who owns the project files.
+    # Nginx (www-data) only needs access to the socket.
     cat <<EOF
 [$machine_name]
 
-user = www-data
+user = $run_user
 group = www-data
 
 listen = $socket
@@ -62,14 +81,21 @@ php_fpm_pool_exists() {
 write_php_fpm_pool_config() {
     local machine_name="$1"
     local php_version="$2"
-    local output_path="$3"
+    local run_user="$3"
+    local output_path="$4"
+    local config
+
+    # Generate first, so invalid input never leaves an empty file behind.
+    if ! config="$(generate_php_fpm_pool_config \
+        "$machine_name" \
+        "$php_version" \
+        "$run_user")"; then
+        return 1
+    fi
 
     if ! (
         set -C
-
-        generate_php_fpm_pool_config \
-            "$machine_name" \
-            "$php_version" > "$output_path"
+        printf '%s\n' "$config" > "$output_path"
     ); then
         printf 'Error: Could not create pool configuration: %s\n' \
             "$output_path" >&2
