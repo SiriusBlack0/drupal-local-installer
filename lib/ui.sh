@@ -473,6 +473,14 @@ detect_php_requirements() {
     DRUPAL_MINOR="$(get_drupal_minor "$DRUPAL_VERSION")"
 }
 
+# Shown when the host system cannot run the requested setup.
+print_container_hint() {
+    echo
+    echo "Best practice: a container-based setup (Docker, for example DDEV)"
+    echo "runs each project with its own PHP and database versions,"
+    echo "without changing the packages of this system."
+}
+
 # PHP versions come from config/compatibility.conf (via
 # get_supported_php_versions). Only versions that are installed or
 # installable from the configured package sources are offered.
@@ -489,7 +497,8 @@ resolve_compatible_php_versions() {
         echo "Supported Drupal releases: $(get_supported_drupal_minors | paste -sd ' ' -)"
         echo "Older releases no longer receive security fixes."
         echo "For a new project, choose the latest release of a supported version."
-        exit 1
+        print_container_hint
+        return 1
     fi
 
     mapfile -t required_versions < <(get_supported_php_versions "$DRUPAL_MINOR")
@@ -519,12 +528,47 @@ resolve_compatible_php_versions() {
         echo
         echo "Install one of the required PHP versions first."
         echo "This installer does not add package sources automatically."
-        exit 1
+        print_container_hint
+        return 1
     fi
 
     if [ "${#unavailable_versions[@]}" -gt 0 ]; then
         echo "Not available on this system: ${unavailable_versions[*]}"
     fi
+}
+
+# Called when the chosen Drupal release cannot be installed here.
+# The user decides what happens next.
+choose_after_blocked() {
+    local choice
+
+    while true; do
+        echo
+        echo "What would you like to do?"
+        echo
+        echo "1) Choose another Drupal version"
+        echo "2) Cancel installation"
+        echo
+
+        if ! read -r -p "Select [1-2]: " choice; then
+            echo
+            echo "Input cancelled."
+            exit 0
+        fi
+
+        case "$choice" in
+            1)
+                return 0
+                ;;
+            2)
+                echo "Installation cancelled."
+                exit 0
+                ;;
+            *)
+                echo "Invalid selection. Please choose 1 or 2."
+                ;;
+        esac
+    done
 }
 
 prompt_php_version() {
@@ -910,11 +954,22 @@ confirm_installation() {
 # install.sh calls run_configuration_ui.
 run_configuration_ui() {
     prompt_project_name
-    prompt_drupal_version
 
-    echo
-    detect_php_requirements
-    resolve_compatible_php_versions
+    # Repeat the version choice until the system can run it,
+    # or until the user cancels.
+    while true; do
+        prompt_drupal_version
+
+        echo
+        detect_php_requirements
+
+        if resolve_compatible_php_versions; then
+            break
+        fi
+
+        choose_after_blocked
+    done
+
     prompt_php_version
 
     echo

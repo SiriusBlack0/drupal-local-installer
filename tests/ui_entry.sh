@@ -85,4 +85,53 @@ else
     exit 1
 fi
 
+# Test 5: Blocked release lets the user choose another version.
+
+resolve_attempts=0
+
+resolve_compatible_php_versions() {
+    log_call php_resolve
+    resolve_attempts=$((resolve_attempts + 1))
+    [[ "$resolve_attempts" -gt 1 ]]
+}
+
+call_log=""
+DATABASE_ENGINE="sqlite"
+run_configuration_ui <<< "1" > /dev/null
+
+expected="project_name drupal_version php_requirements php_resolve drupal_version php_requirements php_resolve php_version db_detect db_select sqlite_config confirm "
+
+if [[ "$call_log" == "$expected" ]]; then
+    echo "[PASS] Blocked release returns to Drupal version selection"
+else
+    echo "[FAIL] Blocked release flow: $call_log"
+    exit 1
+fi
+
+# Tests 6-8: choose_after_blocked answers.
+
+if output="$(choose_after_blocked <<< "2")" &&
+   [[ "$output" == *"Installation cancelled."* ]]; then
+    echo "[PASS] Blocked release can be cancelled"
+else
+    echo "[FAIL] Cancel after blocked release"
+    exit 1
+fi
+
+if output="$(choose_after_blocked < /dev/null)" &&
+   [[ "$output" == *"Input cancelled."* ]]; then
+    echo "[PASS] EOF after blocked release cancels cleanly"
+else
+    echo "[FAIL] EOF after blocked release"
+    exit 1
+fi
+
+if output="$(printf '9\n1\n' | choose_after_blocked)" &&
+   [[ "$output" == *"Invalid selection. Please choose 1 or 2."* ]]; then
+    echo "[PASS] Invalid choice after blocked release is retried"
+else
+    echo "[FAIL] Invalid choice after blocked release"
+    exit 1
+fi
+
 echo "[SUCCESS] UI entry point tests passed."
