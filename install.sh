@@ -42,6 +42,12 @@ print_banner() {
     echo "        Drupal Local Installer"
     echo "======================================"
     echo
+    echo "Nothing is changed on this system until you confirm the installation."
+    echo "Long command output (Composer, Drush) is saved to a private log in:"
+    echo "  $(get_log_directory)"
+    echo "Options: --verbose (show everything), --step (pause between steps), --help"
+    echo "Details: README.md"
+    echo
 }
 
 main() {

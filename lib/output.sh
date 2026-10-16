@@ -146,6 +146,10 @@ Options:
   --step      Pause before each installation step
   --help      Show this help
 USAGE
+    echo
+    echo "Logs: $(get_log_directory)"
+    echo "      (one file per installation, readable only by you)"
+    echo "More information: README.md"
 }
 
 # Sets VERBOSE and STEP_MODE from the command line.
