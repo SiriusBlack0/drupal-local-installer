@@ -78,3 +78,31 @@ is_nginx_config_taken() {
     [ -e "/etc/nginx/sites-enabled/${machine_name}.conf" ] ||
     [ -L "/etc/nginx/sites-enabled/${machine_name}.conf" ]
 }
+
+# --------------------------------------------------
+# Describe the first conflict for a new project
+# --------------------------------------------------
+
+# Prints why the project cannot be created and returns 0 when a
+# conflict exists; returns 1 when the name is free to use.
+get_project_conflict() {
+    local machine_name="$1"
+    local project_path="$2"
+
+    if is_project_registered "$machine_name"; then
+        echo "Project '$machine_name' is already registered."
+        return 0
+    fi
+
+    if is_project_directory_taken "$project_path"; then
+        echo "Project directory '$project_path' already exists."
+        return 0
+    fi
+
+    if is_nginx_config_taken "$machine_name"; then
+        echo "Nginx configuration for '$machine_name' already exists."
+        return 0
+    fi
+
+    return 1
+}

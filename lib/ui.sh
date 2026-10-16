@@ -13,6 +13,8 @@
 # --------------------------------------------------
 
 prompt_project_name() {
+    local conflict
+
     PROJECT_NAME_PATTERN='^[a-zA-Z0-9][a-zA-Z0-9 _-]*$'
 
     while true; do
@@ -34,16 +36,25 @@ prompt_project_name() {
             continue
         fi
 
+        PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+
+        # shellcheck disable=SC2034  # Used by lib/preflight.sh and lib/workflow.sh
+        if ! PROJECT_PATH="$(get_project_path "$PROJECT_MACHINE_NAME")"; then
+            echo "Installation stopped."
+            exit 1
+        fi
+
+        # Catch existing projects now, not after all other questions.
+        # Preflight checks again later, in case something changed.
+        if conflict="$(get_project_conflict "$PROJECT_MACHINE_NAME" "$PROJECT_PATH")"; then
+            echo "$conflict"
+            echo "Choose another project name."
+            continue
+        fi
+
         break
 
     done
-
-    PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
-    # shellcheck disable=SC2034  # Used by lib/preflight.sh and lib/workflow.sh
-    if ! PROJECT_PATH="$(get_project_path "$PROJECT_MACHINE_NAME")"; then
-        echo "Installation stopped."
-        exit 1
-    fi
 }
 
 

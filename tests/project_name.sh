@@ -22,6 +22,7 @@ cases = [
     ("", False),
     ("-invalid", False),
     ("invalid!", False),
+    ("Taken", False),
 ]
 
 for name, valid in cases:
@@ -32,6 +33,13 @@ get_project_machine_name() {{
 }}
 get_project_path() {{
     printf '/var/www/%s' "$1"
+}}
+get_project_conflict() {{
+    if [[ "$1" == "Taken" ]]; then
+        echo "Project directory '/var/www/$1' already exists."
+        return 0
+    fi
+    return 1
 }}
 {function}
 prompt_project_name
@@ -56,6 +64,9 @@ printf 'RESULT:%s' "$PROJECT_NAME"
         and f"RESULT:{expected}" in result.stdout
     )
 
+    if name == "Taken":
+        passed = passed and "Choose another project name." in result.stdout
+
     print(f"[{'PASS' if passed else 'FAIL'}] Input: {name!r}")
 
     if not passed:
@@ -71,6 +82,13 @@ get_project_machine_name() {{
 }}
 get_project_path() {{
     printf '/var/www/%s' "$1"
+}}
+get_project_conflict() {{
+    if [[ "$1" == "Taken" ]]; then
+        echo "Project directory '/var/www/$1' already exists."
+        return 0
+    fi
+    return 1
 }}
 {function}
 prompt_project_name
