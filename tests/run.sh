@@ -27,6 +27,7 @@ SUITES=(
     "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
     "Confirmation Integration Tests|bash tests/integration.sh"
     "Runtime User Tests|bash tests/runtime_user.sh"
+    "Project Path Tests|bash tests/project_path.sh"
 )
 
 echo "======================================"

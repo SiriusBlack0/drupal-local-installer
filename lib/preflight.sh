@@ -19,8 +19,6 @@ echo "Project '$PROJECT_MACHINE_NAME' is not registered."
 # Check project directory
 # --------------------------------------------------
 
-PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
-
 echo
 echo "Checking project directory..."
 

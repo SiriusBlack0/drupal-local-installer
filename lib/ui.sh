@@ -39,8 +39,11 @@ prompt_project_name() {
     done
 
     PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
-    # shellcheck disable=SC2034  # Used by lib/workflow.sh
-    PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
+    # shellcheck disable=SC2034  # Used by lib/preflight.sh and lib/workflow.sh
+    if ! PROJECT_PATH="$(get_project_path "$PROJECT_MACHINE_NAME")"; then
+        echo "Installation stopped."
+        exit 1
+    fi
 }
 
 prompt_project_name

@@ -30,6 +30,9 @@ set -e
 get_project_machine_name() {{
     printf '%s' "$1"
 }}
+get_project_path() {{
+    printf '/var/www/%s' "$1"
+}}
 {function}
 prompt_project_name
 printf 'RESULT:%s' "$PROJECT_NAME"
@@ -65,6 +68,9 @@ script = f'''
 set -e
 get_project_machine_name() {{
     printf '%s' "$1"
+}}
+get_project_path() {{
+    printf '/var/www/%s' "$1"
 }}
 {function}
 prompt_project_name

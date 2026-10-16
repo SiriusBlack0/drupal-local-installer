@@ -1,0 +1,177 @@
+diff --git a/lib/preflight.sh b/lib/preflight.sh
+index 143b82f..5445ff5 100644
+--- a/lib/preflight.sh
++++ b/lib/preflight.sh
+@@ -19,8 +19,6 @@ echo "Project '$PROJECT_MACHINE_NAME' is not registered."
+ # Check project directory
+ # --------------------------------------------------
+ 
+-PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
+-
+ echo
+ echo "Checking project directory..."
+ 
+diff --git a/lib/registry.sh b/lib/registry.sh
+index 36837a8..40c36bb 100644
+--- a/lib/registry.sh
++++ b/lib/registry.sh
+@@ -23,6 +23,37 @@ is_project_registered() {
+     [ -f "$registry_directory/${machine_name}.conf" ]
+ }
+ 
++# --------------------------------------------------
++# Project location
++# --------------------------------------------------
++
++# Base directory for all projects. Defaults to /var/www and can be
++# overridden with DRUPAL_PROJECTS_DIR (absolute path).
++get_projects_base_dir() {
++    local base_dir="${DRUPAL_PROJECTS_DIR:-/var/www}"
++
++    if [[ "$base_dir" != /* ]]; then
++        echo "[ERROR] DRUPAL_PROJECTS_DIR must be an absolute path: $base_dir" >&2
++        return 1
++    fi
++
++    printf '%s\n' "${base_dir%/}"
++}
++
++get_project_path() {
++    local machine_name="$1"
++    local base_dir
++
++    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
++        echo "[ERROR] Invalid project machine name: $machine_name" >&2
++        return 1
++    fi
++
++    base_dir="$(get_projects_base_dir)" || return 1
++
++    printf '%s/%s\n' "$base_dir" "$machine_name"
++}
++
+ # --------------------------------------------------
+ # Check whether a project directory already exists
+ # --------------------------------------------------
+diff --git a/lib/ui.sh b/lib/ui.sh
+index 350a29b..7b3683c 100644
+--- a/lib/ui.sh
++++ b/lib/ui.sh
+@@ -39,8 +39,10 @@ prompt_project_name() {
+     done
+ 
+     PROJECT_MACHINE_NAME="$(get_project_machine_name "$PROJECT_NAME")"
+-    # shellcheck disable=SC2034  # Used by lib/workflow.sh
+-    PROJECT_PATH="/var/www/$PROJECT_MACHINE_NAME"
++    if ! PROJECT_PATH="$(get_project_path "$PROJECT_MACHINE_NAME")"; then
++        echo "Installation stopped."
++        exit 1
++    fi
+ }
+ 
+ prompt_project_name
+diff --git a/tests/project_name.sh b/tests/project_name.sh
+index 6e88d22..eb06d48 100644
+--- a/tests/project_name.sh
++++ b/tests/project_name.sh
+@@ -30,6 +30,9 @@ set -e
+ get_project_machine_name() {{
+     printf '%s' "$1"
+ }}
++get_project_path() {{
++    printf '/var/www/%s' "$1"
++}}
+ {function}
+ prompt_project_name
+ printf 'RESULT:%s' "$PROJECT_NAME"
+@@ -66,6 +69,9 @@ set -e
+ get_project_machine_name() {{
+     printf '%s' "$1"
+ }}
++get_project_path() {{
++    printf '/var/www/%s' "$1"
++}}
+ {function}
+ prompt_project_name
+ '''
+diff --git a/tests/project_path.sh b/tests/project_path.sh
+new file mode 100644
+index 0000000..a67a3a6
+--- /dev/null
++++ b/tests/project_path.sh
+@@ -0,0 +1,63 @@
++#!/usr/bin/env bash
++
++set -euo pipefail
++
++cd "$(dirname "$0")/.."
++
++source lib/registry.sh
++
++check() {
++    local label="$1"
++    local expected="$2"
++    shift 2
++    local output
++
++    if output="$("$@" 2>/dev/null)" && [[ "$output" == "$expected" ]]; then
++        echo "[PASS] $label"
++    else
++        echo "[FAIL] $label (got: '${output:-}')"
++        exit 1
++    fi
++}
++
++check_failure() {
++    local label="$1"
++    shift
++    local output
++
++    if output="$("$@" 2>&1)"; then
++        echo "[FAIL] $label (accepted: '$output')"
++        exit 1
++    elif [[ "$output" == *"[ERROR]"* ]]; then
++        echo "[PASS] $label"
++    else
++        echo "[FAIL] $label (no error message)"
++        exit 1
++    fi
++}
++
++unset DRUPAL_PROJECTS_DIR
++
++# Test 1: Default base directory.
++check "Default project path" "/var/www/mydrupal" \
++    get_project_path mydrupal
++
++# Test 2: Custom base directory.
++DRUPAL_PROJECTS_DIR=/srv/sites check "Custom base directory" "/srv/sites/mydrupal" \
++    get_project_path mydrupal
++
++# Test 3: Trailing slash is normalised.
++DRUPAL_PROJECTS_DIR=/srv/sites/ check "Trailing slash removed" "/srv/sites/mydrupal" \
++    get_project_path mydrupal
++
++# Test 4: Relative base directory is rejected.
++DRUPAL_PROJECTS_DIR=sites check_failure "Relative base directory rejected" \
++    get_project_path mydrupal
++
++# Test 5: Unsafe machine names are rejected.
++for name in "" "My Drupal" "../etc" "my-drupal" "a/b"; do
++    check_failure "Unsafe machine name rejected: '$name'" \
++        get_project_path "$name"
++done
++
++echo "[SUCCESS] Project path tests passed."
+diff --git a/tests/run.sh b/tests/run.sh
+index 7c461ba..e70f2a1 100644
+--- a/tests/run.sh
++++ b/tests/run.sh
+@@ -27,6 +27,7 @@ SUITES=(
+     "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
+     "Confirmation Integration Tests|bash tests/integration.sh"
+     "Runtime User Tests|bash tests/runtime_user.sh"
++    "Project Path Tests|bash tests/project_path.sh"
+ )
+ 
+ echo "======================================"

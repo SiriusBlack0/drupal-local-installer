@@ -24,6 +24,37 @@ is_project_registered() {
 }
 
 # --------------------------------------------------
+# Project location
+# --------------------------------------------------
+
+# Base directory for all projects. Defaults to /var/www and can be
+# overridden with DRUPAL_PROJECTS_DIR (absolute path).
+get_projects_base_dir() {
+    local base_dir="${DRUPAL_PROJECTS_DIR:-/var/www}"
+
+    if [[ "$base_dir" != /* ]]; then
+        echo "[ERROR] DRUPAL_PROJECTS_DIR must be an absolute path: $base_dir" >&2
+        return 1
+    fi
+
+    printf '%s\n' "${base_dir%/}"
+}
+
+get_project_path() {
+    local machine_name="$1"
+    local base_dir
+
+    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
+        echo "[ERROR] Invalid project machine name: $machine_name" >&2
+        return 1
+    fi
+
+    base_dir="$(get_projects_base_dir)" || return 1
+
+    printf '%s/%s\n' "$base_dir" "$machine_name"
+}
+
+# --------------------------------------------------
 # Check whether a project directory already exists
 # --------------------------------------------------
 
