@@ -123,4 +123,71 @@ else
     exit 1
 fi
 
+# Tests 9-12: SQLite is detected through PHP's pdo_sqlite, not sqlite3.
+
+detection() {
+    local installed="no"
+
+    if is_database_engine_installed sqlite; then
+        installed="yes"
+    fi
+
+    printf '%s|%s' "$installed" "$(get_available_database_version sqlite)"
+}
+
+# Stub commands in a temporary bin directory (php8.5, apt-cache).
+stub_bin="$work_dir/bin"
+mkdir -p "$stub_bin"
+PATH="$stub_bin:$PATH"
+
+cat > "$stub_bin/apt-cache" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == "policy libsqlite3-0" ]]; then
+    printf '  Installed: (none)\n  Candidate: 3.46.1-7\n'
+fi
+STUB
+
+# PHP with pdo_sqlite: version comes from PHP itself.
+printf '#!/usr/bin/env bash\necho 3.45.3\n' > "$stub_bin/php8.5"
+chmod +x "$stub_bin/apt-cache" "$stub_bin/php8.5"
+PHP_VERSION="8.5"
+
+if [[ "$(detection)" == "yes|3.45.3" ]] &&
+   [[ "$(get_installed_database_version sqlite)" == "3.45.3" ]]; then
+    echo "[PASS] SQLite detected through PHP pdo_sqlite"
+else
+    echo "[FAIL] SQLite PHP detection: $(detection)"
+    exit 1
+fi
+
+# PHP without pdo_sqlite: not installed, version of the library to install.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$stub_bin/php8.5"
+
+if [[ "$(detection)" == "no|3.46.1" ]]; then
+    echo "[PASS] Missing pdo_sqlite reported as not installed"
+else
+    echo "[FAIL] Missing pdo_sqlite detection: $(detection)"
+    exit 1
+fi
+
+# No PHP version chosen yet.
+unset PHP_VERSION
+
+if [[ "$(detection)" == "no|3.46.1" ]]; then
+    echo "[PASS] SQLite not installed without a PHP version"
+else
+    echo "[FAIL] SQLite detection without PHP version: $(detection)"
+    exit 1
+fi
+
+# Invalid PHP version never reaches a php binary.
+PHP_VERSION="8; rm -rf /"
+
+if [[ "$(detection)" == "no|3.46.1" ]]; then
+    echo "[PASS] Invalid PHP version rejected for SQLite detection"
+else
+    echo "[FAIL] Invalid PHP version handling: $(detection)"
+    exit 1
+fi
+
 echo "[SUCCESS] SQLite database tests passed."

@@ -16,9 +16,33 @@ get_installed_database_engines() {
         echo "postgresql"
     fi
 
-    if command -v sqlite3 >/dev/null 2>&1; then
+    if is_database_engine_installed sqlite; then
         echo "sqlite"
     fi
+}
+
+# --------------------------------------------------
+# SQLite as seen by PHP
+# --------------------------------------------------
+
+# Drupal does not use the sqlite3 command; it uses the SQLite library
+# inside PHP's pdo_sqlite extension. Prints that library version for
+# the selected PHP version, or fails if PHP or pdo_sqlite is missing.
+# Requires PHP_VERSION (chosen before the database in the UI).
+get_php_sqlite_version() {
+    local php_version="${PHP_VERSION:-}"
+
+    [[ "$php_version" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+    command -v "php${php_version}" >/dev/null 2>&1 || return 1
+
+    "php${php_version}" -r '
+        if (!extension_loaded("pdo_sqlite")) {
+            exit(1);
+        }
+        echo (new PDO("sqlite::memory:"))
+            ->query("select sqlite_version()")
+            ->fetchColumn(), PHP_EOL;
+    ' 2>/dev/null
 }
 
 get_installed_database_version() {
@@ -40,6 +64,10 @@ get_installed_database_version() {
             dpkg-query -W -f='${Version}\n' mysql-server 2>/dev/null \
                 | sed -E 's/^[0-9]+://' \
                 | cut -d'-' -f1
+            ;;
+
+        sqlite)
+            get_php_sqlite_version
             ;;
 
         *)
@@ -66,8 +94,8 @@ is_database_engine_installed() {
             ;;
 
         sqlite)
-            command -v sqlite3 >/dev/null 2>&1
-            return $?
+            get_php_sqlite_version >/dev/null
+            return
             ;;
 
         *)
@@ -106,7 +134,12 @@ get_available_database_version() {
             ;;
 
         sqlite)
-            package="sqlite3"
+            # Version PHP really uses; otherwise the SQLite library
+            # that php-sqlite3 would be installed with.
+            if get_php_sqlite_version; then
+                return 0
+            fi
+            package="libsqlite3-0"
             ;;
 
         *)
