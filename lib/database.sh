@@ -518,6 +518,63 @@ provision_postgresql_database() {
     echo "[SUCCESS] PostgreSQL database provisioning completed."
 }
 
+# --------------------------------------------------
+# SQLite
+# --------------------------------------------------
+
+# The database file lives outside the web root (web/), so it can never
+# be downloaded through Nginx. Drupal creates the file itself during
+# site installation; we only prepare the directory.
+get_sqlite_database_path() {
+    local project_path="$1"
+
+    if [[ "$project_path" != /* ]]; then
+        echo "[ERROR] Project path must be absolute: $project_path" >&2
+        return 1
+    fi
+
+    printf '%s/private/database.sqlite\n' "${project_path%/}"
+}
+
+is_valid_sqlite_database_path() {
+    local database_path="$1"
+
+    [[ "$database_path" =~ ^/[a-zA-Z0-9_./-]+\.sqlite$ ]] || return 1
+    [[ "$database_path" != *"/../"* && "$database_path" != *"/./"* ]] || return 1
+    [[ "$database_path" != *"/web/"* ]] || return 1
+}
+
+provision_sqlite_database() {
+    local database_path="$1"
+    local database_dir
+
+    if ! is_valid_sqlite_database_path "$database_path"; then
+        echo "[ERROR] Invalid SQLite database path: $database_path"
+        return 1
+    fi
+
+    if [[ -e "$database_path" || -L "$database_path" ]]; then
+        echo "[ERROR] SQLite database already exists: $database_path"
+        return 1
+    fi
+
+    database_dir="$(dirname "$database_path")"
+
+    # No "mkdir -p": the project directory must already exist, so only
+    # the final "private" directory is created, with mode 0700.
+    if [[ ! -d "$database_dir" ]] && ! mkdir -m 0700 "$database_dir"; then
+        echo "[ERROR] Could not create SQLite directory: $database_dir"
+        return 1
+    fi
+
+    if [[ ! -w "$database_dir" ]]; then
+        echo "[ERROR] SQLite directory is not writable: $database_dir"
+        return 1
+    fi
+
+    echo "[SUCCESS] SQLite database directory ready: $database_dir"
+}
+
 database_exists() {
     local database_name="$1"
     local result
@@ -660,8 +717,9 @@ grant_database_privileges() {
 provision_project_database() {
     local engine="$1"
     local database_name="$2"
-    local database_user="$3"
-    local database_password="$4"
+    # SQLite passes only the engine and file path, so these are optional.
+    local database_user="${3:-}"
+    local database_password="${4:-}"
 
     case "$engine" in
         mariadb|mysql)
@@ -672,6 +730,11 @@ provision_project_database() {
                 "$database_name" \
                 "$database_user" \
                 "$database_password"
+            return
+            ;;
+        sqlite)
+            # For SQLite the second argument is the database file path.
+            provision_sqlite_database "$database_name"
             return
             ;;
         *)

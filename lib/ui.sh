@@ -758,7 +758,10 @@ configure_sqlite_database() {
     DATABASE_NAME=""
     DATABASE_USER=""
     DATABASE_PASSWORD=""
-    SQLITE_DATABASE_PATH="sites/default/files/.ht.sqlite"
+    if ! SQLITE_DATABASE_PATH="$(get_sqlite_database_path "$PROJECT_PATH")"; then
+        echo "Installation stopped."
+        exit 1
+    fi
 
     echo
     echo "SQLite selected."

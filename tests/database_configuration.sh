@@ -31,6 +31,10 @@ is_valid_database_user() {
 is_valid_database_password() {
     [[ "$1" =~ ^[a-zA-Z0-9_@#%+=.-]+$ ]]
 }
+
+get_sqlite_database_path() {
+    printf '%s/private/database.sqlite' "$1"
+}
 '''
 
 cases = [
@@ -38,7 +42,7 @@ cases = [
         "SQLite configuration",
         "sqlite",
         "",
-        "RESULT::::sites/default/files/.ht.sqlite",
+        "RESULT::::/var/www/test_project/private/database.sqlite",
     ),
     (
         "Suggested database credentials",
@@ -70,7 +74,7 @@ for label, engine, user_input, expected in cases:
     script = (
         "set -e\n"
         + helpers
-        + f'\nPROJECT_NAME="Test Project"\nDATABASE_ENGINE="{engine}"\n'
+        + f'\nPROJECT_NAME="Test Project"\nPROJECT_PATH="/var/www/test_project"\nDATABASE_ENGINE="{engine}"\n'
         + section
         + '\nprintf "RESULT:%s:%s:%s:%s\\n" '
           '"$DATABASE_NAME" "$DATABASE_USER" "$DATABASE_PASSWORD" '
@@ -111,7 +115,7 @@ for label, engine, user_input in eof_cases:
     script = (
         "set -e\n"
         + helpers
-        + f'\nPROJECT_NAME="Test Project"\nDATABASE_ENGINE="{engine}"\n'
+        + f'\nPROJECT_NAME="Test Project"\nPROJECT_PATH="/var/www/test_project"\nDATABASE_ENGINE="{engine}"\n'
         + section
         + '\nprintf "UNEXPECTED_COMPLETION\\n"\n'
     )

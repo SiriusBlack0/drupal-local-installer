@@ -24,6 +24,7 @@ SUITES=(
     "Installation Workflow Tests|bash tests/workflow.sh"
     "Database Provisioning Tests|bash tests/database_provisioning.sh"
     "PostgreSQL Database Tests|bash tests/postgresql_database.sh"
+    "SQLite Database Tests|bash tests/sqlite_database.sh"
     "Nginx Configuration Tests|bash tests/nginx.sh"
     "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
     "Confirmation Integration Tests|bash tests/integration.sh"
