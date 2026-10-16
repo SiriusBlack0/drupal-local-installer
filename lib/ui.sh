@@ -482,14 +482,13 @@ print_container_hint() {
 }
 
 # PHP versions come from config/compatibility.conf (via
-# get_supported_php_versions). Only versions that are installed or
-# installable from the configured package sources are offered.
+# get_supported_php_versions). All supported versions are listed with
+# their status; versions that are not available cannot be selected.
 resolve_compatible_php_versions() {
     local version
-    local status
     local found_versions
+    local usable_count=0
     local -a required_versions=()
-    local -a unavailable_versions=()
 
     if ! has_php_support_policy "$DRUPAL_MINOR"; then
         echo
@@ -503,22 +502,18 @@ resolve_compatible_php_versions() {
 
     mapfile -t required_versions < <(get_supported_php_versions "$DRUPAL_MINOR")
 
-    PHP_VERSIONS=()
+    PHP_VERSIONS=("${required_versions[@]}")
 
     for version in "${required_versions[@]}"; do
-        status="$(get_php_version_status "$version")"
-
-        if [ "$status" = "not_available" ]; then
-            unavailable_versions+=("$version")
-        else
-            PHP_VERSIONS+=("$version")
+        if [ "$(get_php_version_status "$version")" != "not_available" ]; then
+            usable_count=$((usable_count + 1))
         fi
     done
 
     echo
     echo "Drupal $DRUPAL_VERSION supports PHP: ${required_versions[*]}"
 
-    if [ "${#PHP_VERSIONS[@]}" -eq 0 ]; then
+    if [ "$usable_count" -eq 0 ]; then
         found_versions="$(get_php_candidate_versions | paste -sd ' ' -)"
 
         echo
@@ -530,10 +525,6 @@ resolve_compatible_php_versions() {
         echo "This installer does not add package sources automatically."
         print_container_hint
         return 1
-    fi
-
-    if [ "${#unavailable_versions[@]}" -gt 0 ]; then
-        echo "Not available on this system: ${unavailable_versions[*]}"
     fi
 }
 
@@ -568,6 +559,18 @@ choose_after_blocked() {
                 echo "Invalid selection. Please choose 1 or 2."
                 ;;
         esac
+    done
+}
+
+# Supported PHP versions (from PHP_VERSIONS) that this system can
+# actually provide right now: installed or installable via apt.
+get_usable_php_versions() {
+    local version
+
+    for version in "${PHP_VERSIONS[@]}"; do
+        if [ "$(get_php_version_status "$version")" != "not_available" ]; then
+            printf '%s\n' "$version"
+        fi
     done
 }
 
@@ -624,6 +627,14 @@ prompt_php_version() {
 
         PHP_VERSION="${PHP_VERSIONS[$((PHP_CHOICE - 1))]}"
         PHP_STATUS="$(get_php_version_status "$PHP_VERSION")"
+
+        if [ "$PHP_STATUS" = "not_available" ]; then
+            echo
+            echo "[NOT AVAILABLE] PHP $PHP_VERSION is not installed and not available"
+            echo "from the package sources of this system."
+            echo "Usable for Drupal $DRUPAL_VERSION on this system: $(get_usable_php_versions | paste -sd ' ' -)"
+            continue
+        fi
 
         break
 
