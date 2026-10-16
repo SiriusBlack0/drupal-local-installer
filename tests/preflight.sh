@@ -1,23 +1,19 @@
 #!/usr/bin/env bash
-set -e
 
-python3 - <<'PY'
-from pathlib import Path
-import subprocess
+set -euo pipefail
 
-source = Path("lib/preflight.sh").read_text()
+cd "$(dirname "$0")/.."
 
-marker = 'if [ "$DATABASE_ENGINE" != "sqlite" ]; then'
-database_block = source[source.rfind(marker):]
+# Test 1: Sourcing preflight.sh only defines functions.
 
-script = '''
-set -e
+if output="$(bash -c 'source lib/preflight.sh' < /dev/null 2>&1)" && [[ -z "$output" ]]; then
+    echo "[PASS] Sourcing preflight.sh has no side effects"
+else
+    echo "[FAIL] Sourcing preflight.sh produced output or failed: $output"
+    exit 1
+fi
 
-DATABASE_ENGINE="mariadb"
-DATABASE_NEEDS_INSTALL="yes"
-
-INSTALL_SERVICES_TO_START=()
-INSTALL_SERVICES_AFTER_INSTALL=()
+source lib/preflight.sh
 
 add_service_to_start() {
     INSTALL_SERVICES_TO_START+=("$1")
@@ -27,185 +23,122 @@ add_service_after_install() {
     INSTALL_SERVICES_AFTER_INSTALL+=("$1")
 }
 
-is_database_service_running() {
-    return 1
+# Runs plan_database_service and prints "after|to_start".
+database_plan() {
+    INSTALL_SERVICES_TO_START=()
+    INSTALL_SERVICES_AFTER_INSTALL=()
+    plan_database_service > /dev/null
+    printf '%s|%s' "${INSTALL_SERVICES_AFTER_INSTALL[*]}" "${INSTALL_SERVICES_TO_START[*]}"
 }
 
-''' + database_block + '''
+check() {
+    local label="$1"
+    local expected="$2"
+    local actual="$3"
 
-printf 'AFTER_INSTALL:%s\\n' "${INSTALL_SERVICES_AFTER_INSTALL[*]}"
-printf 'TO_START:%s\\n' "${INSTALL_SERVICES_TO_START[*]}"
-'''
-
-result = subprocess.run(
-    ["bash", "-c", script],
-    text=True,
-    capture_output=True,
-    timeout=5,
-)
-
-passed = (
-    result.returncode == 0
-    and "AFTER_INSTALL:mariadb" in result.stdout
-    and "TO_START:" in result.stdout
-    and "TO_START:mariadb" not in result.stdout
-)
-
-print(f"[{'PASS' if passed else 'FAIL'}] Missing MariaDB service plan")
-
-if not passed:
-    print(result.stdout)
-    print(result.stderr)
-    raise SystemExit(1)
-
-# MariaDB installed but stopped.
-script = '''
-set -e
-
-DATABASE_ENGINE="mariadb"
-DATABASE_NEEDS_INSTALL="no"
-
-INSTALL_SERVICES_TO_START=()
-INSTALL_SERVICES_AFTER_INSTALL=()
-
-add_service_to_start() {
-    INSTALL_SERVICES_TO_START+=("$1")
+    if [[ "$actual" == "$expected" ]]; then
+        echo "[PASS] $label"
+    else
+        echo "[FAIL] $label (expected '$expected', got '$actual')"
+        exit 1
+    fi
 }
 
-add_service_after_install() {
-    INSTALL_SERVICES_AFTER_INSTALL+=("$1")
-}
+# Tests 2-5: Database service plan.
 
-is_database_service_running() {
-    return 1
-}
+is_database_service_running() { return 1; }
 
-''' + database_block + '''
+DATABASE_ENGINE="mariadb" DATABASE_NEEDS_INSTALL="yes"
+check "Missing MariaDB service plan" "mariadb|" "$(database_plan)"
 
-printf 'AFTER_INSTALL:%s\\n' "${INSTALL_SERVICES_AFTER_INSTALL[*]}"
-printf 'TO_START:%s\\n' "${INSTALL_SERVICES_TO_START[*]}"
-'''
+DATABASE_ENGINE="mariadb" DATABASE_NEEDS_INSTALL="no"
+check "Stopped MariaDB service plan" "|mariadb" "$(database_plan)"
 
-result = subprocess.run(
-    ["bash", "-c", script],
-    text=True,
-    capture_output=True,
-    timeout=5,
-)
+is_database_service_running() { return 0; }
+check "Running MariaDB service plan" "|" "$(database_plan)"
 
-passed = (
-    result.returncode == 0
-    and "TO_START:mariadb" in result.stdout
-    and "AFTER_INSTALL:mariadb" not in result.stdout
-)
+is_database_service_running() { echo "UNEXPECTED_DATABASE_CHECK"; return 1; }
+DATABASE_ENGINE="sqlite" DATABASE_NEEDS_INSTALL="no"
+check "SQLite service plan" "|" "$(database_plan)"
 
-print(f"[{'PASS' if passed else 'FAIL'}] Stopped MariaDB service plan")
+# Tests 6-9 mock the planning steps, so they run in a subshell:
+# the mocks disappear afterwards and Test 10 uses the real functions.
+(
+    # Tests 6-8: Project conflicts stop preflight before any planning.
 
-if not passed:
-    print(result.stdout)
-    print(result.stderr)
-    raise SystemExit(1)
+    call_log=""
+    plan_required_packages() { call_log+="packages "; }
+    plan_php_extensions() { call_log+="extensions "; }
+    plan_service_startup() { call_log+="services "; }
+    is_project_directory_taken() { return 1; }
+    is_nginx_config_taken() { return 1; }
 
-# MariaDB already running.
-script = '''
-set -e
+    PROJECT_MACHINE_NAME="demo"
+    PROJECT_PATH="/var/www/demo"
 
-DATABASE_ENGINE="mariadb"
-DATABASE_NEEDS_INSTALL="no"
+    is_project_registered() { return 0; }
 
-INSTALL_SERVICES_TO_START=()
-INSTALL_SERVICES_AFTER_INSTALL=()
+    if output="$(run_preflight)"; then
+        echo "[FAIL] Registered project accepted"
+        exit 1
+    elif [[ "$output" == *"ERROR: Project 'demo' is already registered."* ]] &&
+         [[ "$output" != *"Checking project directory"* ]]; then
+        echo "[PASS] Registered project stops preflight"
+    else
+        echo "[FAIL] Unexpected registered project result"
+        exit 1
+    fi
 
-add_service_to_start() {
-    INSTALL_SERVICES_TO_START+=("$1")
-}
+    is_project_registered() { return 1; }
+    is_project_directory_taken() { return 0; }
 
-add_service_after_install() {
-    INSTALL_SERVICES_AFTER_INSTALL+=("$1")
-}
+    if output="$(run_preflight)"; then
+        echo "[FAIL] Existing project directory accepted"
+        exit 1
+    elif [[ "$output" == *"ERROR: Project directory '/var/www/demo' already exists."* ]]; then
+        echo "[PASS] Existing project directory stops preflight"
+    else
+        echo "[FAIL] Unexpected existing directory result"
+        exit 1
+    fi
 
-is_database_service_running() {
-    return 0
-}
+    is_project_directory_taken() { return 1; }
+    is_nginx_config_taken() { return 0; }
 
-''' + database_block + '''
+    if output="$(run_preflight)"; then
+        echo "[FAIL] Existing Nginx configuration accepted"
+        exit 1
+    elif [[ "$output" == *"ERROR: Nginx configuration for 'demo' already exists."* ]]; then
+        echo "[PASS] Existing Nginx configuration stops preflight"
+    else
+        echo "[FAIL] Unexpected Nginx configuration result"
+        exit 1
+    fi
 
-printf 'AFTER_INSTALL:%s\\n' "${INSTALL_SERVICES_AFTER_INSTALL[*]}"
-printf 'TO_START:%s\\n' "${INSTALL_SERVICES_TO_START[*]}"
-'''
+    # Test 9: Without conflicts, all planning steps run in order.
 
-result = subprocess.run(
-    ["bash", "-c", script],
-    text=True,
-    capture_output=True,
-    timeout=5,
-)
+    is_nginx_config_taken() { return 1; }
+    call_log=""
+    run_preflight > /dev/null
+    check "Preflight planning order" "packages extensions services " "$call_log"
+) || exit 1
 
-passed = (
-    result.returncode == 0
-    and "AFTER_INSTALL:" in result.stdout
-    and "TO_START:" in result.stdout
-    and "AFTER_INSTALL:mariadb" not in result.stdout
-    and "TO_START:mariadb" not in result.stdout
-)
+# Test 10: Required PHP extensions include the database driver.
 
-print(f"[{'PASS' if passed else 'FAIL'}] Running MariaDB service plan")
+is_php_cli_installed() { return 0; }
+check_php_extensions() { return 0; }
 
-if not passed:
-    print(result.stdout)
-    print(result.stderr)
-    raise SystemExit(1)
+for pair in "mariadb pdo_mysql" "mysql pdo_mysql" "postgresql pdo_pgsql" "sqlite pdo_sqlite"; do
+    read -r DATABASE_ENGINE expected_extension <<< "$pair"
+    PHP_VERSION="8.5"
+    plan_php_extensions > /dev/null
 
-# SQLite requires no database service.
-script = '''
-set -e
+    if [[ " ${REQUIRED_PHP_EXTENSIONS[*]} " != *" $expected_extension "* ]]; then
+        echo "[FAIL] $DATABASE_ENGINE does not require $expected_extension"
+        exit 1
+    fi
+done
 
-DATABASE_ENGINE="sqlite"
-DATABASE_NEEDS_INSTALL="no"
+echo "[PASS] Database driver extension planned for each engine"
 
-INSTALL_SERVICES_TO_START=()
-INSTALL_SERVICES_AFTER_INSTALL=()
-
-add_service_to_start() {
-    INSTALL_SERVICES_TO_START+=("$1")
-}
-
-add_service_after_install() {
-    INSTALL_SERVICES_AFTER_INSTALL+=("$1")
-}
-
-is_database_service_running() {
-    echo "UNEXPECTED_DATABASE_CHECK"
-    return 0
-}
-
-''' + database_block + '''
-
-printf 'AFTER_INSTALL:%s\\n' "${INSTALL_SERVICES_AFTER_INSTALL[*]}"
-printf 'TO_START:%s\\n' "${INSTALL_SERVICES_TO_START[*]}"
-'''
-
-result = subprocess.run(
-    ["bash", "-c", script],
-    text=True,
-    capture_output=True,
-    timeout=5,
-)
-
-passed = (
-    result.returncode == 0
-    and "AFTER_INSTALL:" in result.stdout
-    and "TO_START:" in result.stdout
-    and "UNEXPECTED_DATABASE_CHECK" not in result.stdout
-    and "AFTER_INSTALL:sqlite" not in result.stdout
-    and "TO_START:sqlite" not in result.stdout
-)
-
-print(f"[{'PASS' if passed else 'FAIL'}] SQLite service plan")
-
-if not passed:
-    print(result.stdout)
-    print(result.stderr)
-    raise SystemExit(1)
-
-PY
+echo "[SUCCESS] Preflight tests passed."
