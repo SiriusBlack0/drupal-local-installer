@@ -22,3 +22,6 @@
 # OS files
 .DS_Store
 Thumbs.db
+
+# Patch files received for review
+*.patch
