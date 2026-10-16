@@ -480,9 +480,56 @@ drop_postgresql_user() {
     return 0
 }
 
-# PostgreSQL order: CREATE ROLE -> CREATE DATABASE ... OWNER role.
-# If the database step fails, the role created here is removed again,
-# so a failed run leaves nothing behind.
+drop_postgresql_database() {
+    local database_name="$1"
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid PostgreSQL database name."
+        return 1
+    fi
+
+    if ! {
+        printf '\\set db_name %s\n' "$database_name"
+        printf '%s\n' \
+            "SELECT format('DROP DATABASE IF EXISTS %I', :'db_name') \gexec"
+    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1; then
+        echo "[ERROR] PostgreSQL database removal failed: $database_name"
+        return 1
+    fi
+
+    return 0
+}
+
+# Extensions are per database, so this connects to the project database.
+# Drupal 10, 11 and 12 require pg_trgm (drupal.org database requirements).
+create_postgresql_extension() {
+    local database_name="$1"
+    local extension="$2"
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid PostgreSQL database name."
+        return 1
+    fi
+
+    # Strict whitelist: the name is placed directly in the SQL statement.
+    if [[ ! "$extension" =~ ^[a-z0-9_]+$ ]]; then
+        echo "[ERROR] Invalid PostgreSQL extension name."
+        return 1
+    fi
+
+    if ! sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 \
+        -d "$database_name" \
+        -c "CREATE EXTENSION IF NOT EXISTS ${extension};"; then
+        echo "[ERROR] PostgreSQL extension creation failed: $extension"
+        return 1
+    fi
+
+    return 0
+}
+
+# PostgreSQL order: CREATE ROLE -> CREATE DATABASE ... OWNER role
+# -> CREATE EXTENSION pg_trgm. If a later step fails, everything created
+# by this function is removed again, so a failed run leaves nothing behind.
 provision_postgresql_database() {
     local database_name="$1"
     local database_user="$2"
@@ -543,6 +590,22 @@ provision_postgresql_database() {
         else
             echo "[WARNING] Rollback failed. Remove the user manually:"
             echo "  sudo -u postgres psql -c 'DROP ROLE \"$database_user\";'"
+        fi
+
+        return 1
+    fi
+
+    if ! create_postgresql_extension "$database_name" "pg_trgm"; then
+        echo "[ERROR] PostgreSQL provisioning failed at extension setup."
+        echo "Rolling back: removing database '$database_name' and user '$database_user'..."
+
+        if drop_postgresql_database "$database_name" &&
+           drop_postgresql_user "$database_user"; then
+            echo "[OK] Rollback completed."
+        else
+            echo "[WARNING] Rollback failed. Remove them manually:"
+            echo "  sudo -u postgres psql -c 'DROP DATABASE IF EXISTS \"$database_name\";'"
+            echo "  sudo -u postgres psql -c 'DROP ROLE IF EXISTS \"$database_user\";'"
         fi
 
         return 1

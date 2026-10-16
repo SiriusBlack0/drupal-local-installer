@@ -273,6 +273,62 @@ else
     exit 1
 fi
 
+# Test 12a: DROP DATABASE command for rollback.
+
+: > "$mock_log"
+
+sudo() {
+    local sql
+    sql="$(cat)"
+
+    echo "drop_db" >> "$mock_log"
+
+    [[ "$*" == "-u postgres psql -X -q -v ON_ERROR_STOP=1" ]] &&
+    [[ "$sql" == *'\set db_name drupal_db'* ]] &&
+    [[ "$sql" == *"DROP DATABASE IF EXISTS %I"* ]]
+}
+
+if drop_postgresql_database "drupal_db" &&
+   [[ "$(cat "$mock_log")" == "drop_db" ]]; then
+    echo "[PASS] PostgreSQL DROP DATABASE executed correctly"
+else
+    echo "[FAIL] PostgreSQL DROP DATABASE incorrect"
+    exit 1
+fi
+
+# Test 12b: pg_trgm is created inside the project database.
+
+: > "$mock_log"
+
+sudo() {
+    echo "$*" >> "$mock_log"
+}
+
+expected_command="-u postgres psql -X -q -v ON_ERROR_STOP=1 -d drupal_db -c CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+if create_postgresql_extension "drupal_db" "pg_trgm" &&
+   [[ "$(cat "$mock_log")" == "$expected_command" ]]; then
+    echo "[PASS] pg_trgm created in the project database"
+else
+    echo "[FAIL] Unexpected extension command: $(cat "$mock_log")"
+    exit 1
+fi
+
+# Test 12c: Unsafe extension or database names never reach psql.
+
+: > "$mock_log"
+
+if create_postgresql_extension "drupal_db" "pg_trgm; DROP TABLE x" >/dev/null ||
+   create_postgresql_extension "bad-db" "pg_trgm" >/dev/null; then
+    echo "[FAIL] Unsafe extension input accepted"
+    exit 1
+elif [[ ! -s "$mock_log" ]]; then
+    echo "[PASS] Unsafe extension input rejected"
+else
+    echo "[FAIL] psql ran for unsafe extension input"
+    exit 1
+fi
+
 # Mocks for the high-level provisioning tests.
 # MOCK_* variables choose the outcome of each step.
 
@@ -301,6 +357,16 @@ drop_postgresql_user() {
     return "${MOCK_DROP_ROLE:-0}"
 }
 
+create_postgresql_extension() {
+    echo "create_ext $1 $2" >> "$mock_log"
+    return "${MOCK_CREATE_EXT:-0}"
+}
+
+drop_postgresql_database() {
+    echo "drop_db $1" >> "$mock_log"
+    return "${MOCK_DROP_DB:-0}"
+}
+
 run_provision() {
     : > "$mock_log"
     output="$(provision_postgresql_database "drupal_db" "drupal_user" "TestPassword123")"
@@ -313,7 +379,8 @@ log_is() {
 # Test 13: Successful provisioning order.
 
 if run_provision &&
-   log_is "user_lookup" "db_lookup" "create_role drupal_user" "create_db drupal_db drupal_user" &&
+   log_is "user_lookup" "db_lookup" "create_role drupal_user" "create_db drupal_db drupal_user" \
+          "create_ext drupal_db pg_trgm" &&
    [[ "$output" == *"[SUCCESS] PostgreSQL database provisioning completed."* ]]; then
     echo "[PASS] PostgreSQL provisioning runs role then database"
 else
@@ -384,6 +451,34 @@ elif [[ "$output" == *"[WARNING] Rollback failed."* ]] &&
     echo "[PASS] Failed rollback shows manual cleanup command"
 else
     echo "[FAIL] Unexpected failed rollback result"
+    exit 1
+fi
+
+# Test 18a: Extension failure removes the database and the role.
+
+if MOCK_CREATE_EXT=1 run_provision; then
+    echo "[FAIL] Extension failure ignored"
+    exit 1
+elif log_is "user_lookup" "db_lookup" "create_role drupal_user" \
+            "create_db drupal_db drupal_user" "create_ext drupal_db pg_trgm" \
+            "drop_db drupal_db" "drop_role drupal_user" &&
+     [[ "$output" == *"[OK] Rollback completed."* ]]; then
+    echo "[PASS] Extension failure rolls back database and role"
+else
+    echo "[FAIL] Rollback after extension failure incorrect"
+    exit 1
+fi
+
+# Test 18b: Failed database rollback shows manual cleanup for both.
+
+if MOCK_CREATE_EXT=1 MOCK_DROP_DB=1 run_provision; then
+    echo "[FAIL] Failed extension rollback reported success"
+    exit 1
+elif [[ "$output" == *'DROP DATABASE IF EXISTS "drupal_db"'* ]] &&
+     [[ "$output" == *'DROP ROLE IF EXISTS "drupal_user"'* ]]; then
+    echo "[PASS] Failed extension rollback shows manual cleanup"
+else
+    echo "[FAIL] Unexpected failed extension rollback result"
     exit 1
 fi
 
