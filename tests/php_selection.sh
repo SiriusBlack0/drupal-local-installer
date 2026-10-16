@@ -13,6 +13,7 @@ end = source.index("# Database compatibility", start)
 
 # Exclude the separator immediately before Database compatibility.
 section = source[start:end]
+calls = "\ndetect_php_requirements\nresolve_compatible_php_versions\nprompt_php_version\n"
 
 helpers = r'''
 get_drupal_php_constraint() {
@@ -65,6 +66,7 @@ for label, drupal_version, user_input, expected_code, expected_php in cases:
         + helpers
         + f'\nDRUPAL_VERSION="{drupal_version}"\n'
         + section
+        + calls
         + '\nprintf "RESULT:%s:%s\\n" "$PHP_VERSION" "$PHP_STATUS"\n'
     )
 
@@ -99,6 +101,7 @@ script = (
     + '\nget_supported_php_versions() { return 0; }\n'
     + '\nDRUPAL_VERSION="11.4.9"\n'
     + section
+    + calls
 )
 
 result = subprocess.run(

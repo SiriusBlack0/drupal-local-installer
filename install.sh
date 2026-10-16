@@ -52,6 +52,7 @@ echo
 
 
 source "$SCRIPT_DIR/lib/ui.sh"
+run_configuration_ui
 
 # ==================================================
 

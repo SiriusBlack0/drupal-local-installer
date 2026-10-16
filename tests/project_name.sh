@@ -11,7 +11,7 @@ import subprocess
 source = Path("lib/ui.sh").read_text()
 
 start = source.index("prompt_project_name() {")
-end = source.index("\nprompt_project_name\n", start)
+end = source.index("# Drupal version selection", start)
 
 function = source[start:end]
 

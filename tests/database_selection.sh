@@ -11,6 +11,7 @@ start = source.index("# Database compatibility")
 end = source.index("# Database installation state", start)
 
 section = source[start:end]
+calls = "\ndetect_compatible_databases\nprompt_database_selection\n"
 
 helpers = r'''
 get_compatible_database_options() {
@@ -33,6 +34,7 @@ for label, user_input, expected in cases:
         + helpers
         + '\nDRUPAL_VERSION="11.4.9"\n'
         + section
+        + calls
         + '\nprintf "RESULT:%s:%s:%s\\n" '
           '"$DATABASE_ENGINE" "$DATABASE_VERSION" "$DATABASE_STATUS"\n'
     )
@@ -63,6 +65,7 @@ script = (
     + helpers
     + '\nDRUPAL_VERSION="11.4.9"\n'
     + section
+    + calls
 )
 
 result = subprocess.run(
@@ -93,6 +96,7 @@ script = (
     + '\nget_compatible_database_options() { return 0; }\n'
     + '\nDRUPAL_VERSION="11.4.9"\n'
     + section
+    + calls
 )
 
 result = subprocess.run(

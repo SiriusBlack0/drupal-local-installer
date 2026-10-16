@@ -10,6 +10,7 @@ source = Path("lib/ui.sh").read_text()
 start = source.index("# Database name")
 end = source.index("# Final configuration summary", start)
 section = source[start:end]
+calls = "\nconfigure_database_credentials\n"
 
 helpers = r'''
 get_project_database_name() {
@@ -76,6 +77,7 @@ for label, engine, user_input, expected in cases:
         + helpers
         + f'\nPROJECT_NAME="Test Project"\nPROJECT_PATH="/var/www/test_project"\nDATABASE_ENGINE="{engine}"\n'
         + section
+        + calls
         + '\nprintf "RESULT:%s:%s:%s:%s\\n" '
           '"$DATABASE_NAME" "$DATABASE_USER" "$DATABASE_PASSWORD" '
           '"${SQLITE_DATABASE_PATH:-}"\n'
@@ -117,6 +119,7 @@ for label, engine, user_input in eof_cases:
         + helpers
         + f'\nPROJECT_NAME="Test Project"\nPROJECT_PATH="/var/www/test_project"\nDATABASE_ENGINE="{engine}"\n'
         + section
+        + calls
         + '\nprintf "UNEXPECTED_COMPLETION\\n"\n'
     )
 

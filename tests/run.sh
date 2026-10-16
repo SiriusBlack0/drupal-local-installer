@@ -15,6 +15,7 @@ SUITES=(
     "Database Compatibility & Selection Tests|bash tests/database_selection.sh"
     "Database Configuration Tests|bash tests/database_configuration.sh"
     "Final Confirmation Tests|bash tests/final_confirmation.sh"
+    "UI Entry Point Tests|bash tests/ui_entry.sh"
     "Installation Execution Tests|bash tests/install_execution.sh"
     "Service Start Tests|bash tests/service_start.sh"
     "Service Plan Tests|bash tests/service_plan.sh"

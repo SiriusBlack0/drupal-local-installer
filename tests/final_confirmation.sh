@@ -8,6 +8,7 @@ import subprocess
 source = Path("lib/ui.sh").read_text()
 start = source.index("# Final configuration summary")
 section = source[start:]
+calls = "\nconfirm_installation\n"
 
 cases = [
     ("Yes confirmation", "mariadb", "y\n", True),
@@ -38,6 +39,7 @@ SQLITE_DATABASE_PATH="sites/default/files/.ht.sqlite"
         "set -e\n"
         + variables
         + section
+        + calls
         + '\nprintf "INSTALLATION_CONFIRMED\\n"\n'
     )
 
@@ -93,7 +95,7 @@ DATABASE_STATUS="installed"
 DATABASE_NAME="test_project"
 DATABASE_USER="test_project_user"
 SQLITE_DATABASE_PATH="sites/default/files/.ht.sqlite"
-''' + section + '\nprintf "UNEXPECTED_INSTALLATION\\n"\n'
+''' + section + calls + '\nprintf "UNEXPECTED_INSTALLATION\\n"\n'
 
 result = subprocess.run(
     ["bash", "-c", script],

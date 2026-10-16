@@ -46,8 +46,6 @@ prompt_project_name() {
     fi
 }
 
-prompt_project_name
-
 
 # --------------------------------------------------
 
@@ -446,18 +444,12 @@ prompt_drupal_version() {
     done
 }
 
-prompt_drupal_version
-
 
 # --------------------------------------------------
 
 # PHP compatibility
 
 # --------------------------------------------------
-
-
-
-echo
 
 detect_php_requirements() {
     echo "Detecting PHP requirements..."
@@ -650,18 +642,10 @@ prompt_php_version() {
     # --------------------------------------------------
 }
 
-detect_php_requirements
-resolve_compatible_php_versions
-prompt_php_version
-
 # --------------------------------------------------
 # Database compatibility
 
 # --------------------------------------------------
-
-
-
-echo
 
 detect_compatible_databases() {
     echo
@@ -714,9 +698,6 @@ prompt_database_selection() {
     done
 }
 
-detect_compatible_databases
-prompt_database_selection
-
 
 # --------------------------------------------------
 
@@ -734,15 +715,14 @@ prompt_database_selection
 
 
 
-DATABASE_NEEDS_INSTALL="no"
+# shellcheck disable=SC2034  # DATABASE_NEEDS_INSTALL is used by lib/preflight.sh
+determine_database_install_need() {
+    DATABASE_NEEDS_INSTALL="no"
 
-
-
-if [ "$DATABASE_STATUS" != "installed" ]; then
-    # shellcheck disable=SC2034  # Used by lib/preflight.sh
-    DATABASE_NEEDS_INSTALL="yes"
-
-fi
+    if [ "$DATABASE_STATUS" != "installed" ]; then
+        DATABASE_NEEDS_INSTALL="yes"
+    fi
+}
 
 
 
@@ -812,12 +792,6 @@ prompt_database_name() {
     done
 }
 
-if [ "$DATABASE_ENGINE" = "sqlite" ]; then
-    configure_sqlite_database
-else
-    prompt_database_name
-fi
-
 
 # --------------------------------------------------
 
@@ -872,10 +846,6 @@ prompt_database_user() {
     done
 }
 
-if [ "$DATABASE_ENGINE" != "sqlite" ]; then
-    prompt_database_user
-fi
-
 
 # --------------------------------------------------
 
@@ -921,9 +891,20 @@ prompt_database_password() {
     done
 }
 
-if [ "$DATABASE_ENGINE" != "sqlite" ]; then
+# --------------------------------------------------
+# Database credentials (name, user, password or SQLite file)
+# --------------------------------------------------
+
+configure_database_credentials() {
+    if [ "$DATABASE_ENGINE" = "sqlite" ]; then
+        configure_sqlite_database
+        return
+    fi
+
+    prompt_database_name
+    prompt_database_user
     prompt_database_password
-fi
+}
 
 # Final configuration summary
 # --------------------------------------------------
@@ -973,5 +954,27 @@ confirm_installation() {
     done
 }
 
-confirm_installation
+# ==================================================
+# Phase 1 entry point
+# ==================================================
 
+# Asks every configuration question in order.
+# Sourcing this file only defines functions; nothing runs until
+# install.sh calls run_configuration_ui.
+run_configuration_ui() {
+    prompt_project_name
+    prompt_drupal_version
+
+    echo
+    detect_php_requirements
+    resolve_compatible_php_versions
+    prompt_php_version
+
+    echo
+    detect_compatible_databases
+    prompt_database_selection
+    determine_database_install_need
+
+    configure_database_credentials
+    confirm_installation
+}

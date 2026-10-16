@@ -11,7 +11,7 @@ import subprocess
 source = Path("lib/ui.sh").read_text()
 
 start = source.index("read_drupal_input() {")
-end = source.index("\nprompt_drupal_version\n", start)
+end = source.index("# PHP compatibility", start)
 
 functions = source[start:end]
 
