@@ -345,6 +345,88 @@ SQL
     return 1
 }
 
+postgresql_database_exists() {
+    local database_name="$1"
+    local result
+
+    if ! is_valid_database_name "$database_name"; then
+        return 2
+    fi
+
+    if ! result="$(sudo -u postgres psql -X -t -A \
+        -v ON_ERROR_STOP=1 \
+        -v db_name="$database_name" <<'SQL'
+SELECT 1 FROM pg_database WHERE datname = :'db_name';
+SQL
+)"; then
+        return 2
+    fi
+
+    if [[ "$result" == "1" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+create_postgresql_database() {
+    local database_name="$1"
+    local database_owner="$2"
+    local lookup_status
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid PostgreSQL database name."
+        return 1
+    fi
+
+    if ! is_valid_database_user "$database_owner"; then
+        echo "[ERROR] Invalid PostgreSQL database owner."
+        return 1
+    fi
+
+    # The owner role must already exist (CREATE ROLE runs first).
+    if postgresql_user_exists "$database_owner"; then
+        :
+    else
+        lookup_status=$?
+
+        if [[ "$lookup_status" -eq 1 ]]; then
+            echo "[ERROR] PostgreSQL owner role does not exist: $database_owner"
+        else
+            echo "[ERROR] PostgreSQL user lookup failed."
+        fi
+
+        return 1
+    fi
+
+    if postgresql_database_exists "$database_name"; then
+        echo "[ERROR] PostgreSQL database already exists: $database_name"
+        return 1
+    else
+        lookup_status=$?
+
+        if [[ "$lookup_status" -ne 1 ]]; then
+            echo "[ERROR] PostgreSQL database lookup failed."
+            return 1
+        fi
+    fi
+
+    # CREATE DATABASE cannot run inside a transaction block; psql runs
+    # each \gexec statement in autocommit mode, which is what we need.
+    # Drupal requires UTF8; template0 allows choosing the encoding.
+    if ! {
+        printf '\\set db_name %s\n' "$database_name"
+        printf '\\set db_owner %s\n' "$database_owner"
+        printf '%s\n' \
+            "SELECT format('CREATE DATABASE %I OWNER %I ENCODING %L TEMPLATE template0', :'db_name', :'db_owner', 'UTF8') \gexec"
+    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1; then
+        echo "[ERROR] PostgreSQL database creation failed."
+        return 1
+    fi
+
+    return 0
+}
+
 database_exists() {
     local database_name="$1"
     local result
