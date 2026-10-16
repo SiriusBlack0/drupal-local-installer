@@ -427,6 +427,97 @@ create_postgresql_database() {
     return 0
 }
 
+drop_postgresql_user() {
+    local database_user="$1"
+
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid PostgreSQL username."
+        return 1
+    fi
+
+    if ! {
+        printf '\\set role_name %s\n' "$database_user"
+        printf '%s\n' \
+            "SELECT format('DROP ROLE IF EXISTS %I', :'role_name') \gexec"
+    } | sudo -u postgres psql -X -q -v ON_ERROR_STOP=1; then
+        echo "[ERROR] PostgreSQL user removal failed: $database_user"
+        return 1
+    fi
+
+    return 0
+}
+
+# PostgreSQL order: CREATE ROLE -> CREATE DATABASE ... OWNER role.
+# If the database step fails, the role created here is removed again,
+# so a failed run leaves nothing behind.
+provision_postgresql_database() {
+    local database_name="$1"
+    local database_user="$2"
+    local database_password="$3"
+    local lookup_status
+
+    if ! is_valid_database_name "$database_name"; then
+        echo "[ERROR] Invalid database name."
+        return 1
+    fi
+
+    if ! is_valid_database_user "$database_user"; then
+        echo "[ERROR] Invalid database username."
+        return 1
+    fi
+
+    if ! is_valid_database_password "$database_password"; then
+        echo "[ERROR] Invalid database password."
+        return 1
+    fi
+
+    # Check both resources before creating anything.
+    if postgresql_user_exists "$database_user"; then
+        echo "[ERROR] PostgreSQL user already exists: $database_user"
+        return 1
+    else
+        lookup_status=$?
+
+        if [[ "$lookup_status" -ne 1 ]]; then
+            echo "[ERROR] PostgreSQL user lookup failed."
+            return 1
+        fi
+    fi
+
+    if postgresql_database_exists "$database_name"; then
+        echo "[ERROR] PostgreSQL database already exists: $database_name"
+        return 1
+    else
+        lookup_status=$?
+
+        if [[ "$lookup_status" -ne 1 ]]; then
+            echo "[ERROR] PostgreSQL database lookup failed."
+            return 1
+        fi
+    fi
+
+    if ! create_postgresql_user "$database_user" "$database_password"; then
+        echo "[ERROR] PostgreSQL provisioning failed at user creation."
+        return 1
+    fi
+
+    if ! create_postgresql_database "$database_name" "$database_user"; then
+        echo "[ERROR] PostgreSQL provisioning failed at database creation."
+        echo "Rolling back: removing PostgreSQL user '$database_user'..."
+
+        if drop_postgresql_user "$database_user"; then
+            echo "[OK] Rollback completed."
+        else
+            echo "[WARNING] Rollback failed. Remove the user manually:"
+            echo "  sudo -u postgres psql -c 'DROP ROLE \"$database_user\";'"
+        fi
+
+        return 1
+    fi
+
+    echo "[SUCCESS] PostgreSQL database provisioning completed."
+}
+
 database_exists() {
     local database_name="$1"
     local result
@@ -572,10 +663,22 @@ provision_project_database() {
     local database_user="$3"
     local database_password="$4"
 
-    if [[ "$engine" != "mariadb" && "$engine" != "mysql" ]]; then
-        echo "[ERROR] Unsupported database engine: $engine"
-        return 1
-    fi
+    case "$engine" in
+        mariadb|mysql)
+            # Continues below.
+            ;;
+        postgresql)
+            provision_postgresql_database \
+                "$database_name" \
+                "$database_user" \
+                "$database_password"
+            return
+            ;;
+        *)
+            echo "[ERROR] Unsupported database engine: $engine"
+            return 1
+            ;;
+    esac
 
     if ! is_valid_database_name "$database_name"; then
         echo "[ERROR] Invalid database name."
