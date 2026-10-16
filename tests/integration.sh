@@ -427,7 +427,7 @@ else
     exit 1
 fi
 
-# Test 16: Drupal project creation with mocked Composer.
+# Test 16: Drupal project creation with mocked Composer and PHP.
 
 if output="$(
     bash -c '
@@ -435,19 +435,24 @@ if output="$(
 
         source lib/project.sh
 
-        composer() {
-            printf "[MOCK] Composer:"
+        stub_bin="$(mktemp -d)"
+        trap "rm -rf \"$stub_bin\"" EXIT
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$stub_bin/php8.5"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$stub_bin/composer"
+        chmod +x "$stub_bin/php8.5" "$stub_bin/composer"
+        PATH="$stub_bin:$PATH"
+
+        run_as_project_user() {
+            printf "[MOCK] As %s:" "$1"
+            shift
             printf " <%s>" "$@"
             printf "\n"
         }
 
-        project_path="$(mktemp -d)"
-        rmdir "$project_path"
-
-        create_drupal_project "11.4.8" "$project_path"
+        create_drupal_project "11.4.8" "/var/www/demo" "8.5" "devuser"
     '
 )" &&
-   [[ "$output" == *"[MOCK] Composer: <create-project> <drupal/recommended-project:11.4.8>"* ]]; then
+   [[ "$output" == *"[MOCK] As devuser: <php8.5> <"*"/composer> <create-project> <--no-interaction> <drupal/recommended-project:11.4.8> </var/www/demo>"* ]]; then
     echo "[PASS] Drupal project creation integration"
 else
     echo "[FAIL] Drupal project creation integration"
@@ -462,15 +467,19 @@ if output="$(
 
         source lib/project.sh
 
-        composer() {
+        stub_bin="$(mktemp -d)"
+        trap "rm -rf \"$stub_bin\"" EXIT
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$stub_bin/php8.5"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$stub_bin/composer"
+        chmod +x "$stub_bin/php8.5" "$stub_bin/composer"
+        PATH="$stub_bin:$PATH"
+
+        run_as_project_user() {
             echo "[MOCK] Composer installation failed."
             return 1
         }
 
-        project_path="$(mktemp -d)"
-        rmdir "$project_path"
-
-        if create_drupal_project "11.4.8" "$project_path"; then
+        if create_drupal_project "11.4.8" "/var/www/demo" "8.5" "devuser"; then
             echo "[FAIL] Composer failure was ignored."
             exit 1
         else

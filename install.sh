@@ -48,6 +48,11 @@ main() {
         exit 1
     fi
 
+    # The developer who will own the project (never root).
+    if ! PROJECT_USER="$(get_runtime_user)"; then
+        exit 1
+    fi
+
     print_banner
 
     # Phase 1: questions only, no system changes.

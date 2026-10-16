@@ -5,6 +5,8 @@ source lib/workflow.sh
 
 DRUPAL_VERSION="11.4.8"
 PROJECT_PATH="/tmp/test-drupal"
+PHP_VERSION="8.5"
+PROJECT_USER="devuser"
 
 calls=""
 
@@ -24,11 +26,13 @@ verify_environment_ready() {
 
 provision_drupal_project() {
     calls+="provision "
+    provision_args="$*"
     return 0
 }
 
 if run_installation_workflow &&
-   [[ "$calls" == "plan execute readiness provision " ]]; then
+   [[ "$calls" == "plan execute readiness provision " ]] &&
+   [[ "$provision_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]]; then
     echo "[PASS] Installation workflow executes in correct order"
 else
     echo "[FAIL] Installation workflow execution order"

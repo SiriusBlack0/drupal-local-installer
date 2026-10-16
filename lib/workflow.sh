@@ -13,7 +13,11 @@ run_installation_workflow() {
         return 1
     fi
 
-    if ! provision_drupal_project "$DRUPAL_VERSION" "$PROJECT_PATH"; then
+    if ! provision_drupal_project \
+        "$DRUPAL_VERSION" \
+        "$PROJECT_PATH" \
+        "$PHP_VERSION" \
+        "$PROJECT_USER"; then
         echo "[ERROR] Drupal provisioning failed."
         return 1
     fi
