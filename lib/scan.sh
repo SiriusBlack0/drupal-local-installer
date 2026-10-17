@@ -80,30 +80,68 @@ get_nginx_directive() {
     sed -nE "s/^[[:space:]]*${directive}[[:space:]]+([^;]+);.*/\1/p" "$file" | head -n 1
 }
 
-# A PHP-FPM pool file that serves only this socket and only this site.
-# Shared pools (www.conf, the default socket) are never recorded, so
-# --remove can never delete them.
-find_exclusive_pool() {
-    local socket="$1"
-    local php_version="$2"
+# /var/run is a link to /run on Ubuntu: both spellings are the same path.
+normalize_run_path() {
+    local path="$1"
+
+    if [[ "$path" == /var/run/* ]]; then
+        path="/run/${path#/var/run/}"
+    fi
+
+    printf '%s\n' "$path"
+}
+
+# PHP-FPM pool file, of any installed PHP version, whose "listen" is this
+# socket (or TCP address such as 127.0.0.1:9000).
+find_pool_for_listen() {
+    local target
     local pool
-    local users
+    local listen
 
-    [[ "$socket" != "/run/php/php${php_version}-fpm.sock" ]] || return 1
+    target="$(normalize_run_path "$1")"
+    [[ -n "$target" ]] || return 1
 
-    users="$(grep -lF "$socket" "$(get_nginx_sites_enabled_dir)"/* 2>/dev/null | wc -l)"
-    [[ "$users" -eq 1 ]] || return 1
+    for pool in "$(get_php_etc_dir)"/*/fpm/pool.d/*.conf; do
+        [[ -f "$pool" ]] || continue
 
-    for pool in "$(get_php_etc_dir)/$php_version/fpm/pool.d/"*.conf; do
-        [[ -f "$pool" && "$(basename "$pool")" != "www.conf" ]] || continue
+        listen="$(sed -nE 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*([^[:space:];]+).*/\1/p' "$pool" | head -n 1)"
 
-        if grep -qE "^[[:space:]]*listen[[:space:]]*=[[:space:]]*${socket//./\\.}[[:space:]]*$" "$pool"; then
+        if [[ -n "$listen" && "$(normalize_run_path "$listen")" == "$target" ]]; then
             printf '%s\n' "$pool"
             return 0
         fi
     done
 
     return 1
+}
+
+# PHP version from a pool path: <php etc>/<version>/fpm/pool.d/<name>.conf
+get_pool_php_version() {
+    local version
+
+    version="$(basename "$(dirname "$(dirname "$(dirname "$1")")")")"
+    [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+    printf '%s\n' "$version"
+}
+
+# A PHP-FPM pool file that serves only this socket and only this site.
+# Shared pools (www.conf, the default socket, a socket used by several
+# sites) are never recorded, so --remove can never delete them.
+find_exclusive_pool() {
+    local socket="$1"
+    local php_version="$2"
+    local pool
+    local users
+
+    [[ "$(normalize_run_path "$socket")" != "/run/php/php${php_version}-fpm.sock" ]] || return 1
+
+    users="$(grep -lF "${socket#/var}" "$(get_nginx_sites_enabled_dir)"/* 2>/dev/null | wc -l)"
+    [[ "$users" -eq 1 ]] || return 1
+
+    pool="$(find_pool_for_listen "$socket")" || return 1
+    [[ "$(basename "$pool")" != "www.conf" ]] || return 1
+
+    printf '%s\n' "$pool"
 }
 
 # Database details through the project's own Drush (Drupal 8+), run
@@ -208,8 +246,17 @@ detect_project() {
         socket="$(get_nginx_directive "$site" fastcgi_pass)"
         socket="${socket#unix:}"
 
+        # The PHP version comes from the socket name (php8.3-fpm...), or
+        # else from the pool that listens on it (/etc/php/8.3/fpm/pool.d).
         if [[ "$socket" =~ php([0-9]+\.[0-9]+)-fpm ]]; then
             php_version="${BASH_REMATCH[1]}"
+        elif pool="$(find_pool_for_listen "$socket")"; then
+            php_version="$(get_pool_php_version "$pool")" || php_version=""
+        fi
+
+        pool=""
+
+        if [[ -n "$php_version" ]]; then
             pool="$(find_exclusive_pool "$socket" "$php_version")" || pool=""
         fi
 
@@ -222,7 +269,8 @@ detect_project() {
         site=""
     fi
 
-    if [[ -n "$php_version" ]] && db="$(detect_database_with_drush "$project_dir" "$php_version")"; then
+    # Unknown PHP version: Drush runs with the system's default php.
+    if db="$(detect_database_with_drush "$project_dir" "$php_version")"; then
         IFS='|' read -r driver db_name db_user <<< "$db"
 
         case "$driver" in

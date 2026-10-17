@@ -285,4 +285,69 @@ else
     fail "unregister: $output"
 fi
 
+# Test 10: Socket names without a PHP version (a real work setup):
+#   fastcgi_pass unix:/var/run/php-fpm-crmManager.sock;
+#   /etc/php/8.3/fpm/pool.d/crmManager.conf: listen = /var/run/php-fpm-crmManager.sock
+# The version comes from the pool that listens on the socket. Also TCP
+# pools, and a project whose PHP cannot be found at all.
+
+make_modern_project crmManager 10.6.18 '{"db-driver":"mysql","db-name":"crm","db-username":"crm_user"}'
+make_site crmManager "$www/crmManager/web" crmManager.localhost /var/run/php-fpm-crmManager.sock
+printf '[crmManager]\nlisten = /var/run/php-fpm-crmManager.sock\n' > "$PHP_ETC_DIR/8.3/fpm/pool.d/crmManager.conf"
+
+make_modern_project tcpsite 11.4.10 '{}'
+make_site tcpsite.conf "$www/tcpsite/web" tcpsite.localhost 127.0.0.1:9001
+sed -i 's|unix:127.0.0.1:9001|127.0.0.1:9001|' "$NGINX_SITES_AVAILABLE_DIR/tcpsite.conf"
+printf '[tcpsite]\nlisten = 127.0.0.1:9001\n' > "$PHP_ETC_DIR/7.4/fpm/pool.d/tcpsite.conf"
+
+make_modern_project nopool 11.4.10 '{"db-driver":"mysql","db-name":"nopool","db-username":"np"}'
+make_site nopool.conf "$www/nopool/web" nopool.localhost /var/run/somewhere.sock
+
+rm -f "$records/ours.conf"
+output="$(printf 'y\ny\ny\ny\n' | run_scan_projects)"
+
+if grep -qxF "php_version=8.3" "$records/crmmanager.conf" &&
+   grep -qxF "php_fpm_pool=$PHP_ETC_DIR/8.3/fpm/pool.d/crmManager.conf" "$records/crmmanager.conf" &&
+   grep -qxF "php_fpm_socket=/var/run/php-fpm-crmManager.sock" "$records/crmmanager.conf"; then
+    pass "PHP version and own pool found from the pool's listen (/var/run socket)"
+else
+    fail "crmManager: $output / $(cat "$records/crmmanager.conf" 2>/dev/null)"
+fi
+
+if grep -qxF "php_version=7.4" "$records/tcpsite.conf" &&
+   grep -qxF "php_fpm_pool=$PHP_ETC_DIR/7.4/fpm/pool.d/tcpsite.conf" "$records/tcpsite.conf"; then
+    pass "TCP pool (127.0.0.1:9001) found the same way"
+else
+    fail "tcpsite: $(cat "$records/tcpsite.conf" 2>/dev/null)"
+fi
+
+if grep -qxF "php_version=" "$records/nopool.conf" && grep -qxF "php_fpm_pool=" "$records/nopool.conf"; then
+    pass "Unknown PHP: nothing guessed, no pool recorded"
+else
+    fail "nopool: $(cat "$records/nopool.conf" 2>/dev/null)"
+fi
+
+if [[ "$have_php" -eq 1 ]]; then
+    if grep -qxF "database_name=crm" "$records/crmmanager.conf" &&
+       grep -qxF "database_name=nopool" "$records/nopool.conf"; then
+        pass "Database read with the project PHP, or the default php when unknown"
+    else
+        fail "database fallback: $(cat "$records/nopool.conf")"
+    fi
+fi
+
+if [[ "$(list_registered_projects)" == *"nopool"*"http://nopool.localhost"*"?"* ]]; then
+    pass "Unknown PHP shown as ? in the list"
+else
+    fail "list with unknown PHP: $(list_registered_projects)"
+fi
+
+# The pool lookup treats /var/run and /run as the same directory.
+if [[ "$(find_pool_for_listen /run/php-fpm-crmManager.sock)" == "$PHP_ETC_DIR/8.3/fpm/pool.d/crmManager.conf" ]] &&
+   ! find_pool_for_listen /run/php-fpm-nothing.sock > /dev/null; then
+    pass "/var/run and /run are the same path for the pool lookup"
+else
+    fail "run path normalisation"
+fi
+
 echo "[SUCCESS] Project scan tests passed."

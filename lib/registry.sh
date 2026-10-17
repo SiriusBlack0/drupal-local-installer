@@ -315,7 +315,7 @@ list_registered_projects() {
         printf '%-20s %-34s %-5s %-11s %-9s %s\n' \
             "$machine_name" \
             "$(read_project_field "$record" url)" \
-            "$(read_project_field "$record" php_version)" \
+            "$(read_project_field "$record" php_version | grep . || echo "?")" \
             "$(read_project_field "$record" database_engine)" \
             "$(read_project_field "$record" managed_by || echo installer)" \
             "$state"

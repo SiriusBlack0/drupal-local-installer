@@ -281,12 +281,15 @@ one by one, whether to register them. Detection only reads files:
 
 - Drupal version and web root (`web/`, `docroot/`, `html/`, `public/` or
   the project root; Drupal 7 too),
-- the enabled Nginx site whose `root` is that web root: URL, PHP-FPM
-  socket and from it the PHP version,
+- the enabled Nginx site whose `root` is that web root: URL and PHP-FPM
+  socket (or TCP address). The PHP version comes from the socket name
+  (`php8.3-fpm…`), or else from the pool that listens on it
+  (`/etc/php/8.3/fpm/pool.d/…`, `/var/run` and `/run` count as the same),
 - the PHP-FPM pool, but only if it serves this site alone – a shared pool
   such as `www.conf` is never recorded,
 - the database (engine, name, user – never the password) through the
-  project's own Drush, when it has one.
+  project's own Drush, when it has one (run with the project's PHP, or
+  with the system's default `php` when that version is unknown).
 
 Such projects are registered as **adopted**. The installer never changes
 their configuration. Their support level is recorded and shown in
