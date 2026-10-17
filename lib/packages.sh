@@ -37,9 +37,31 @@ simulate_apt_package_installation() {
         return 0
     fi
 
+    local output
+    local removals
+
     echo "Simulating APT package installation..."
 
-    apt-get --simulate install -- "${INSTALL_PACKAGES[@]}"
+    if ! output="$(apt-get --simulate install -- "${INSTALL_PACKAGES[@]}" 2>&1)"; then
+        printf '%s\n' "$output"
+        return 1
+    fi
+
+    printf '%s\n' "$output"
+
+    # The installer never removes packages: other projects may need them.
+    # Example: mysql-server and mariadb-server replace each other.
+    removals="$(printf '%s\n' "$output" | awk '$1 == "Remv" { printf "%s ", $2 }')"
+
+    if [[ -n "$removals" ]]; then
+        echo
+        echo "[BLOCKED] Installing ${INSTALL_PACKAGES[*]} would REMOVE: $removals"
+        echo "          The installer never removes packages, because other"
+        echo "          projects may depend on them. MariaDB and MySQL, for"
+        echo "          example, cannot be installed side by side: choose the"
+        echo "          database that is already installed."
+        return 1
+    fi
 }
 
 execute_apt_package_installation() {
@@ -50,7 +72,8 @@ execute_apt_package_installation() {
 
     echo "Installing required APT packages..."
 
-    if sudo apt-get install -- "${INSTALL_PACKAGES[@]}"; then
+    # --no-remove: apt aborts instead of removing anything.
+    if sudo apt-get install --no-remove -- "${INSTALL_PACKAGES[@]}"; then
         echo "[OK] APT packages installed successfully."
         return 0
     fi

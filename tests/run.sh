@@ -20,6 +20,7 @@ SUITES=(
     "Final Confirmation Tests|bash tests/final_confirmation.sh"
     "UI Entry Point Tests|bash tests/ui_entry.sh"
     "Installation Execution Tests|bash tests/install_execution.sh"
+    "Package Installation Tests|bash tests/packages.sh"
     "Service Start Tests|bash tests/service_start.sh"
     "Service Plan Tests|bash tests/service_plan.sh"
     "Preflight Tests|bash tests/preflight.sh"

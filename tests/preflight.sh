@@ -13,6 +13,8 @@ else
     exit 1
 fi
 
+source lib/system.sh
+source lib/database.sh
 source lib/preflight.sh
 
 add_service_to_start() {
@@ -23,12 +25,13 @@ add_service_after_install() {
     INSTALL_SERVICES_AFTER_INSTALL+=("$1")
 }
 
-# Runs plan_database_service and prints "after|to_start".
+# Runs plan_database_service and prints "after|to_start|packages".
 database_plan() {
     INSTALL_SERVICES_TO_START=()
     INSTALL_SERVICES_AFTER_INSTALL=()
+    INSTALL_PACKAGES=()
     plan_database_service > /dev/null
-    printf '%s|%s' "${INSTALL_SERVICES_AFTER_INSTALL[*]}" "${INSTALL_SERVICES_TO_START[*]}"
+    printf '%s|%s|%s' "${INSTALL_SERVICES_AFTER_INSTALL[*]}" "${INSTALL_SERVICES_TO_START[*]}" "${INSTALL_PACKAGES[*]}"
 }
 
 check() {
@@ -49,17 +52,23 @@ check() {
 is_database_service_running() { return 1; }
 
 DATABASE_ENGINE="mariadb" DATABASE_NEEDS_INSTALL="yes"
-check "Missing MariaDB service plan" "mariadb|" "$(database_plan)"
+check "Missing MariaDB: server package installed, then started" "mariadb||mariadb-server" "$(database_plan)"
+
+DATABASE_ENGINE="postgresql" DATABASE_NEEDS_INSTALL="yes"
+check "Missing PostgreSQL: server package installed, then started" "postgresql||postgresql" "$(database_plan)"
+
+DATABASE_ENGINE="mysql" DATABASE_NEEDS_INSTALL="yes"
+check "Missing MySQL: server package installed, then started" "mysql||mysql-server" "$(database_plan)"
 
 DATABASE_ENGINE="mariadb" DATABASE_NEEDS_INSTALL="no"
-check "Stopped MariaDB service plan" "|mariadb" "$(database_plan)"
+check "Stopped MariaDB service plan" "|mariadb|" "$(database_plan)"
 
 is_database_service_running() { return 0; }
-check "Running MariaDB service plan" "|" "$(database_plan)"
+check "Running MariaDB service plan" "||" "$(database_plan)"
 
 is_database_service_running() { echo "UNEXPECTED_DATABASE_CHECK"; return 1; }
 DATABASE_ENGINE="sqlite" DATABASE_NEEDS_INSTALL="no"
-check "SQLite service plan" "|" "$(database_plan)"
+check "SQLite service plan" "||" "$(database_plan)"
 
 # Tests 6-9 mock the planning steps, so they run in a subshell:
 # the mocks disappear afterwards and Test 10 uses the real functions.

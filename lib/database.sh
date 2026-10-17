@@ -161,31 +161,14 @@ get_database_engines() {
         "sqlite"
 }
 
-install_database_engine() {
-    local engine="$1"
-    local package
-
-    case "$engine" in
-        mariadb)
-            package="mariadb-server"
-            ;;
-        mysql)
-            package="mysql-server"
-            ;;
-        *)
-            echo "Unsupported database engine: $engine"
-            return 1
-            ;;
+# Ubuntu package that provides the database server.
+get_database_server_package() {
+    case "$1" in
+        mariadb) echo "mariadb-server" ;;
+        mysql) echo "mysql-server" ;;
+        postgresql) echo "postgresql" ;;
+        *) return 1 ;;
     esac
-
-    if is_database_engine_installed "$engine"; then
-        echo "$engine is already installed."
-        return 0
-    fi
-
-    echo "Installing $package..."
-
-    sudo apt-get install -y "$package"
 }
 
 is_database_port_in_use() {

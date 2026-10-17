@@ -193,8 +193,16 @@ plan_database_service() {
     fi
 
     if [ "$DATABASE_NEEDS_INSTALL" = "yes" ]; then
-        echo "[MISSING] $DATABASE_ENGINE - installation required"
-        add_service_after_install "$DATABASE_ENGINE"
+        local package
+
+        if ! package="$(get_database_server_package "$DATABASE_ENGINE")"; then
+            echo "[ERROR] No server package known for $DATABASE_ENGINE"
+            return 1
+        fi
+
+        echo "[MISSING] $DATABASE_ENGINE - installation required ($package)"
+        add_install_package "$package"
+        add_service_after_install "$(get_database_service_name "$DATABASE_ENGINE")"
     elif is_database_service_running "$DATABASE_ENGINE"; then
         echo "[RUNNING] $DATABASE_ENGINE"
     else

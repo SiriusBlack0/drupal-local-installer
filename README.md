@@ -33,7 +33,10 @@ The installer works in three phases:
 2. **Checks** – existing project, directory, Nginx config, packages,
    PHP extensions, services. Nothing is changed on the system.
 3. **Installation** – only after you confirm: missing packages (with a
-   simulation and a second confirmation first), project directory,
+   simulation and a second confirmation first; a database server that is
+   not installed yet is included, and the installer never removes a
+   package – for example MySQL is refused while MariaDB is installed,
+   because one would replace the other), project directory,
    project directory, database, PHP-FPM pool, Nginx site, then Drupal and
    Drush (Composer), then `drush site:install`.
    The sudo password is asked once, right after you confirm.
