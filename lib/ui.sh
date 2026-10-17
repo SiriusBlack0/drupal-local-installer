@@ -676,6 +676,35 @@ detect_compatible_databases() {
     fi
 }
 
+# Shown when the chosen database would replace the installed one.
+explain_database_conflict() {
+    local engine="$1"
+    local version="$2"
+    local installed
+    local short_version
+
+    installed="$(get_conflicting_database_engine "$engine")"
+    short_version="$(echo "$version" | cut -d. -f1,2)"
+
+    echo
+    echo "[NOT POSSIBLE] $engine cannot be installed next to the installed $installed."
+    echo
+    echo "Both use the same port (3306), socket, configuration (/etc/mysql)"
+    echo "and data directory (/var/lib/mysql). Installing $engine would remove"
+    echo "$installed and break every project that uses it."
+    echo
+    echo "What you can do:"
+    echo "  1. Use $installed for this project. Drupal supports both with the"
+    echo "     same code, so this is fine for most local work."
+    echo "  2. Need $engine exactly (for example the same as production)?"
+    echo "     Use a container-based setup: DDEV (Docker) runs every project"
+    echo "     with its own database type and version, next to this system:"
+    echo "       ddev config --database=$engine:$short_version"
+    echo "     Supported versions: https://docs.ddev.com/en/stable/users/extend/database-types/"
+    echo
+    echo "Choose another database."
+}
+
 prompt_database_selection() {
     while true; do
         echo
@@ -684,6 +713,11 @@ prompt_database_selection() {
 
         for i in "${!DATABASE_OPTIONS[@]}"; do
             IFS='|' read -r engine version status <<< "${DATABASE_OPTIONS[$i]}"
+
+            if [[ "$status" == "conflict" ]]; then
+                status="conflicts with installed $(get_conflicting_database_engine "$engine")"
+            fi
+
             echo "$((i + 1))) $engine $version [$status]"
         done
 
@@ -706,6 +740,11 @@ prompt_database_selection() {
             DATABASE_VERSION \
             DATABASE_STATUS \
             <<< "${DATABASE_OPTIONS[$((DATABASE_CHOICE - 1))]}"
+
+        if [[ "$DATABASE_STATUS" == "conflict" ]]; then
+            explain_database_conflict "$DATABASE_ENGINE" "$DATABASE_VERSION"
+            continue
+        fi
 
         break
     done

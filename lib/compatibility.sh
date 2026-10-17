@@ -174,6 +174,8 @@ get_compatible_database_options() {
 
         if is_database_engine_installed "$engine"; then
             status="installed"
+        elif get_installed_conflicting_engine "$engine" > /dev/null; then
+            status="conflict"
         else
             status="available"
         fi

@@ -91,6 +91,21 @@ checks the configuration (`php-fpmX.Y -t`, `nginx -t`) and only then
 **reloads** the service. A reload loads new configuration without
 dropping the other projects; a restart is never used.
 
+## MariaDB and MySQL
+
+Only one of the two can be installed natively: the Ubuntu packages use
+the same port (3306), socket, `/etc/mysql` and `/var/lib/mysql`, so
+installing one removes the other. When one is installed, the other is
+listed as `[conflicts with installed …]` and cannot be chosen; the
+installer explains why and offers two ways forward:
+
+1. use the installed one – Drupal supports both with the same code;
+2. for an exact match (for example with production), a container-based
+   setup such as [DDEV](https://docs.ddev.com/en/stable/users/extend/database-types/)
+   (Docker), e.g. `ddev config --database=mysql:8.4`.
+
+PostgreSQL and SQLite can always be installed next to either of them.
+
 ## The Drupal site
 
 The site is installed with the **standard** profile. The site name is

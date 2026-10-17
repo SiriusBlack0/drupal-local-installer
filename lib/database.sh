@@ -161,6 +161,26 @@ get_database_engines() {
         "sqlite"
 }
 
+# MariaDB and MySQL replace each other: the Ubuntu packages use the
+# same port (3306), socket, /etc/mysql and /var/lib/mysql, so apt
+# removes one when the other is installed.
+get_conflicting_database_engine() {
+    case "$1" in
+        mariadb) echo "mysql" ;;
+        mysql) echo "mariadb" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Prints the installed engine that blocks installing this one.
+get_installed_conflicting_engine() {
+    local other
+
+    other="$(get_conflicting_database_engine "$1")" || return 1
+    is_database_engine_installed "$other" || return 1
+    echo "$other"
+}
+
 # Ubuntu package that provides the database server.
 get_database_server_package() {
     case "$1" in

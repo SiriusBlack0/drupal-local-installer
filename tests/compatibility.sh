@@ -111,4 +111,32 @@ else
     echo "[PASS] Missing compatibility file reported"
 fi
 
+# Database options: MariaDB and MySQL exclude each other. Runs in a
+# subshell so the stubs do not leak into other tests.
+(
+    source lib/database.sh
+
+    get_database_engines() { printf '%s\n' mariadb mysql postgresql; }
+    get_available_database_version() {
+        case "$1" in mariadb) echo 11.8.6 ;; mysql) echo 8.4.11 ;; postgresql) echo 18 ;; esac
+    }
+    is_database_version_compatible() { return 0; }
+    is_database_engine_installed() { [[ " $INSTALLED " == *" $1 "* ]]; }
+
+    INSTALLED="mariadb"
+    check "MySQL marked as conflict when MariaDB is installed" \
+        "mariadb|11.8.6|installed mysql|8.4.11|conflict postgresql|18|available" \
+        "$(get_compatible_database_options 11 | tr '\n' ' ' | sed 's/ $//')"
+
+    INSTALLED="mysql"
+    check "MariaDB marked as conflict when MySQL is installed" \
+        "mariadb|11.8.6|conflict mysql|8.4.11|installed postgresql|18|available" \
+        "$(get_compatible_database_options 11 | tr '\n' ' ' | sed 's/ $//')"
+
+    INSTALLED=""
+    check "Neither installed: both available" \
+        "mariadb|11.8.6|available mysql|8.4.11|available postgresql|18|available" \
+        "$(get_compatible_database_options 11 | tr '\n' ' ' | sed 's/ $//')"
+)
+
 echo "[SUCCESS] Compatibility matrix tests passed."
