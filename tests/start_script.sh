@@ -65,7 +65,7 @@ STUB
 # With .ipv6_default, IPv6 requests get the default Nginx page instead.
 cat > "$stub_bin/curl" <<STUB
 #!/usr/bin/env bash
-if [[ "\$1" == "-6" && -e "$state_dir/.ipv6_default" ]]; then
+if [[ "\$*" == *"[::1]"* && -e "$state_dir/.ipv6_default" ]]; then
     printf 'HTTP/1.1 200 OK\\r\\nServer: nginx\\r\\n'
     exit 0
 fi

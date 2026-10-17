@@ -283,11 +283,22 @@ remove_nginx_site() {
 # exactly like a browser would. Before site:install Drupal redirects to
 # install.php; afterwards it answers with "X-Generator: Drupal".
 # Response headers of the site over IPv4 or IPv6 (empty: no answer).
+#
+# curl connects to the loopback address itself and sends the site name
+# as "Host", like a browser does for *.localhost. Name resolution is not
+# involved: older curl versions (for example on WSL) do not know that
+# *.localhost means this machine and silently fail to connect.
 get_site_headers() {
     local family="$1"
     local url="$2"
+    local host="${url#http://}"
+    local address="127.0.0.1"
 
-    curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null | tr -d '\r'
+    if [[ "$family" == "6" ]]; then
+        address="[::1]"
+    fi
+
+    curl -sI --max-time 5 -H "Host: $host" "http://$address/" 2>/dev/null | tr -d '\r'
 }
 
 is_drupal_answering_over() {
@@ -302,7 +313,7 @@ describe_site_answer() {
     local server
 
     if [[ -z "$headers" ]]; then
-        echo "no answer (connection failed or timed out)"
+        echo "no answer (connection failed or timed out; is Nginx running?)"
         return
     fi
 

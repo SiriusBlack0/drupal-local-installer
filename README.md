@@ -172,8 +172,11 @@ entry is needed.
 
 Browsers try IPv6 (`::1`) first for `*.localhost`, so every site listens
 on IPv4 and IPv6. After the reload the installer asks the site over both
-(with `curl`, like a browser) and only shows the URL once Drupal really
-answers; otherwise everything is rolled back. `./start` runs the same
+and only shows the URL once Drupal really answers; otherwise everything
+is rolled back. The check connects to `127.0.0.1` (and `[::1]` when that
+address exists) and sends the site name as `Host`, exactly like a browser.
+It does not depend on how `curl` resolves `*.localhost`, which older curl
+versions (for example on WSL) cannot do. `./start` runs the same
 check. This matters because a browser that once received another page
 for the URL (for example the default Nginx page) may keep showing it
 from its cache. If that ever happens, reload with **Ctrl+Shift+R**.

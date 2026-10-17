@@ -273,7 +273,9 @@ fi
 cat > "$stub_bin/curl" <<'STUB'
 #!/usr/bin/env bash
 echo "curl $*" >> "$CALLS_FILE"
-if [[ "$1" == "-${CURL_FAIL_FAMILY:-none}" ]]; then
+family=4
+[[ "$*" == *"[::1]"* ]] && family=6
+if [[ "$family" == "${CURL_FAIL_FAMILY:-none}" ]]; then
     printf 'HTTP/1.1 200 OK\r\nServer: nginx\r\n'
 else
     printf 'HTTP/1.1 302 Found\r\nLocation: http://mysite.localhost/core/install.php\r\n'
@@ -286,7 +288,7 @@ reset_state
 
 if output="$(NGINX_IPV6=1 verify_nginx_site "mysite")" &&
    [[ "$output" == *"[OK] http://mysite.localhost answers (IPv4 and IPv6)"* ]] &&
-   [[ "$(calls)" == *"curl -4 "*"curl -6 "* ]]; then
+   [[ "$(calls)" == *"-H Host: mysite.localhost http://127.0.0.1/"*"-H Host: mysite.localhost http://[::1]/"* ]]; then
     pass "Site checked over IPv4 and IPv6"
 else
     fail "verify both families: $output / $(calls)"
@@ -300,7 +302,7 @@ elif [[ "$output" == *"does not answer as this Drupal site over: IPv6"* &&
         "$output" == *"IPv6: answered 'HTTP/1.1 200 OK' (Server: nginx)"* &&
         "$output" == *"/var/log/nginx/mysite.error.log"* &&
         "$output" == *"nginx -T"* &&
-        "$(grep -c '^curl -6' "$calls_file")" == "5" &&
+        "$(grep -cF 'http://[::1]/' "$calls_file")" == "5" &&
         "$(grep -c '^sleep' "$calls_file")" == "4" ]]; then
     pass "Wrong answer over IPv6 detected after 5 attempts"
 else
@@ -310,7 +312,7 @@ fi
 reset_state
 
 if output="$(NGINX_IPV6=0 verify_nginx_site "mysite")" &&
-   [[ "$output" == *"answers (IPv4)"* && "$(calls)" != *"curl -6"* ]]; then
+   [[ "$output" == *"answers (IPv4)"* && "$(calls)" != *"[::1]"* ]]; then
     pass "Only IPv4 checked on a system without IPv6"
 else
     fail "IPv4-only check: $output / $(calls)"
@@ -339,7 +341,7 @@ printf '#!/usr/bin/env bash\nexit 7\n' > "$stub_bin/curl"
 
 if output="$(NGINX_IPV6=0 verify_nginx_site "mysite")"; then
     fail "No answer reported as success"
-elif [[ "$output" == *"IPv4: no answer (connection failed or timed out)"* ]]; then
+elif [[ "$output" == *"IPv4: no answer (connection failed or timed out; is Nginx running?)"* ]]; then
     pass "No answer is reported as such"
 else
     fail "no answer: $output"

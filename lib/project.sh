@@ -309,11 +309,16 @@ create_start_script() {
         '# Before site:install Drupal redirects to install.php,' \
         '# afterwards it answers with "X-Generator: Drupal".' \
         '# Checked over IPv4, and over IPv6 when ::1 exists: browsers try it first.' \
+        '# curl connects to the loopback address and sends the site name as' \
+        '# "Host", so it works even where curl cannot resolve *.localhost.' \
         'is_drupal_answering() {' \
         '    local family' \
+        '    local address' \
         '    for family in 4 6; do' \
         '        if [[ "$family" == 6 ]] && ! grep -qi "^0\{31\}1 " "$ipv6_flag" 2>/dev/null; then continue; fi' \
-        '        curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null |' \
+        '        address="127.0.0.1"' \
+        '        if [[ "$family" == 6 ]]; then address="[::1]"; fi' \
+        '        curl -sI --max-time 5 -H "Host: ${url#http://}" "http://$address/" 2>/dev/null |' \
         "            grep -qiE '^(x-generator: drupal|location: .*install\\.php)' || return 1" \
         '    done' \
         '}' \
