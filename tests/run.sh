@@ -39,6 +39,8 @@ SUITES=(
     "Runtime User Tests|bash tests/runtime_user.sh"
     "Project Path Tests|bash tests/project_path.sh"
     "Project Registry Tests|bash tests/registry.sh"
+    "Project Removal Tests|bash tests/remove.sh"
+    "Project Scan Tests|bash tests/scan.sh"
 )
 
 echo "======================================"

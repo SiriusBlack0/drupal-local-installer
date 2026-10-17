@@ -145,6 +145,13 @@ Options:
   --verbose   Show the full output of every command
   --step      Pause before each installation step
   --list      List the projects created by this installer
+  --remove NAME [--dry-run]
+              Remove a registered project (asks for a backup and for the
+              name as confirmation; --dry-run only shows what would go)
+  --scan      Find Drupal projects in /var/www that are not registered and
+              register them (adopted: their configuration is never changed)
+  --unregister NAME
+              Remove a project from the registry only; nothing else changes
   --help      Show this help
 USAGE
     echo
@@ -155,23 +162,72 @@ USAGE
 
 # Sets VERBOSE and STEP_MODE from the command line.
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
-parse_options() {
-    local option
+# Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
+# 5 --scan, 6 --unregister.
+REMOVE_PROJECT=""
 
-    for option in "$@"; do
-        case "$option" in
+parse_options() {
+    local action=""
+
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
             --verbose) VERBOSE=1 ;;
             --step) STEP_MODE=1 ;;
-            --list) return 3 ;;
+            --list) action="list" ;;
+            --scan) action="scan" ;;
+            --unregister)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --unregister needs a project name"
+                    return 1
+                fi
+
+                action="unregister"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                shift
+                ;;
+            --remove)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --remove needs a project name, e.g. --remove mysite"
+                    return 1
+                fi
+
+                action="remove"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                shift
+                ;;
+            --dry-run)
+                # Used by lib/remove.sh.
+                # shellcheck disable=SC2034
+                REMOVE_DRY_RUN=1
+                ;;
             --help|-h)
                 print_usage
                 return 2
                 ;;
             *)
-                echo "[ERROR] Unknown option: $option"
+                echo "[ERROR] Unknown option: $1"
                 print_usage
                 return 1
                 ;;
         esac
+        shift
     done
+
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" ]]; then
+        echo "[ERROR] --dry-run only works with --remove"
+        return 1
+    fi
+
+    case "$action" in
+        list) return 3 ;;
+        remove) return 4 ;;
+        scan) return 5 ;;
+        unregister) return 6 ;;
+    esac
+
+    return 0
 }

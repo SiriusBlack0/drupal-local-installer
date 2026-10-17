@@ -22,6 +22,8 @@ source "$SCRIPT_DIR/lib/install_execution.sh"
 source "$SCRIPT_DIR/lib/readiness.sh"
 source "$SCRIPT_DIR/lib/project.sh"
 source "$SCRIPT_DIR/lib/site.sh"
+source "$SCRIPT_DIR/lib/scan.sh"
+source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
 check_operating_system() {
@@ -63,6 +65,24 @@ main() {
             PROJECT_USER="$(get_runtime_user)" || exit 1
             list_registered_projects
             exit 0
+            ;;
+        4)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "$(get_project_machine_name "$REMOVE_PROJECT")-remove"
+            run_remove_project "$REMOVE_PROJECT"
+            exit $?
+            ;;
+        5)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            run_scan_projects
+            exit $?
+            ;;
+        6)
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            run_unregister_project "$REMOVE_PROJECT"
+            exit $?
             ;;
         *) exit 1 ;;
     esac

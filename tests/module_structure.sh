@@ -27,6 +27,8 @@ modules = [
     "lib/readiness.sh",
     "lib/project.sh",
     "lib/site.sh",
+    "lib/scan.sh",
+    "lib/remove.sh",
     "lib/workflow.sh",
 ]
 

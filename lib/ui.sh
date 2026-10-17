@@ -674,6 +674,17 @@ detect_compatible_databases() {
         echo "No compatible database options were found."
         exit 1
     fi
+
+    # Every option is listed, but some cannot be chosen.
+    if ! printf '%s\n' "${DATABASE_OPTIONS[@]}" | grep -qE '\|(installed|available)$'; then
+        printf '%s\n' "${DATABASE_OPTIONS[@]}" | while IFS='|' read -r engine version status; do
+            echo "  - $engine $version: $status"
+        done
+        echo
+        echo "No database on this system can be used for Drupal $DRUPAL_MAJOR."
+        print_container_hint
+        exit 1
+    fi
 }
 
 # Shown when the chosen database would replace the installed one.
@@ -705,6 +716,68 @@ explain_database_conflict() {
     echo "Choose another database."
 }
 
+# DDEV image name of each engine.
+get_ddev_database_type() {
+    case "$1" in
+        postgresql) echo "postgres" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# Shown when the system version is older than this Drupal release needs.
+explain_database_too_old() {
+    local engine="$1"
+    local version="$2"
+    local minimum
+    local older_major
+    local older_minimum
+
+    minimum="$(get_database_minimum_version "$DRUPAL_MAJOR" "$engine")"
+
+    echo
+    echo "[TOO OLD] This system provides $engine $version; Drupal $DRUPAL_MAJOR needs $minimum or newer."
+    echo
+    echo "What you can do:"
+
+    case "$engine" in
+        postgresql)
+            echo "  - Install a newer PostgreSQL from the official PostgreSQL apt"
+            echo "    repository (https://www.postgresql.org/download/linux/ubuntu/)."
+            echo "    The installer does not add package sources for you."
+            ;;
+        sqlite)
+            echo "  - SQLite is part of the system and of its PHP packages; a newer"
+            echo "    version comes with a newer Ubuntu release."
+            ;;
+        *)
+            echo "  - A newer $engine comes with a newer Ubuntu release or from the"
+            echo "    vendor's own apt repository."
+            ;;
+    esac
+
+    echo "  - Use another database from the list."
+
+    if [[ "$engine" == "sqlite" ]]; then
+        echo "  - Use a container-based setup such as DDEV (Docker) with a server"
+        echo "    database, e.g.  ddev config --database=mariadb:11.8"
+    else
+        echo "  - Use a container-based setup such as DDEV (Docker):"
+        echo "      ddev config --database=$(get_ddev_database_type "$engine"):$minimum"
+    fi
+
+    # An older Drupal major that accepts this version, if there is one.
+    older_major=$((DRUPAL_MAJOR - 1))
+
+    if older_minimum="$(get_database_minimum_version "$older_major" "$engine" 2>/dev/null)" &&
+       [[ -n "$older_minimum" ]] &&
+       database_version_meets_minimum "$version" "$older_minimum"; then
+        echo "  - Choose Drupal $older_major instead: it supports $engine $older_minimum and newer."
+    fi
+
+    echo
+    echo "Choose another database."
+}
+
 prompt_database_selection() {
     while true; do
         echo
@@ -714,9 +787,14 @@ prompt_database_selection() {
         for i in "${!DATABASE_OPTIONS[@]}"; do
             IFS='|' read -r engine version status <<< "${DATABASE_OPTIONS[$i]}"
 
-            if [[ "$status" == "conflict" ]]; then
-                status="conflicts with installed $(get_conflicting_database_engine "$engine")"
-            fi
+            case "$status" in
+                conflict)
+                    status="conflicts with installed $(get_conflicting_database_engine "$engine")"
+                    ;;
+                too_old)
+                    status="too old: Drupal $DRUPAL_MAJOR needs $(get_database_minimum_version "$DRUPAL_MAJOR" "$engine")+"
+                    ;;
+            esac
 
             echo "$((i + 1))) $engine $version [$status]"
         done
@@ -743,6 +821,11 @@ prompt_database_selection() {
 
         if [[ "$DATABASE_STATUS" == "conflict" ]]; then
             explain_database_conflict "$DATABASE_ENGINE" "$DATABASE_VERSION"
+            continue
+        fi
+
+        if [[ "$DATABASE_STATUS" == "too_old" ]]; then
+            explain_database_too_old "$DATABASE_ENGINE" "$DATABASE_VERSION"
             continue
         fi
 

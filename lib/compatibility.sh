@@ -165,14 +165,14 @@ get_compatible_database_options() {
             continue
         fi
 
+        # Too old for this Drupal release: still listed (with the reason)
+        # so the user sees why it cannot be chosen.
         if ! is_database_version_compatible \
             "$drupal_major" \
             "$engine" \
             "$version"; then
-            continue
-        fi
-
-        if is_database_engine_installed "$engine"; then
+            status="too_old"
+        elif is_database_engine_installed "$engine"; then
             status="installed"
         elif get_installed_conflicting_engine "$engine" > /dev/null; then
             status="conflict"

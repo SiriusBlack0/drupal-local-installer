@@ -127,6 +127,17 @@ installer explains why and offers two ways forward:
 
 PostgreSQL and SQLite can always be installed next to either of them.
 
+## Databases that are too old
+
+The minimum database versions come from the drupal.org requirements in
+`config/compatibility.conf`. A database whose system version is older
+(for example PostgreSQL 14 and SQLite 3.37 on Ubuntu 22.04 for Drupal 11)
+is still listed, as `[too old: Drupal 11 needs 16+]`, and cannot be
+chosen. The installer explains the options: a newer version from the
+vendor's repository (it never adds package sources itself), another
+database, DDEV (`ddev config --database=postgres:16`), or the previous
+Drupal major when that one supports the installed version.
+
 ## The Drupal site
 
 The site is installed with the **standard** profile. The site name is
@@ -221,28 +232,71 @@ The location follows `XDG_STATE_HOME` if it is set.
   finish the cleanup by hand.
 - Check the log file shown at the end of the run.
 
-## Removing a test project (manual, for now)
-
-Until the "remove project" feature exists, remove the web server files,
-the directory and, for MariaDB/MySQL or PostgreSQL, the database and
-its user:
+## Removing a project
 
 ```bash
-sudo rm -f /etc/nginx/sites-enabled/<project>.conf /etc/nginx/sites-available/<project>.conf
-sudo nginx -t && sudo systemctl reload nginx          # without systemd: sudo service nginx reload
-sudo rm -f /etc/php/<php>/fpm/pool.d/<project>.conf
-sudo php-fpm<php> -t && sudo systemctl reload php<php>-fpm
-sudo rm -rf -- /var/www/<project>
-
-# MariaDB / MySQL
-sudo mysql -e "DROP DATABASE IF EXISTS \`<db_name>\`; DROP USER IF EXISTS '<db_user>'@'localhost';"
-
-# PostgreSQL
-sudo -u postgres psql -c 'DROP DATABASE IF EXISTS "<db_name>";' -c 'DROP ROLE IF EXISTS "<db_user>";'
+./install.sh --remove <project> --dry-run   # only shows what would be removed
+./install.sh --remove <project>
 ```
 
-SQLite needs nothing extra: the database file is inside the project
-directory.
+Only projects in the registry are removed, and only what the registry
+lists. Every path in the record is compared with the path the installer
+itself would have created; anything unexpected stops the removal.
+
+1. The plan is shown: Nginx site, PHP-FPM pool, database and database
+   user (SQLite: the file inside the project), project folder, registry
+   entry – each marked as existing or already gone – and a warning about
+   uncommitted or unpushed git work. Packages, services, other projects
+   and the logs are never touched.
+2. A backup is offered (default yes).
+3. You type the project name to confirm; then the sudo password is asked.
+   The backup is made now: `mysqldump` / `pg_dump` (through sudo, so it
+   also works for Drupal 7 and without Drush) and the project folder
+   without `vendor/` (Composer recreates it), in
+   `~/drupal-local-installer-backups/<project>-<date>/` (directory 700,
+   files 600; they contain `settings.php`). If the backup fails, nothing
+   is removed.
+4. Removal runs newest first: Nginx site, PHP-FPM pool, database, folder.
+   The registry entry is removed last and only if everything else
+   succeeded, so a failed removal can simply be run again.
+
+**Data that is not backed up cannot be recovered.**
+
+Projects that are not in the registry (made by hand, or before the
+registry existed) are never removed automatically: the installer lists
+what it finds with that name and prints the commands to remove it by hand.
+Register them first with `--scan`.
+
+`./install.sh --unregister <project>` removes only the registry entry and
+leaves everything else as it is.
+
+## Existing projects (`--scan`)
+
+```bash
+./install.sh --scan
+```
+
+looks in `/var/www` for Drupal projects that are not registered and asks,
+one by one, whether to register them. Detection only reads files:
+
+- Drupal version and web root (`web/`, `docroot/`, `html/`, `public/` or
+  the project root; Drupal 7 too),
+- the enabled Nginx site whose `root` is that web root: URL, PHP-FPM
+  socket and from it the PHP version,
+- the PHP-FPM pool, but only if it serves this site alone – a shared pool
+  such as `www.conf` is never recorded,
+- the database (engine, name, user – never the password) through the
+  project's own Drush, when it has one.
+
+Such projects are registered as **adopted**. The installer never changes
+their configuration. Their support level is recorded and shown in
+`--list`: `supported`, `php_missing (…)`, or `unsupported (Drupal 7 is end
+of life)` – a later Docker/DDEV mode is planned for those.
+
+Removing an adopted project (`--remove`) works like for any other project,
+with three extra rules: shared resources are never touched, the database
+**user** is kept (it may be shared; only the database is dropped), and an
+Nginx site that no longer serves the project is left in place.
 
 ## Development
 
@@ -263,6 +317,7 @@ temporary directories.
 - [x] Nginx site and PHP-FPM pool, validated before activation
 - [x] `drush site:install`, administrator password, sudo asked once
 - [x] Final checks and project registry (`--list`)
-- [ ] Remove a project (with backup offer and confirmation)
+- [x] Remove a project (`--remove`, backup offer, typed confirmation, `--dry-run`)
+- [x] Register existing projects (`--scan`, adopted, support levels)
 - [ ] Update a project
 - [ ] Optional package source for other PHP versions; Docker mode

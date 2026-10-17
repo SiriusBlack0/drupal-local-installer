@@ -133,6 +133,13 @@ fi
         "mariadb|11.8.6|conflict mysql|8.4.11|installed postgresql|18|available" \
         "$(get_compatible_database_options 11 | tr '\n' ' ' | sed 's/ $//')"
 
+    is_database_version_compatible() { [[ "$3" != "18" ]]; }
+    INSTALLED="mariadb"
+    check "Too old version listed as too_old" \
+        "mariadb|11.8.6|installed mysql|8.4.11|conflict postgresql|18|too_old" \
+        "$(get_compatible_database_options 11 | tr '\n' ' ' | sed 's/ $//')"
+    is_database_version_compatible() { return 0; }
+
     INSTALLED=""
     check "Neither installed: both available" \
         "mariadb|11.8.6|available mysql|8.4.11|available postgresql|18|available" \

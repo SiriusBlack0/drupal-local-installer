@@ -55,6 +55,42 @@ else
     fi
 fi
 
+REMOVE_PROJECT="" REMOVE_DRY_RUN=0
+status=0
+parse_options --remove mysite --dry-run > /dev/null || status=$?
+
+if [[ "$status" -eq 4 && "$REMOVE_PROJECT" == "mysite" && "$REMOVE_DRY_RUN" == "1" ]]; then
+    pass "--remove NAME --dry-run recognised"
+else
+    fail "--remove parsing: status $status, '$REMOVE_PROJECT', dry-run $REMOVE_DRY_RUN"
+fi
+
+REMOVE_DRY_RUN=0
+status=0
+output="$(parse_options --remove)" || status=$?
+status2=0
+output2="$(parse_options --dry-run)" || status2=$?
+
+if [[ "$status" -eq 1 && "$output" == *"needs a project name"* &&
+      "$status2" -eq 1 && "$output2" == *"only works with --remove"* ]]; then
+    pass "--remove without a name and --dry-run alone are rejected"
+else
+    fail "invalid --remove use: $status/$status2"
+fi
+
+status=0
+parse_options --scan > /dev/null || status=$?
+status2=0
+REMOVE_PROJECT=""
+parse_options --unregister oldsite > /dev/null || status2=$?
+
+if [[ "$status" -eq 5 && "$status2" -eq 6 && "$REMOVE_PROJECT" == "oldsite" ]]; then
+    pass "--scan and --unregister NAME recognised"
+else
+    fail "--scan/--unregister: $status/$status2 '$REMOVE_PROJECT'"
+fi
+
+REMOVE_DRY_RUN=0
 VERBOSE=0 STEP_MODE=0
 
 # Test 2: Log file is private.

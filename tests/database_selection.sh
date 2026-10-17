@@ -169,5 +169,69 @@ if not passed:
     print(result.stderr)
     raise SystemExit(1)
 
+# Too old for Drupal 11 (Ubuntu 22.04): listed with the reason, refused
+# with alternatives, asked again.
+old_helpers = r'''
+get_compatible_database_options() {
+    printf '%s\n' \
+        'mysql|8.0.46|installed' \
+        'postgresql|14|too_old' \
+        'sqlite|3.37.2|too_old'
+}
+get_conflicting_database_engine() { return 1; }
+get_database_minimum_version() {
+    case "$1:$2" in
+        11:postgresql) echo 16 ;; 11:sqlite) echo 3.45 ;; 11:mysql) echo 8.0 ;;
+        10:postgresql) echo 12 ;; 10:sqlite) echo 3.26 ;; 10:mysql) echo 5.7.8 ;;
+        *) return 1 ;;
+    esac
+}
+database_version_meets_minimum() {
+    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" == "$2" ]]
+}
+print_container_hint() { echo "CONTAINER HINT"; }
+'''
+
+def run_old(user_input, options=None):
+    helpers = old_helpers
+    if options is not None:
+        helpers += "\nget_compatible_database_options() { printf '%s\\n' " + options + "; }\n"
+    script = (
+        "set -e\n" + helpers + '\nDRUPAL_VERSION="11.4.10"\n' + section + calls
+        + '\nprintf "RESULT:%s:%s:%s\\n" "$DATABASE_ENGINE" "$DATABASE_VERSION" "$DATABASE_STATUS"\n'
+    )
+    return subprocess.run(["bash", "-c", script], input=user_input, text=True,
+                          capture_output=True, timeout=5)
+
+result = run_old("2\n3\n1\n")
+checks = {
+    "postgres listed": "2) postgresql 14 [too old: Drupal 11 needs 16+]" in result.stdout,
+    "sqlite listed": "3) sqlite 3.37.2 [too old: Drupal 11 needs 3.45+]" in result.stdout,
+    "postgres refused": "[TOO OLD] This system provides postgresql 14; Drupal 11 needs 16 or newer." in result.stdout,
+    "postgres repo hint": "postgresql.org/download/linux/ubuntu" in result.stdout,
+    "ddev for postgres": "ddev config --database=postgres:16" in result.stdout,
+    "older drupal": "Choose Drupal 10 instead: it supports postgresql 12 and newer." in result.stdout,
+    "sqlite explained": "SQLite is part of the system" in result.stdout,
+    "sqlite older drupal": "it supports sqlite 3.26 and newer." in result.stdout,
+    "asked again": "RESULT:mysql:8.0.46:installed" in result.stdout,
+}
+passed = result.returncode == 0 and all(checks.values())
+print(f"[{'PASS' if passed else 'FAIL'}] Too old databases listed and refused with alternatives")
+if not passed:
+    print({k: v for k, v in checks.items() if not v})
+    print(result.stdout, result.stderr)
+    raise SystemExit(1)
+
+# Nothing usable at all: explained, container hint, exit 1.
+result = run_old("", "'postgresql|14|too_old' 'sqlite|3.37.2|too_old'")
+passed = (result.returncode == 1
+          and "No database on this system can be used for Drupal 11." in result.stdout
+          and "postgresql 14: too_old" in result.stdout
+          and "CONTAINER HINT" in result.stdout)
+print(f"[{'PASS' if passed else 'FAIL'}] No usable database: explained, with container hint")
+if not passed:
+    print(result.stdout, result.stderr)
+    raise SystemExit(1)
+
 print("\n[SUCCESS] Database selection baseline tests passed.")
 PY

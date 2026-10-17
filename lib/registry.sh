@@ -10,13 +10,19 @@
 # database password is only in the project's own settings.php.
 REGISTRY_FORMAT=1
 
+# Filled by lib/scan.sh for adopted projects; empty for new projects.
+declare -gA REGISTRY_VALUES=()
+
 REGISTRY_FIELDS=(
     format
+    managed_by
+    support
     name
     machine_name
     created
     owner
     project_path
+    web_root
     url
     drupal_version
     install_profile
@@ -168,8 +174,17 @@ get_project_conflict() {
 # The upper-case variables are set by lib/ui.sh during the questions.
 # shellcheck disable=SC2153
 get_registry_value() {
+    # Values set by --scan for projects the installer did not create.
+    if [[ -n "${REGISTRY_VALUES[$1]+set}" ]]; then
+        printf '%s\n' "${REGISTRY_VALUES[$1]}"
+        return 0
+    fi
+
     case "$1" in
         format) echo "$REGISTRY_FORMAT" ;;
+        managed_by) echo "installer" ;;
+        support) echo "supported" ;;
+        web_root) echo "$PROJECT_PATH/web" ;;
         name) echo "$PROJECT_NAME" ;;
         machine_name) echo "$PROJECT_MACHINE_NAME" ;;
         created) date --iso-8601=seconds ;;
@@ -280,24 +295,29 @@ list_registered_projects() {
         [[ -f "$record" ]] || continue
 
         if [[ "$found" -eq 0 ]]; then
-            printf '%-20s %-34s %-5s %-11s %s\n' "PROJECT" "URL" "PHP" "DATABASE" "STATE"
+            printf '%-20s %-34s %-5s %-11s %-9s %s\n' "PROJECT" "URL" "PHP" "DATABASE" "TYPE" "STATE"
             found=1
         fi
 
         machine_name="$(read_project_field "$record" machine_name)" || machine_name="?"
         project_path="$(read_project_field "$record" project_path)" || project_path=""
 
-        if [[ -n "$project_path" && -d "$project_path" ]]; then
-            state="ok"
-        else
+        if [[ -z "$project_path" || ! -d "$project_path" ]]; then
             state="directory missing"
+        else
+            case "$(read_project_field "$record" support)" in
+                unsupported*) state="$(read_project_field "$record" support)" ;;
+                php_missing*) state="$(read_project_field "$record" support)" ;;
+                *) state="ok" ;;
+            esac
         fi
 
-        printf '%-20s %-34s %-5s %-11s %s\n' \
+        printf '%-20s %-34s %-5s %-11s %-9s %s\n' \
             "$machine_name" \
             "$(read_project_field "$record" url)" \
             "$(read_project_field "$record" php_version)" \
             "$(read_project_field "$record" database_engine)" \
+            "$(read_project_field "$record" managed_by || echo installer)" \
             "$state"
     done
 
