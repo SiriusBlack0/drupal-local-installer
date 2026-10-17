@@ -265,6 +265,10 @@ create_start_script() {
         '' \
         "services=($services)" \
         "site_config=/etc/nginx/sites-enabled/${machine_name}.conf" \
+        "socket=$(get_project_php_fpm_socket "$machine_name" "$php_version")" \
+        "fpm_service=php${php_version}-fpm" \
+        "fpm_binary=php-fpm${php_version}" \
+        "error_log=/var/log/nginx/${machine_name}.error.log" \
         "url=http://$(get_project_nginx_domain "$machine_name")" \
         '' \
         'has_systemd() { [[ -d /run/systemd/system ]]; }' \
@@ -277,6 +281,19 @@ create_start_script() {
         'start_service() {' \
         '    if has_systemd; then sudo systemctl start "$1"' \
         '    else sudo service "$1" start; fi' \
+        '}' \
+        '' \
+        '# Reload, never restart: other projects keep running.' \
+        'reload_service() {' \
+        '    if has_systemd; then sudo systemctl reload "$1"' \
+        '    else sudo service "$1" reload; fi' \
+        '}' \
+        '' \
+        '# Before site:install Drupal redirects to install.php,' \
+        '# afterwards it answers with "X-Generator: Drupal".' \
+        'is_drupal_answering() {' \
+        '    curl -sI --max-time 5 "$url/" 2>/dev/null |' \
+        "        grep -qiE '^(x-generator: drupal|location: .*install\\.php)'" \
         '}' \
         '' \
         'failed=()' \
@@ -304,11 +321,46 @@ create_start_script() {
         '    exit 1' \
         'fi' \
         '' \
-        'if [[ -e "$site_config" ]]; then' \
-        '    echo "Project ready: $url"' \
-        'else' \
+        'if [[ ! -e "$site_config" ]]; then' \
         '    echo "Services are running, but the Nginx site for this project is not set up yet."' \
+        '    exit 0' \
         'fi' \
+        '' \
+        '# A pool added while PHP-FPM was already running is loaded on reload.' \
+        'if [[ ! -S "$socket" ]]; then' \
+        '    if sudo "$fpm_binary" -t > /dev/null 2>&1 &&' \
+        '       reload_service "$fpm_service" > /dev/null; then' \
+        '        sleep 1' \
+        '    fi' \
+        '    if [[ -S "$socket" ]]; then' \
+        '        echo "[RELOADED] $fpm_service (loaded this project'"'"'s pool)"' \
+        '    else' \
+        '        echo "[FAILED]  $fpm_service: this project'"'"'s pool is not running ($socket)" >&2' \
+        '        echo "Details: sudo $fpm_binary -t" >&2' \
+        '        exit 1' \
+        '    fi' \
+        'fi' \
+        '' \
+        'if ! command -v curl > /dev/null; then' \
+        '    echo "Project ready: $url (install curl to let ./start check it)"' \
+        '    exit 0' \
+        'fi' \
+        '' \
+        '# A site added while Nginx was already running is loaded on reload.' \
+        'if ! is_drupal_answering; then' \
+        '    if sudo nginx -t > /dev/null 2>&1 && reload_service nginx > /dev/null; then' \
+        '        sleep 1' \
+        '    fi' \
+        '    if is_drupal_answering; then' \
+        '        echo "[RELOADED] nginx (loaded this project'"'"'s site)"' \
+        '    else' \
+        '        echo "[FAILED]  $url does not answer as a Drupal site." >&2' \
+        '        echo "Details: sudo nginx -t, and sudo tail $error_log" >&2' \
+        '        exit 1' \
+        '    fi' \
+        'fi' \
+        '' \
+        'echo "Project ready: $url"' \
         | run_as_project_user "$run_user" tee "$start_path" > /dev/null &&
     run_as_project_user "$run_user" chmod 0750 "$start_path" &&
     echo "[OK] Start script created: ./start ($services)"

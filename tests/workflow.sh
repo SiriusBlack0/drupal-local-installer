@@ -16,14 +16,44 @@ DATABASE_USER="drupal_user"
 DATABASE_PASSWORD="Secret#Pass1"
 SQLITE_DATABASE_PATH="/tmp/test-drupal/private/database.sqlite"
 
+# Each stub returns the value of its *_result variable (default 0), so
+# the tests change results without redefining functions.
 provision_project_database() {
     calls+="database "
     database_args="$*"
-    return 0
+    return "${database_result:-0}"
 }
 
 remove_project_directory() {
-    calls+="rollback "
+    calls+="remove_directory "
+    return 0
+}
+
+remove_project_database() {
+    calls+="remove_database "
+    remove_database_args="$*"
+    return 0
+}
+
+install_php_fpm_pool() {
+    calls+="pool "
+    pool_args="$*"
+    return "${pool_result:-0}"
+}
+
+remove_php_fpm_pool() {
+    calls+="remove_pool "
+    return "${remove_pool_result:-0}"
+}
+
+install_nginx_site() {
+    calls+="site "
+    site_args="$*"
+    return "${site_result:-0}"
+}
+
+remove_nginx_site() {
+    calls+="remove_site "
     return 0
 }
 
@@ -63,7 +93,9 @@ provision_drupal_project() {
 }
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness provision database start_script " ]] &&
+   [[ "$calls" == "plan execute readiness provision database pool site start_script " ]] &&
+   [[ "$pool_args" == "test_drupal 8.5 devuser" ]] &&
+   [[ "$site_args" == "test_drupal /tmp/test-drupal 8.5" ]] &&
    [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]] &&
    [[ "$provision_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]]; then
     echo "[PASS] Installation workflow executes in correct order"
@@ -179,10 +211,7 @@ DATABASE_ENGINE="mariadb"
 
 # Test 7: Database failure removes the project directory.
 
-provision_project_database() {
-    calls+="database "
-    return 1
-}
+database_result=1
 
 calls=""
 
@@ -190,7 +219,8 @@ if output="$(run_installation_workflow)"; then
     echo "[FAIL] Workflow ignored database failure"
     exit 1
 elif [[ "$output" == *"[ERROR] Database creation failed."* ]] &&
-     [[ "$output" == *"[OK] Rollback completed."* ]]; then
+     [[ "$output" == *"[OK] Rollback completed."* ]] &&
+     [[ "$(run_installation_workflow > /dev/null; echo "$calls")" == *"database remove_directory " ]]; then
     echo "[PASS] Database failure rolls back the project directory"
 else
     echo "[FAIL] Unexpected database failure result: $output"
@@ -208,3 +238,62 @@ else
     echo "[FAIL] Database step not logged"
     exit 1
 fi
+
+# Test 9: Nginx failure removes everything created, newest first.
+
+database_result=0
+site_result=1
+
+calls=""
+
+if output="$(run_installation_workflow)"; then
+    echo "[FAIL] Workflow ignored Nginx failure"
+    exit 1
+fi
+
+calls=""
+run_installation_workflow > /dev/null || true
+
+if [[ "$calls" == "plan execute readiness provision database pool site remove_pool remove_database remove_directory " ]] &&
+   [[ "$remove_database_args" == "mariadb drupal_db drupal_user" ]] &&
+   [[ "$output" == *"[ERROR] Web server configuration failed."* ]]; then
+    echo "[PASS] Nginx failure rolls back pool, database and directory"
+else
+    echo "[FAIL] Unexpected Nginx rollback: $calls"
+    exit 1
+fi
+
+# Test 10: PHP-FPM failure: no Nginx site, pool not removed twice.
+
+pool_result=1
+
+calls=""
+run_installation_workflow > /dev/null || true
+
+if [[ "$calls" == "plan execute readiness provision database pool remove_database remove_directory " ]]; then
+    echo "[PASS] PHP-FPM failure rolls back database and directory only"
+else
+    echo "[FAIL] Unexpected PHP-FPM rollback: $calls"
+    exit 1
+fi
+
+# Test 11: A failed rollback step is reported with a manual command.
+
+pool_result=0
+remove_pool_result=1
+
+get_php_fpm_pool_config_path() {
+    echo "/etc/php/$2/fpm/pool.d/$1.conf"
+}
+
+output="$(run_installation_workflow || true)"
+
+if [[ "$output" == *"[WARNING] Remove the PHP-FPM pool manually: /etc/php/8.5/fpm/pool.d/test_drupal.conf"* ]] &&
+   [[ "$output" != *"[OK] Rollback completed."* ]]; then
+    echo "[PASS] Failed rollback step reported with the path to remove"
+else
+    echo "[FAIL] Unexpected failed rollback output: $output"
+    exit 1
+fi
+
+echo "[SUCCESS] Installation workflow tests passed."

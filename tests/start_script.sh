@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 source lib/output.sh
 source lib/system.sh
+source lib/php_fpm.sh
 source lib/nginx.sh
 source lib/registry.sh
 source lib/project.sh
@@ -30,6 +31,7 @@ cat > "$stub_bin/systemctl" <<STUB
 case "\$1" in
     is-active) [[ -e "$state_dir/\$3" ]] ;;
     start) grep -qx "\$2" "$state_dir/.fail" 2>/dev/null && exit 1; touch "$state_dir/\$2" ;;
+    reload) "$stub_bin/on_reload" "\$2" ;;
 esac
 STUB
 
@@ -38,11 +40,42 @@ cat > "$stub_bin/service" <<STUB
 case "\$2" in
     status) [[ -e "$state_dir/\$1" ]] ;;
     start) grep -qx "\$1" "$state_dir/.fail" 2>/dev/null && exit 1; touch "$state_dir/\$1" ;;
+    reload) "$stub_bin/on_reload" "\$1" ;;
 esac
 STUB
 
+# Reload stub: PHP-FPM creates the pending pool socket, Nginx starts
+# serving the pending site. Every reload is recorded in .reloads.
+cat > "$stub_bin/on_reload" <<STUB
+#!/usr/bin/env bash
+echo "\$1" >> "$state_dir/.reloads"
+case "\$1" in
+    php8.5-fpm)
+        [[ -e "$state_dir/.pool_pending" ]] &&
+            python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$state_dir/pool.sock"
+        ;;
+    nginx)
+        [[ -e "$state_dir/.site_pending" ]] && cp "$state_dir/.site_pending" "$state_dir/.http"
+        ;;
+esac
+exit 0
+STUB
+
+# curl prints the headers stored in .http (nothing = no answer).
+cat > "$stub_bin/curl" <<STUB
+#!/usr/bin/env bash
+cat "$state_dir/.http" 2>/dev/null
+STUB
+
+# Configuration tests fail when .config_bad exists.
+printf '#!/usr/bin/env bash\n[[ ! -e "%s/.config_bad" ]]\n' "$state_dir" > "$stub_bin/nginx"
+cp "$stub_bin/nginx" "$stub_bin/php-fpm8.5"
+
 printf '#!/usr/bin/env bash\nexec "$@"\n' > "$stub_bin/sudo"
-chmod +x "$stub_bin/systemctl" "$stub_bin/service" "$stub_bin/sudo"
+printf '#!/usr/bin/env bash\n' > "$stub_bin/sleep"
+chmod +x "$stub_bin/systemctl" "$stub_bin/service" "$stub_bin/sudo" \
+    "$stub_bin/on_reload" "$stub_bin/curl" "$stub_bin/nginx" \
+    "$stub_bin/php-fpm8.5" "$stub_bin/sleep"
 PATH="$stub_bin:$PATH"
 
 new_project() {
@@ -156,7 +189,84 @@ else
     fail "Existing ./start modified"
 fi
 
-# Test 8: The generated script itself passes ShellCheck.
+# Tests 8-11 use a copy of ./start whose Nginx site and pool socket
+# point into the temporary directory.
+
+site_project="$(new_project site_ready)"
+create_start_script "$site_project" "8.5" "mariadb" "mysite" "$current_user" > /dev/null
+touch "$state_dir/site.conf"
+sed -i \
+    -e "s#^site_config=.*#site_config=$state_dir/site.conf#" \
+    -e "s#^socket=.*#socket=$state_dir/pool.sock#" \
+    "$site_project/start"
+
+reset_site_state() {
+    rm -f "$state_dir/pool.sock" "$state_dir/.http" "$state_dir/.reloads" \
+        "$state_dir/.pool_pending" "$state_dir/.site_pending" "$state_dir/.config_bad"
+}
+
+make_socket() {
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1"
+}
+
+# Test 8: Everything loaded: no reload, URL shown.
+
+reset_site_state
+make_socket "$state_dir/pool.sock"
+printf 'HTTP/1.1 302 Found\r\nLocation: http://mysite.localhost/core/install.php\r\n' > "$state_dir/.http"
+
+if output="$("$site_project/start")" &&
+   [[ "$output" == *"Project ready: http://mysite.localhost"* ]] &&
+   [[ ! -e "$state_dir/.reloads" ]]; then
+    pass "Loaded project: URL shown, nothing reloaded"
+else
+    fail "loaded project: $output"
+fi
+
+# Test 9: New pool and site while services were already running:
+# both are reloaded (not restarted) and then the URL is shown.
+
+reset_site_state
+touch "$state_dir/.pool_pending"
+printf 'HTTP/1.1 200 OK\r\nX-Generator: Drupal 11 (https://www.drupal.org)\r\n' > "$state_dir/.site_pending"
+
+if output="$("$site_project/start")" &&
+   [[ "$output" == *"[RELOADED] php8.5-fpm"*"[RELOADED] nginx"*"Project ready"* ]] &&
+   [[ "$(tr '\n' ' ' < "$state_dir/.reloads")" == "php8.5-fpm nginx " ]]; then
+    pass "Pending pool and site are loaded with a reload"
+else
+    fail "pending pool/site: $output"
+fi
+
+# Test 10: An invalid configuration is never reloaded.
+
+reset_site_state
+touch "$state_dir/.pool_pending" "$state_dir/.config_bad"
+
+if output="$("$site_project/start" 2>&1)"; then
+    fail "Invalid PHP-FPM configuration reported as success"
+elif [[ ! -e "$state_dir/.reloads" && "$output" == *"pool is not running"* ]]; then
+    pass "Invalid configuration: no reload, exit code 1"
+else
+    fail "invalid configuration: $output"
+fi
+
+# Test 11: A site that never answers as Drupal is reported.
+
+reset_site_state
+make_socket "$state_dir/pool.sock"
+printf 'HTTP/1.1 200 OK\r\nServer: nginx\r\n' > "$state_dir/.http"
+
+if output="$("$site_project/start" 2>&1)"; then
+    fail "Non-Drupal answer reported as success"
+elif [[ "$output" == *"does not answer as a Drupal site"* && "$output" == *"mysite.error.log"* ]] &&
+     [[ "$(cat "$state_dir/.reloads")" == "nginx" ]]; then
+    pass "Non-Drupal answer: one Nginx reload, then reported"
+else
+    fail "non-Drupal answer: $output"
+fi
+
+# Test 12: The generated script itself passes ShellCheck.
 
 if ! command -v shellcheck > /dev/null; then
     echo "[SKIP] ShellCheck not installed"

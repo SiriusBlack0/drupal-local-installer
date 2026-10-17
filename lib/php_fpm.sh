@@ -102,3 +102,61 @@ write_php_fpm_pool_config() {
         return 1
     fi
 }
+
+# Installs the pool, checks it with "php-fpmX.Y -t", and only then
+# reloads PHP-FPM (or starts it when it is stopped). If the check fails,
+# the new pool file is removed and the running PHP-FPM is not touched.
+install_php_fpm_pool() {
+    local machine_name="$1"
+    local php_version="$2"
+    local run_user="$3"
+    local pool_path
+    local temp_file
+
+    pool_path="$(get_php_fpm_pool_config_path "$machine_name" "$php_version")"
+
+    if [[ -e "$pool_path" || -L "$pool_path" ]]; then
+        echo "[ERROR] PHP-FPM pool already exists: $pool_path"
+        return 1
+    fi
+
+    temp_file="$(mktemp -u)"
+
+    if ! write_php_fpm_pool_config "$machine_name" "$php_version" "$run_user" "$temp_file"; then
+        rm -f "$temp_file"
+        return 1
+    fi
+
+    if ! sudo install -m 0644 -o root -g root "$temp_file" "$pool_path"; then
+        rm -f "$temp_file"
+        echo "[ERROR] Could not install the PHP-FPM pool."
+        return 1
+    fi
+
+    rm -f "$temp_file"
+
+    if ! run_logged "Checking PHP-FPM configuration" sudo "php-fpm${php_version}" -t; then
+        sudo rm -f -- "$pool_path"
+        echo "[ERROR] The PHP-FPM configuration test failed; the new pool was removed."
+        return 1
+    fi
+
+    if ! run_logged "Reloading PHP-FPM ${php_version}" \
+        reload_or_start_service "php${php_version}-fpm"; then
+        sudo rm -f -- "$pool_path"
+        echo "[ERROR] PHP-FPM could not reload; the new pool was removed."
+        return 1
+    fi
+
+    echo "[OK] PHP-FPM pool ready: $(get_project_php_fpm_socket "$machine_name" "$php_version")"
+}
+
+remove_php_fpm_pool() {
+    local machine_name="$1"
+    local php_version="$2"
+
+    [[ "$machine_name" =~ ^[a-z0-9_]+$ && "$php_version" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+
+    sudo rm -f -- "$(get_php_fpm_pool_config_path "$machine_name" "$php_version")" &&
+    reload_or_start_service "php${php_version}-fpm" > /dev/null 2>&1
+}

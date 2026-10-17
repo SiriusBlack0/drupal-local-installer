@@ -31,6 +31,7 @@ SUITES=(
     "SQLite Database Tests|bash tests/sqlite_database.sh"
     "Nginx Configuration Tests|bash tests/nginx.sh"
     "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
+    "Web Server Installation Tests|bash tests/web_server.sh"
     "Confirmation Integration Tests|bash tests/integration.sh"
     "Runtime User Tests|bash tests/runtime_user.sh"
     "Project Path Tests|bash tests/project_path.sh"

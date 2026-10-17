@@ -686,6 +686,39 @@ provision_sqlite_database() {
     echo "[SUCCESS] SQLite database directory ready: $database_dir"
 }
 
+# Removes a project database and its user (rollback, and later the
+# "remove project" feature). SQLite lives inside the project directory,
+# so there is nothing to remove here.
+remove_project_database() {
+    local engine="$1"
+    local database_name="$2"
+    local database_user="${3:-}"
+
+    case "$engine" in
+        mariadb|mysql)
+            if ! is_valid_database_name "$database_name" ||
+               ! is_valid_database_user "$database_user"; then
+                echo "[ERROR] Invalid database name or user."
+                return 1
+            fi
+
+            printf "DROP DATABASE IF EXISTS \`%s\`;\nDROP USER IF EXISTS '%s'@'localhost';\n" \
+                "$database_name" "$database_user" | sudo mysql
+            ;;
+        postgresql)
+            drop_postgresql_database "$database_name" &&
+            drop_postgresql_user "$database_user"
+            ;;
+        sqlite)
+            return 0
+            ;;
+        *)
+            echo "[ERROR] Unsupported database engine: $engine"
+            return 1
+            ;;
+    esac
+}
+
 database_exists() {
     local database_name="$1"
     local result

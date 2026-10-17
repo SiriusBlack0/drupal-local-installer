@@ -132,6 +132,20 @@ run_service_start() {
     fi
 }
 
+# Reads new configuration without stopping a running service, so other
+# projects keep working. A stopped service is started instead.
+reload_or_start_service() {
+    local service="$1"
+
+    if has_systemd; then
+        sudo systemctl reload-or-restart "$service"
+    elif is_service_active "$service"; then
+        sudo service "$service" reload
+    else
+        sudo service "$service" start
+    fi
+}
+
 # --------------------------------------------------
 # Check whether PHP-FPM service is running
 # --------------------------------------------------

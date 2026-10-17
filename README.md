@@ -6,8 +6,9 @@ is missing (only after you approve), and creates the project with the
 correct PHP version.
 
 > **Status:** work in progress. The installer currently creates the project
-> files (Drupal + Drush) and the database. Nginx/PHP-FPM setup and
-> `drush site:install` are being added. See [Roadmap](#roadmap).
+> files (Drupal + Drush), the database, a PHP-FPM pool and an Nginx site.
+> `drush site:install` is being added: until then the browser shows the
+> Drupal installer at `http://<project>.localhost`. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -32,7 +33,7 @@ The installer works in three phases:
    PHP extensions, services. Nothing is changed on the system.
 3. **Installation** – only after you confirm: missing packages (with a
    simulation and a second confirmation first), project directory,
-   Drupal, Drush, database.
+   Drupal, Drush, database, PHP-FPM pool, Nginx site.
 
 ## Supported versions
 
@@ -70,6 +71,31 @@ stopped, because other projects may use the same services. It works
 with and without systemd, which makes it useful on WSL, where services
 often do not start on their own.
 
+It also makes sure the project itself is loaded. If PHP-FPM or Nginx were
+already running when the project was created and the project's pool
+socket is missing or the site does not answer as Drupal, `./start`
+checks the configuration (`php-fpmX.Y -t`, `nginx -t`) and only then
+**reloads** the service. A reload loads new configuration without
+dropping the other projects; a restart is never used.
+
+## Web server
+
+Each project gets:
+
+| File | Purpose |
+| --- | --- |
+| `/etc/php/<php>/fpm/pool.d/<project>.conf` | own PHP-FPM pool, runs as you (never root) |
+| `/run/php/php<php>-fpm-<project>.sock` | the pool socket Nginx talks to |
+| `/etc/nginx/sites-available/<project>.conf` | Nginx site for `http://<project>.localhost` |
+| `/etc/nginx/sites-enabled/<project>.conf` | link that enables the site |
+| `/var/log/nginx/<project>.error.log` | errors of this site only |
+
+Before any reload the installer runs `php-fpmX.Y -t` and `nginx -t`. If a
+check fails, the new file is removed and the running service is not
+touched, so a mistake never takes down other projects. `*.localhost`
+resolves to your own machine in browsers and curl, so no `/etc/hosts`
+entry is needed.
+
 ### Drush and Composer
 
 Always use the project launchers, so the right PHP is used:
@@ -103,18 +129,24 @@ The location follows `XDG_STATE_HOME` if it is set.
 
 ## If something fails
 
-- Failed steps are rolled back: a project directory, database or database
-  user created by the failed run is removed again.
+- Failed steps are rolled back: everything the failed run created (Nginx
+  site, PHP-FPM pool, database and database user, project directory) is
+  removed again, newest first.
 - If a rollback itself fails, the installer prints the exact command to
   finish the cleanup by hand.
 - Check the log file shown at the end of the run.
 
 ## Removing a test project (manual, for now)
 
-Until the "remove project" feature exists, remove the directory and,
-for MariaDB/MySQL or PostgreSQL, the database and its user:
+Until the "remove project" feature exists, remove the web server files,
+the directory and, for MariaDB/MySQL or PostgreSQL, the database and
+its user:
 
 ```bash
+sudo rm -f /etc/nginx/sites-enabled/<project>.conf /etc/nginx/sites-available/<project>.conf
+sudo nginx -t && sudo systemctl reload nginx          # without systemd: sudo service nginx reload
+sudo rm -f /etc/php/<php>/fpm/pool.d/<project>.conf
+sudo php-fpm<php> -t && sudo systemctl reload php<php>-fpm
 sudo rm -rf -- /var/www/<project>
 
 # MariaDB / MySQL
@@ -143,7 +175,7 @@ temporary directories.
 - [x] Project directory, Composer and Drush with the project PHP
 - [x] Readable output, logs, `--verbose`, `--step`
 - [x] Database creation (MariaDB/MySQL, PostgreSQL, SQLite) in the workflow
-- [ ] Nginx site and PHP-FPM pool, validated before activation
+- [x] Nginx site and PHP-FPM pool, validated before activation
 - [ ] `drush site:install`
 - [ ] Final checks and project registry
 - [ ] Remove a project (with backup offer and confirmation)
