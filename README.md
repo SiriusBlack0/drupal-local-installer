@@ -91,6 +91,27 @@ checks the configuration (`php-fpmX.Y -t`, `nginx -t`) and only then
 **reloads** the service. A reload loads new configuration without
 dropping the other projects; a restart is never used.
 
+## Project registry
+
+After a successful installation the project is recorded in
+
+```
+~/.local/share/drupal-local-installer/projects/<project>.conf
+```
+
+(directory 700, file 600, owned by you). It lists everything the
+installer created – project path, URL, Drupal/PHP versions, database
+engine, name and user (or the SQLite file), PHP-FPM pool and socket,
+Nginx files, log file – so the project can be removed or updated later.
+**No password is ever stored there.** The file is read as plain data,
+never executed.
+
+```bash
+./install.sh --list
+```
+
+shows all registered projects and marks those whose directory is gone.
+
 ## MariaDB and MySQL
 
 Only one of the two can be installed natively: the Ubuntu packages use
@@ -238,7 +259,7 @@ temporary directories.
 - [x] Database creation (MariaDB/MySQL, PostgreSQL, SQLite) in the workflow
 - [x] Nginx site and PHP-FPM pool, validated before activation
 - [x] `drush site:install`, administrator password, sudo asked once
-- [ ] Final checks and project registry
+- [x] Final checks and project registry (`--list`)
 - [ ] Remove a project (with backup offer and confirmation)
 - [ ] Update a project
 - [ ] Optional package source for other PHP versions; Docker mode

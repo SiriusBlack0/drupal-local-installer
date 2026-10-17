@@ -144,6 +144,7 @@ Usage: ./install.sh [options]
 Options:
   --verbose   Show the full output of every command
   --step      Pause before each installation step
+  --list      List the projects created by this installer
   --help      Show this help
 USAGE
     echo
@@ -161,6 +162,7 @@ parse_options() {
         case "$option" in
             --verbose) VERBOSE=1 ;;
             --step) STEP_MODE=1 ;;
+            --list) return 3 ;;
             --help|-h)
                 print_usage
                 return 2

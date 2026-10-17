@@ -4,8 +4,61 @@
 # Project Registry
 # --------------------------------------------------
 
+# One file per project, readable only by the owner. The record holds
+# everything needed to manage the project later (remove, update), but
+# never a password: the database is managed through sudo, and the
+# database password is only in the project's own settings.php.
+REGISTRY_FORMAT=1
+
+REGISTRY_FIELDS=(
+    format
+    name
+    machine_name
+    created
+    owner
+    project_path
+    url
+    drupal_version
+    install_profile
+    php_version
+    database_engine
+    database_name
+    database_user
+    sqlite_path
+    php_fpm_pool
+    php_fpm_socket
+    nginx_available
+    nginx_enabled
+    log_file
+)
+
+get_user_home() {
+    getent passwd "$1" | cut -d: -f6
+}
+
+# The registry belongs to the developer, also when the installer was
+# started with sudo (then $HOME may be root's home).
 get_registry_directory() {
-    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/drupal-local-installer/projects"
+    local base
+    local home
+
+    if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+        base="$XDG_DATA_HOME"
+    elif [[ -n "${PROJECT_USER:-}" ]] &&
+         home="$(get_user_home "$PROJECT_USER")" && [[ -n "$home" ]]; then
+        base="$home/.local/share"
+    else
+        base="$HOME/.local/share"
+    fi
+
+    printf '%s\n' "$base/drupal-local-installer/projects"
+}
+
+get_project_record_path() {
+    local machine_name="$1"
+
+    [[ "$machine_name" =~ ^[a-z0-9_]+$ ]] || return 1
+    printf '%s/%s.conf\n' "$(get_registry_directory)" "$machine_name"
 }
 
 # --------------------------------------------------
@@ -105,4 +158,150 @@ get_project_conflict() {
     fi
 
     return 1
+}
+
+# --------------------------------------------------
+# Writing and reading project records
+# --------------------------------------------------
+
+# Prints the value for one registry field from the current installation.
+# The upper-case variables are set by lib/ui.sh during the questions.
+# shellcheck disable=SC2153
+get_registry_value() {
+    case "$1" in
+        format) echo "$REGISTRY_FORMAT" ;;
+        name) echo "$PROJECT_NAME" ;;
+        machine_name) echo "$PROJECT_MACHINE_NAME" ;;
+        created) date --iso-8601=seconds ;;
+        owner) echo "$PROJECT_USER" ;;
+        project_path) echo "$PROJECT_PATH" ;;
+        url) echo "http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")" ;;
+        drupal_version) echo "$DRUPAL_VERSION" ;;
+        install_profile) echo "${DRUPAL_INSTALL_PROFILE:-standard}" ;;
+        php_version) echo "$PHP_VERSION" ;;
+        database_engine) echo "$DATABASE_ENGINE" ;;
+        database_name) [[ "$DATABASE_ENGINE" == "sqlite" ]] || echo "$DATABASE_NAME" ;;
+        database_user) [[ "$DATABASE_ENGINE" == "sqlite" ]] || echo "$DATABASE_USER" ;;
+        sqlite_path) [[ "$DATABASE_ENGINE" != "sqlite" ]] || echo "$SQLITE_DATABASE_PATH" ;;
+        php_fpm_pool) get_php_fpm_pool_config_path "$PROJECT_MACHINE_NAME" "$PHP_VERSION" ;;
+        php_fpm_socket) get_project_php_fpm_socket "$PROJECT_MACHINE_NAME" "$PHP_VERSION" ;;
+        nginx_available) get_nginx_config_path "$PROJECT_MACHINE_NAME" ;;
+        nginx_enabled) get_nginx_enabled_path "$PROJECT_MACHINE_NAME" ;;
+        log_file) echo "${LOG_FILE:-}" ;;
+        *) return 1 ;;
+    esac
+}
+
+generate_project_record() {
+    local field
+    local value
+
+    echo "# drupal-local-installer project record (no passwords are stored here)."
+
+    for field in "${REGISTRY_FIELDS[@]}"; do
+        value="$(get_registry_value "$field")" || return 1
+
+        if [[ "$value" == *$'\n'* ]]; then
+            echo "[ERROR] Invalid value for $field" >&2
+            return 1
+        fi
+
+        printf '%s=%s\n' "$field" "$value"
+    done
+}
+
+# Writes the record atomically (temporary file, then rename), mode 600,
+# owned by the developer. An existing record is never replaced.
+write_project_record() {
+    local record_path
+    local registry_dir
+    local record
+    local temp_file
+
+    record_path="$(get_project_record_path "$PROJECT_MACHINE_NAME")" || return 1
+    registry_dir="$(dirname "$record_path")"
+
+    if [[ -e "$record_path" ]]; then
+        echo "[ERROR] Project record already exists: $record_path"
+        return 1
+    fi
+
+    record="$(generate_project_record)" || return 1
+    temp_file="$registry_dir/.${PROJECT_MACHINE_NAME}.conf.tmp"
+
+    if ! run_as_project_user "$PROJECT_USER" install -d -m 0700 "$registry_dir" ||
+       ! printf '%s\n' "$record" |
+            run_as_project_user "$PROJECT_USER" tee "$temp_file" > /dev/null ||
+       ! run_as_project_user "$PROJECT_USER" chmod 0600 "$temp_file" ||
+       ! run_as_project_user "$PROJECT_USER" mv -n "$temp_file" "$record_path"; then
+        rm -f "$temp_file" 2>/dev/null
+        echo "[ERROR] Could not write the project record: $record_path"
+        return 1
+    fi
+
+    echo "[OK] Project registered: $record_path"
+}
+
+# Reads one field. The file is parsed as data, never executed, so a
+# changed record cannot run commands.
+read_project_field() {
+    local record_path="$1"
+    local wanted="$2"
+    local key
+    local value
+
+    [[ -f "$record_path" ]] || return 1
+
+    while IFS='=' read -r key value; do
+        if [[ "$key" == "$wanted" ]]; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+    done < "$record_path"
+
+    return 1
+}
+
+list_registered_projects() {
+    local registry_dir
+    local record
+    local found=0
+    local machine_name
+    local project_path
+    local state
+
+    registry_dir="$(get_registry_directory)"
+
+    echo
+    echo "Registered projects ($registry_dir):"
+    echo
+
+    for record in "$registry_dir"/*.conf; do
+        [[ -f "$record" ]] || continue
+
+        if [[ "$found" -eq 0 ]]; then
+            printf '%-20s %-34s %-5s %-11s %s\n' "PROJECT" "URL" "PHP" "DATABASE" "STATE"
+            found=1
+        fi
+
+        machine_name="$(read_project_field "$record" machine_name)" || machine_name="?"
+        project_path="$(read_project_field "$record" project_path)" || project_path=""
+
+        if [[ -n "$project_path" && -d "$project_path" ]]; then
+            state="ok"
+        else
+            state="directory missing"
+        fi
+
+        printf '%-20s %-34s %-5s %-11s %s\n' \
+            "$machine_name" \
+            "$(read_project_field "$record" url)" \
+            "$(read_project_field "$record" php_version)" \
+            "$(read_project_field "$record" database_engine)" \
+            "$state"
+    done
+
+    if [[ "$found" -eq 0 ]]; then
+        echo "No projects registered yet."
+    fi
 }

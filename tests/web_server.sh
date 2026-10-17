@@ -297,6 +297,8 @@ reset_state
 if output="$(NGINX_IPV6=1 CURL_FAIL_FAMILY=6 verify_nginx_site "mysite")"; then
     fail "Site answering only over IPv4 reported as OK"
 elif [[ "$output" == *"does not answer as this Drupal site over: IPv6"* &&
+        "$output" == *"IPv6: answered 'HTTP/1.1 200 OK' (Server: nginx)"* &&
+        "$output" == *"/var/log/nginx/mysite.error.log"* &&
         "$output" == *"nginx -T"* &&
         "$(grep -c '^curl -6' "$calls_file")" == "5" &&
         "$(grep -c '^sleep' "$calls_file")" == "4" ]]; then
@@ -312,6 +314,35 @@ if output="$(NGINX_IPV6=0 verify_nginx_site "mysite")" &&
     pass "Only IPv4 checked on a system without IPv6"
 else
     fail "IPv4-only check: $output / $(calls)"
+fi
+
+# ::1 detection reads /proc/net/if_inet6: IPv6 in the kernel is not
+# enough, the loopback address itself must exist.
+
+if1="$work_dir/if_inet6_with_loopback"
+if2="$work_dir/if_inet6_without_loopback"
+printf '00000000000000000000000000000001 01 80 10 80       lo\nfe80000000000000021122fffe334455 02 40 20 80     eth0\n' > "$if1"
+printf 'fe80000000000000021122fffe334455 02 40 20 80     eth0\n' > "$if2"
+
+if IF_INET6_FILE="$if1" is_ipv6_loopback_available &&
+   ! IF_INET6_FILE="$if2" is_ipv6_loopback_available &&
+   ! IF_INET6_FILE="$work_dir/missing" is_ipv6_loopback_available; then
+    pass "IPv6 checked only when ::1 exists on the loopback interface"
+else
+    fail "::1 detection"
+fi
+
+# No answer at all is described as such.
+
+reset_state
+printf '#!/usr/bin/env bash\nexit 7\n' > "$stub_bin/curl"
+
+if output="$(NGINX_IPV6=0 verify_nginx_site "mysite")"; then
+    fail "No answer reported as success"
+elif [[ "$output" == *"IPv4: no answer (connection failed or timed out)"* ]]; then
+    pass "No answer is reported as such"
+else
+    fail "no answer: $output"
 fi
 
 if output="$(PATH="/nonexistent" verify_nginx_site "mysite")" &&

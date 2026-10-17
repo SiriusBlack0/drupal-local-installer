@@ -226,14 +226,19 @@ verify_drupal_site() {
         return 0
     fi
 
-    if is_ipv6_available; then
+    local headers
+
+    if is_ipv6_loopback_available; then
         families="4 6"
     fi
 
     for family in $families; do
-        if ! curl "-$family" -sI --max-time 10 "$url/" 2>/dev/null |
-                grep -qi '^x-generator: drupal'; then
-            echo "[ERROR] $url does not answer as an installed Drupal site (IPv$family)."
+        headers="$(get_site_headers "$family" "$url")"
+
+        if ! grep -qi '^x-generator: drupal' <<< "$headers"; then
+            echo "[ERROR] $url does not answer as an installed Drupal site (IPv$family):"
+            echo "        $(describe_site_answer "$headers")"
+            log_line "Installed site check over IPv$family failed. Headers:"$'\n'"${headers:-(none)}"
             return 1
         fi
     done
@@ -254,4 +259,89 @@ install_drupal_site() {
         "$project_path" "$run_user" "$site_name" "$admin_user" "$admin_mail" &&
     set_drupal_admin_password "$project_path" "$run_user" "$admin_password" &&
     verify_drupal_site "$project_path" "$run_user" "$PROJECT_MACHINE_NAME"
+}
+
+# ==================================================
+# Final checks
+#
+# The site already works at this point (verify_drupal_site), so these
+# checks only report: a warning here never rolls the project back.
+# ==================================================
+
+# Prints the titles of error-level items of Drupal's status report
+# (/admin/reports/status), one per line.
+get_drupal_requirement_errors() {
+    local project_path="$1"
+    local run_user="$2"
+    local php_version="$3"
+    local json
+
+    json="$(run_as_project_user "$run_user" "$project_path/drush" \
+        core:requirements --severity=2 --format=json 2>/dev/null)" || return 1
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    printf '%s' "$json" | "php${php_version}" -r '
+$data = json_decode(stream_get_contents(STDIN), true);
+if (!is_array($data)) { exit(1); }
+foreach ($data as $item) {
+    echo strip_tags((string) ($item["title"] ?? "?")), "\n";
+}
+'
+}
+
+run_final_checks() {
+    local project_path="$1"
+    local run_user="$2"
+    local php_version="$3"
+    local files_dir="$project_path/web/sites/default/files"
+    local settings_file="$project_path/web/sites/default/settings.php"
+    local db_status
+    local mode
+    local errors
+    local warnings=0
+
+    db_status="$(run_as_project_user "$run_user" "$project_path/drush" \
+        status --field=db-status 2>/dev/null)" || true
+
+    if [[ "$db_status" == *"Connected"* ]]; then
+        echo "[OK] Database connection"
+    else
+        echo "[WARNING] Drush reports no database connection."
+        warnings=$((warnings + 1))
+    fi
+
+    if [[ -d "$files_dir" ]] && run_as_project_user "$run_user" test -w "$files_dir"; then
+        echo "[OK] Files directory is writable: web/sites/default/files"
+    else
+        echo "[WARNING] Files directory is missing or not writable: $files_dir"
+        warnings=$((warnings + 1))
+    fi
+
+    if mode="$(stat -c '%a' "$settings_file" 2>/dev/null)" &&
+       (( (8#$mode & 8#022) == 0 )); then
+        echo "[OK] settings.php cannot be changed by other users ($mode)"
+    else
+        echo "[WARNING] settings.php is writable by other users: $settings_file"
+        warnings=$((warnings + 1))
+    fi
+
+    if errors="$(get_drupal_requirement_errors "$project_path" "$run_user" "$php_version")"; then
+        if [[ -z "$errors" ]]; then
+            echo "[OK] Drupal status report: no errors"
+        else
+            echo "[WARNING] Drupal status report has errors:"
+            printf '%s\n' "$errors" | sed 's/^/            - /'
+            echo "            Details: http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")/admin/reports/status"
+            warnings=$((warnings + 1))
+        fi
+    else
+        echo "[SKIPPED] Drupal status report could not be read."
+    fi
+
+    if [[ "$warnings" -gt 0 ]]; then
+        echo "[INFO] $warnings check(s) need attention; the site itself is installed."
+    fi
+
+    return 0
 }

@@ -20,6 +20,18 @@ is_ipv6_available() {
     esac
 }
 
+# ::1 configured on the loopback interface. Browsers and curl try it
+# first for *.localhost, so the site is checked over IPv6 only when it
+# exists. (On WSL the kernel often has IPv6 while ::1 is missing.)
+# NGINX_IPV6=0 or 1 overrides the detection (used by the tests).
+is_ipv6_loopback_available() {
+    case "${NGINX_IPV6:-auto}" in
+        0) return 1 ;;
+        1) return 0 ;;
+        *) grep -qi '^00000000000000000000000000000001 ' "${IF_INET6_FILE:-/proc/net/if_inet6}" 2>/dev/null ;;
+    esac
+}
+
 get_nginx_listen_directives() {
     printf '    listen 80;\n'
 
@@ -270,12 +282,33 @@ remove_nginx_site() {
 # Asks the site itself over HTTP, on IPv4 and (when available) IPv6,
 # exactly like a browser would. Before site:install Drupal redirects to
 # install.php; afterwards it answers with "X-Generator: Drupal".
-is_drupal_answering_over() {
+# Response headers of the site over IPv4 or IPv6 (empty: no answer).
+get_site_headers() {
     local family="$1"
     local url="$2"
 
-    curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null |
+    curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null | tr -d '\r'
+}
+
+is_drupal_answering_over() {
+    get_site_headers "$1" "$2" |
         grep -qiE '^(x-generator: drupal|location: .*install\.php)'
+}
+
+# One line about what answered instead of the Drupal site.
+describe_site_answer() {
+    local headers="$1"
+    local status
+    local server
+
+    if [[ -z "$headers" ]]; then
+        echo "no answer (connection failed or timed out)"
+        return
+    fi
+
+    status="$(printf '%s\n' "$headers" | head -n 1)"
+    server="$(printf '%s\n' "$headers" | grep -i '^server:' | head -n 1)"
+    echo "answered '$status'${server:+ ($server)}"
 }
 
 # The URL is only shown to the user after it really answers, so the
@@ -296,14 +329,19 @@ verify_nginx_site() {
         return 0
     fi
 
-    if is_ipv6_available; then
+    local headers
+    local details=""
+
+    if is_ipv6_loopback_available; then
         families="4 6"
     fi
 
     for family in $families; do
         # A reload finishes in the background; give Nginx a few seconds.
         for attempt in 1 2 3 4 5; do
-            if is_drupal_answering_over "$family" "$url"; then
+            headers="$(get_site_headers "$family" "$url")"
+
+            if grep -qiE '^(x-generator: drupal|location: .*install\.php)' <<< "$headers"; then
                 continue 2
             fi
 
@@ -313,12 +351,16 @@ verify_nginx_site() {
         done
 
         failed+=" IPv$family"
+        details+="        IPv$family: $(describe_site_answer "$headers")"$'\n'
+        log_line "Site check over IPv$family failed. Headers:"$'\n'"${headers:-(none)}"
     done
 
     if [[ -n "$failed" ]]; then
         echo "[ERROR] $url does not answer as this Drupal site over:$failed"
-        echo "        Another Nginx site may answer for this name. Check with:"
-        echo "        sudo nginx -T | grep -nE 'listen|server_name'"
+        printf '%s' "$details"
+        echo "        Expected a redirect to core/install.php."
+        echo "        Errors of this site: sudo tail -n 20 /var/log/nginx/${machine_name}.error.log"
+        echo "        Other sites for the same name: sudo nginx -T | grep -nE 'listen|server_name'"
         return 1
     fi
 

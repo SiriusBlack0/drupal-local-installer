@@ -59,6 +59,11 @@ main() {
     case "$options_status" in
         0) ;;
         2) exit 0 ;;
+        3)
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            list_registered_projects
+            exit 0
+            ;;
         *) exit 1 ;;
     esac
 
@@ -78,7 +83,7 @@ main() {
 
     # Detailed command output goes to a private log file.
     init_log "$PROJECT_MACHINE_NAME"
-    STEP_TOTAL=7
+    STEP_TOTAL=8
 
     # Ask for the sudo password once, right after the confirmation.
     # sudo remembers it per terminal for the rest of the run.
@@ -136,6 +141,8 @@ print_project_summary() {
     echo
     echo "Before working on the project (e.g. after a reboot):"
     echo "  $PROJECT_PATH/start"
+    echo
+    echo "All your projects: ./install.sh --list"
     echo
     [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
     echo "======================================"

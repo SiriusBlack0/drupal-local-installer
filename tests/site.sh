@@ -68,7 +68,14 @@ case "$1" in
             echo "password-mismatch for $input"
         fi
         ;;
-    status) echo "${DRUSH_BOOTSTRAP:-Successful}" ;;
+    status)
+        if [[ "$*" == *db-status* ]]; then
+            echo "${DRUSH_DB_STATUS:-Connected}"
+        else
+            echo "${DRUSH_BOOTSTRAP:-Successful}"
+        fi
+        ;;
+    core:requirements) printf '%s\n' "${DRUSH_REQUIREMENTS:-[]}" ;;
 esac
 STUB
     chmod +x "$project/drush"
@@ -255,6 +262,53 @@ elif [[ "$output" == *"does not answer as an installed Drupal site"* ]]; then
     pass "Site still showing the installer is detected"
 else
     fail "installer redirect: $output"
+fi
+
+# Test 8: Final checks only report; they never fail the installation.
+
+if ! command -v php > /dev/null; then
+    echo "[SKIP] PHP not installed: final checks"
+else
+    php_version="$(php -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')"
+    project="$(new_project site_f)"
+    mkdir -p "$project/web/sites/default/files"
+    printf '<?php\n' > "$project/web/sites/default/settings.php"
+    chmod 0444 "$project/web/sites/default/settings.php"
+
+    output="$(run_final_checks "$project" "$current_user" "$php_version")"
+
+    if [[ "$output" == *"[OK] Database connection"* &&
+          "$output" == *"[OK] Files directory is writable"* &&
+          "$output" == *"[OK] settings.php cannot be changed by other users (444)"* &&
+          "$output" == *"[OK] Drupal status report: no errors"* &&
+          "$output" != *"WARNING"* ]]; then
+        pass "Final checks: database, files, settings.php, status report"
+    else
+        fail "final checks: $output"
+    fi
+
+    chmod 0666 "$project/web/sites/default/settings.php"
+    rmdir "$project/web/sites/default/files"
+
+    if output="$(DRUSH_DB_STATUS="none" \
+            DRUSH_REQUIREMENTS='{"cron":{"title":"Cron <em>maintenance</em>","severity":"Error"}}' \
+            run_final_checks "$project" "$current_user" "$php_version")" &&
+       [[ "$output" == *"[WARNING] Drush reports no database connection."* &&
+          "$output" == *"[WARNING] Files directory is missing or not writable"* &&
+          "$output" == *"[WARNING] settings.php is writable by other users"* &&
+          "$output" == *"- Cron maintenance"* &&
+          "$output" == *"[INFO] 4 check(s) need attention"* ]]; then
+        pass "Problems are reported as warnings, not failures"
+    else
+        fail "final check warnings: $output"
+    fi
+
+    if output="$(DRUSH_REQUIREMENTS='not json' run_final_checks "$project" "$current_user" "$php_version")" &&
+       [[ "$output" == *"[SKIPPED] Drupal status report could not be read."* ]]; then
+        pass "Unreadable status report is skipped"
+    else
+        fail "unreadable status report: $output"
+    fi
 fi
 
 echo "[SUCCESS] Drupal site installation tests passed."

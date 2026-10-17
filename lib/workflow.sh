@@ -196,5 +196,15 @@ run_installation_workflow() {
         echo "[WARNING] ./start could not be created; start the services manually."
     fi
 
+    step "Final checks"
+
+    # Only reports: the site is installed and working at this point.
+    run_final_checks "$PROJECT_PATH" "$PROJECT_USER" "$PHP_VERSION"
+
+    if ! write_project_record; then
+        echo "[WARNING] The project works, but it is not in the registry,"
+        echo "          so it will not appear in ./install.sh --list."
+    fi
+
     return 0
 }

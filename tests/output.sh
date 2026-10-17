@@ -44,6 +44,17 @@ else
     fi
 fi
 
+if parse_options --list > /dev/null; then
+    fail "--list did not stop the installation"
+else
+    status=$?
+    if [[ "$status" -eq 3 && "$(print_usage)" == *"--list"* ]]; then
+        pass "--list recognised and documented"
+    else
+        fail "--list result: $status"
+    fi
+fi
+
 VERBOSE=0 STEP_MODE=0
 
 # Test 2: Log file is private.

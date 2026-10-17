@@ -275,7 +275,8 @@ fi
 # Test 12: A site that answers over IPv4 but not over IPv6 is not
 # reported as ready (browsers try ::1 first for *.localhost).
 
-touch "$state_dir/ipv6"
+# ::1 configured on lo, as in /proc/net/if_inet6.
+printf '00000000000000000000000000000001 01 80 10 80       lo\n' > "$state_dir/ipv6"
 reset_site_state
 make_socket "$state_dir/pool.sock"
 printf 'HTTP/1.1 302 Found\r\nLocation: http://mysite.localhost/core/install.php\r\n' > "$state_dir/.http"
@@ -291,12 +292,12 @@ fi
 
 rm -f "$state_dir/.ipv6_default"
 
-# Without IPv6 only IPv4 is asked.
-rm -f "$state_dir/ipv6"
+# Kernel IPv6 without ::1 (common on WSL): only IPv4 is asked.
+printf 'fe80000000000000021122fffe334455 02 40 20 80     eth0\n' > "$state_dir/ipv6"
 touch "$state_dir/.ipv6_default"
 
 if output="$("$site_project/start")" && [[ "$output" == *"Project ready"* ]]; then
-    pass "Without IPv6 only IPv4 is checked"
+    pass "Without ::1 (e.g. WSL) only IPv4 is checked"
 else
     fail "IPv4-only ./start: $output"
 fi

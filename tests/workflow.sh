@@ -79,6 +79,9 @@ create_start_script() {
     return 0
 }
 
+run_final_checks() { calls+="checks "; checks_args="$*"; return 0; }
+write_project_record() { calls+="record "; return "${record_result:-0}"; }
+
 remove_nginx_site() { calls+="remove_site "; return 0; }
 remove_php_fpm_pool() { calls+="remove_pool "; return "${remove_pool_result:-0}"; }
 remove_project_database() { calls+="remove_database "; remove_database_args="$*"; return 0; }
@@ -89,7 +92,7 @@ reset_results() {
     calls=""
     unset execute_result readiness_result directory_result database_result \
         pool_result site_result composer_result verify_result drupal_result \
-        remove_pool_result
+        remove_pool_result record_result
 }
 
 pass() { echo "[PASS] $1"; }
@@ -101,7 +104,8 @@ fail() { echo "[FAIL] $1"; exit 1; }
 reset_results
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness directory database pool site composer verify drupal start_script " ]] &&
+   [[ "$calls" == "plan execute readiness directory database pool site composer verify drupal start_script checks record " ]] &&
+   [[ "$checks_args" == "/tmp/test-drupal devuser 8.5" ]] &&
    [[ "$directory_args" == "/tmp/test-drupal devuser" ]] &&
    [[ "$codebase_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]] &&
    [[ "$pool_args" == "test_drupal 8.5 devuser" ]] &&
@@ -120,7 +124,7 @@ reset_results
 DATABASE_ENGINE="sqlite"
 run_installation_workflow > /dev/null
 
-if [[ "$calls" == "plan execute readiness directory pool site composer database verify drupal start_script " ]] &&
+if [[ "$calls" == "plan execute readiness directory pool site composer database verify drupal start_script checks record " ]] &&
    [[ "$database_args" == "sqlite /tmp/test-drupal/private/database.sqlite devuser" ]]; then
     pass "SQLite created after Composer, at the project path, for the owner"
 else
@@ -227,7 +231,19 @@ else
     fail "Unexpected database removal: $remove_database_args"
 fi
 
-# Test 6: A failed rollback step is reported with the path to remove.
+# Test 6: A registry failure is a warning: the site itself works.
+
+reset_results
+record_result=1
+
+if output="$(run_installation_workflow)" &&
+   [[ "$output" == *"[WARNING] The project works, but it is not in the registry"* ]]; then
+    pass "Registry failure only warns"
+else
+    fail "registry failure: $output"
+fi
+
+# Test 6b: A failed rollback step is reported with the path to remove.
 
 reset_results
 drupal_result=1

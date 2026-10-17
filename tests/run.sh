@@ -38,6 +38,7 @@ SUITES=(
     "Confirmation Integration Tests|bash tests/integration.sh"
     "Runtime User Tests|bash tests/runtime_user.sh"
     "Project Path Tests|bash tests/project_path.sh"
+    "Project Registry Tests|bash tests/registry.sh"
 )
 
 echo "======================================"

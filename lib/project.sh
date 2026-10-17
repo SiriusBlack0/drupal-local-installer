@@ -308,11 +308,11 @@ create_start_script() {
         '' \
         '# Before site:install Drupal redirects to install.php,' \
         '# afterwards it answers with "X-Generator: Drupal".' \
-        '# Checked over IPv4 and IPv6: browsers try ::1 first for *.localhost.' \
+        '# Checked over IPv4, and over IPv6 when ::1 exists: browsers try it first.' \
         'is_drupal_answering() {' \
         '    local family' \
         '    for family in 4 6; do' \
-        '        if [[ "$family" == 6 && ! -e "$ipv6_flag" ]]; then continue; fi' \
+        '        if [[ "$family" == 6 ]] && ! grep -qi "^0\{31\}1 " "$ipv6_flag" 2>/dev/null; then continue; fi' \
         '        curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null |' \
         "            grep -qiE '^(x-generator: drupal|location: .*install\\.php)' || return 1" \
         '    done' \
