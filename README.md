@@ -309,6 +309,13 @@ Nginx site that no longer serves the project is left in place.
 ./install.sh --update mysite
 ```
 
+`--check-updates` shows, for each project, the newest **PATCH** of the
+installed minor, the newest **MINOR** the installer knows, and
+**SECURITY**: whether the version installed now has a published Drupal
+core security advisory (`composer audit`). `VULNERABLE - update now`
+means a security release exists for it; the projects to update are
+listed at the end under `[ACTION]`.
+
 Only **patch** (11.3.10 → 11.3.12) and **minor** (11.3 → 11.4) releases
 of Drupal core are installed. Contributed modules are not touched, and
 major upgrades (10 → 11) are not automated. A minor release is offered

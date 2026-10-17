@@ -124,21 +124,25 @@ echo $patch, "|", $minor, "\n";
 ' "$current" "$known_minors"
 }
 
-# 0 when the installed core has a published security advisory.
+# Asks "composer audit" whether the installed Drupal core has a
+# published security advisory (drupal.org security announcements).
+# Returns 0: it has one, 1: none known, 2: could not check (network?).
 has_core_security_advisory() {
     local project_path="$1"
     local php_version="$2"
     local json
 
+    # composer audit exits non-zero when it finds advisories.
     json="$(run_project_composer "$project_path" "$php_version" \
         audit --locked --format=json 2>/dev/null)" || true
 
-    [[ -n "$json" ]] || return 1
+    [[ -n "$json" ]] || return 2
 
     # Single quotes: PHP code, not shell code.
     # shellcheck disable=SC2016
     printf '%s' "$json" | "php${php_version}" -r '
 $d = json_decode(stream_get_contents(STDIN), true);
+if (!is_array($d) || !array_key_exists("advisories", $d)) { exit(2); }
 exit(empty($d["advisories"]["drupal/core"]) ? 1 : 0);
 '
 }
@@ -196,13 +200,15 @@ run_check_updates() {
     local patch
     local minor
     local security
+    local security_status
     local found=0
+    local vulnerable=()
 
     echo
     echo "Checking for Drupal core updates (this asks Packagist, it may take a while)..."
     echo
 
-    printf '%-20s %-9s %-11s %-9s %s\n' "PROJECT" "CURRENT" "PATCH" "MINOR" "SECURITY"
+    printf '%-20s %-9s %-11s %-9s %s\n' "PROJECT" "CURRENT" "PATCH" "MINOR" "SECURITY (INSTALLED VERSION)"
 
     for record in "$(get_registry_directory)"/*.conf; do
         [[ -f "$record" ]] || continue
@@ -248,10 +254,17 @@ run_check_updates() {
 
         IFS='|' read -r patch minor <<< "$targets"
 
-        security="-"
-        if has_core_security_advisory "$path" "$php"; then
-            security="YES"
-        fi
+        security_status=0
+        has_core_security_advisory "$path" "$php" || security_status=$?
+
+        case "$security_status" in
+            0)
+                security="VULNERABLE - update now"
+                vulnerable+=("$name")
+                ;;
+            1) security="no known issues" ;;
+            *) security="not checked (composer audit failed)" ;;
+        esac
 
         printf '%-20s %-9s %-11s %-9s %s\n' "$name" "$current" \
             "${patch:-up to date}" "${minor:--}" "$security"
@@ -259,10 +272,23 @@ run_check_updates() {
 
     if [[ "$found" -eq 0 ]]; then
         echo "No projects registered. Use --scan to register existing ones."
-    else
-        echo
-        echo "Update one with: ./install.sh --update <project> (--dry-run to preview)"
+        return 0
     fi
+
+    echo
+    echo "PATCH: newest bug fix and security release of the same minor (recommended)."
+    echo "MINOR: newest minor release this installer knows; major upgrades are not offered."
+    echo "SECURITY: whether the version installed now has a published Drupal core"
+    echo "          security advisory (checked with \"composer audit\")."
+
+    if [[ "${#vulnerable[@]}" -gt 0 ]]; then
+        echo
+        echo "[ACTION] Installed versions with a security advisory. Update them:"
+        printf '  ./install.sh --update %s\n' "${vulnerable[@]}"
+    fi
+
+    echo
+    echo "Update one with: ./install.sh --update <project> (--dry-run to preview)"
 }
 
 # ---------------------------------------------------
@@ -655,7 +681,7 @@ run_update_project() {
     echo
     echo "Drupal core:  $current -> $UPDATE_TARGET"
     if has_core_security_advisory "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION"; then
-        echo "              (the installed version has a security advisory)"
+        echo "              Security: $current has a published security advisory; this update is needed."
     fi
     echo "PHP $RECORD_PHP_VERSION:      supported by $(echo "$UPDATE_TARGET" | cut -d. -f1,2)"
     echo "Packages:     $(describe_lock_operations "$dry_output")"

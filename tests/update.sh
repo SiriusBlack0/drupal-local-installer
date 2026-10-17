@@ -119,6 +119,7 @@ case "${args[0]}" in
         echo "{\"name\":\"${args[-1]}\",\"versions\":${COMPOSER_VERSIONS:-[]}}"
         ;;
     audit)
+        [[ "${AUDIT_FAILS:-0}" == "1" ]] && exit 1
         if [[ "${AUDIT_CORE:-0}" == "1" ]]; then
             echo '{"advisories":{"drupal/core":[{"title":"SA-CORE"}]}}'
             exit 1
@@ -265,11 +266,23 @@ fi
 
 output="$(AUDIT_CORE=1 run_check_updates)"
 
-if [[ "$output" == *"alpha"*"11.3.10"*"11.3.12"*"11.4.2"*"YES"* ]] &&
+if [[ "$output" == *"alpha"*"11.3.10"*"11.3.12"*"11.4.2"*"VULNERABLE - update now"* &&
+      "$output" == *"[ACTION] Installed versions with a security advisory"* &&
+      "$output" == *"./install.sh --update alpha"* ]] &&
    ! grep -q "composer update" "$CALLS_FILE"; then
-    pass "--check-updates shows patch, minor and security; changes nothing"
+    pass "--check-updates shows patch, minor and a clear security state; changes nothing"
 else
     fail "check-updates: $output"
+fi
+
+output="$(run_check_updates)"
+
+if [[ "$output" == *"alpha"*"no known issues"* && "$output" != *"[ACTION]"* ]] &&
+   output="$(AUDIT_FAILS=1 run_check_updates)" &&
+   [[ "$output" == *"not checked (composer audit failed)"* && "$output" != *"[ACTION]"* ]]; then
+    pass "--check-updates: no advisory and failed audit are shown as such"
+else
+    fail "check-updates states: $output"
 fi
 
 # Test 4: --dry-run: checks and plan only.
