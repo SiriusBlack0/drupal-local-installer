@@ -50,11 +50,27 @@ from the official drupal.org requirement pages.
 ```
 /var/www/<project>/                  owner: you, group: www-data, mode 2750
 ├── composer.json, vendor/, web/     Drupal (drupal/recommended-project)
+├── start                            starts the services this project needs
 ├── drush                            runs Drush with the project PHP
 ├── composer                         runs Composer with the project PHP
 ├── private/database.sqlite          SQLite only, outside the web root
 └── .drupal-local-installer/bin/php  link to the project PHP version
 ```
+
+### Starting a project
+
+```bash
+/var/www/<project>/start
+```
+
+`./start` starts the services the project needs: PHP-FPM for the
+project PHP version, Nginx, and the database server (none for SQLite).
+Services that are already running are left alone, and nothing is ever
+stopped, because other projects may use the same services. It works
+with and without systemd, which makes it useful on WSL, where services
+often do not start on their own.
+
+### Drush and Composer
 
 Always use the project launchers, so the right PHP is used:
 

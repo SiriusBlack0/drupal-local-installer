@@ -27,6 +27,14 @@ remove_project_directory() {
     return 0
 }
 
+create_start_script() {
+    calls+="start_script "
+    start_script_args="$*"
+    return 0
+}
+
+PROJECT_MACHINE_NAME="test_drupal"
+
 DRUPAL_VERSION="11.4.8"
 PROJECT_PATH="/tmp/test-drupal"
 PHP_VERSION="8.5"
@@ -55,7 +63,8 @@ provision_drupal_project() {
 }
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness provision database " ]] &&
+   [[ "$calls" == "plan execute readiness provision database start_script " ]] &&
+   [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]] &&
    [[ "$provision_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]]; then
     echo "[PASS] Installation workflow executes in correct order"
 else

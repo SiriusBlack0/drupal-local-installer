@@ -68,5 +68,16 @@ run_installation_workflow() {
         return 1
     fi
 
+    # ./start is a convenience: if it cannot be written, the project
+    # itself is still fine, so this is only a warning.
+    if ! create_start_script \
+        "$PROJECT_PATH" \
+        "$PHP_VERSION" \
+        "$DATABASE_ENGINE" \
+        "$PROJECT_MACHINE_NAME" \
+        "$PROJECT_USER"; then
+        echo "[WARNING] ./start could not be created; start the services manually."
+    fi
+
     return 0
 }

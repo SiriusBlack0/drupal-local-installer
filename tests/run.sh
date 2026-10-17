@@ -24,6 +24,7 @@ SUITES=(
     "Preflight Tests|bash tests/preflight.sh"
     "Environment Readiness Tests|bash tests/readiness.sh"
     "Project Directory Tests|bash tests/project.sh"
+    "Start Script Tests|bash tests/start_script.sh"
     "Installation Workflow Tests|bash tests/workflow.sh"
     "Database Provisioning Tests|bash tests/database_provisioning.sh"
     "PostgreSQL Database Tests|bash tests/postgresql_database.sh"

@@ -156,27 +156,27 @@ is_nginx_running() {
 # Check whether a database service is running
 # --------------------------------------------------
 
+# Prints the system service of a database engine.
+# SQLite has no service: prints nothing and succeeds.
+get_database_service_name() {
+    case "$1" in
+        mariadb) echo "mariadb" ;;
+        mysql) echo "mysql" ;;
+        postgresql) echo "postgresql" ;;
+        sqlite) ;;
+        *) return 2 ;;
+    esac
+}
+
 is_database_service_running() {
     local database_engine="$1"
     local service_name
 
-    case "$database_engine" in
-        mariadb)
-            service_name="mariadb"
-            ;;
-        mysql)
-            service_name="mysql"
-            ;;
-        postgresql)
-            service_name="postgresql"
-            ;;
-        sqlite)
-            return 0
-            ;;
-        *)
-            return 2
-            ;;
-    esac
+    service_name="$(get_database_service_name "$database_engine")" || return 2
+
+    if [[ -z "$service_name" ]]; then
+        return 0
+    fi
 
     is_service_active "$service_name"
 }
