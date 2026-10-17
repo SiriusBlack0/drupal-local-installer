@@ -147,6 +147,20 @@ run_installation_workflow() {
         return 1
     fi
 
+    step "Installing the Drupal site"
+
+    if ! install_drupal_site \
+        "$PROJECT_PATH" \
+        "$PROJECT_USER" \
+        "$PROJECT_NAME" \
+        "$ADMIN_USER" \
+        "$ADMIN_MAIL" \
+        "$ADMIN_PASSWORD"; then
+        echo "[ERROR] Drupal site installation failed."
+        rollback_installation
+        return 1
+    fi
+
     # ./start is a convenience: if it cannot be written, the project
     # itself is still fine, so this is only a warning.
     if ! create_start_script \

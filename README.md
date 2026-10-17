@@ -5,10 +5,10 @@ Interactive Bash installer that creates local Drupal projects on Ubuntu
 is missing (only after you approve), and creates the project with the
 correct PHP version.
 
-> **Status:** work in progress. The installer currently creates the project
-> files (Drupal + Drush), the database, a PHP-FPM pool and an Nginx site.
-> `drush site:install` is being added: until then the browser shows the
-> Drupal installer at `http://<project>.localhost`. See [Roadmap](#roadmap).
+> **Status:** work in progress. The installer creates a working Drupal
+> site at `http://<project>.localhost`: project files (Drupal + Drush),
+> database, PHP-FPM pool, Nginx site and `drush site:install`. Removing
+> and updating projects come next. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -27,13 +27,15 @@ correct PHP version.
 
 The installer works in three phases:
 
-1. **Questions** – project name, Drupal version, PHP version, database.
+1. **Questions** – project name, Drupal version, PHP version, database,
+   administrator password.
    Nothing is changed on the system.
 2. **Checks** – existing project, directory, Nginx config, packages,
    PHP extensions, services. Nothing is changed on the system.
 3. **Installation** – only after you confirm: missing packages (with a
    simulation and a second confirmation first), project directory,
-   Drupal, Drush, database, PHP-FPM pool, Nginx site.
+   Drupal, Drush, database, PHP-FPM pool, Nginx site, `drush site:install`.
+   The sudo password is asked once, right after you confirm.
 
 ## Supported versions
 
@@ -77,6 +79,31 @@ socket is missing or the site does not answer as Drupal, `./start`
 checks the configuration (`php-fpmX.Y -t`, `nginx -t`) and only then
 **reloads** the service. A reload loads new configuration without
 dropping the other projects; a restart is never used.
+
+## The Drupal site
+
+The site is installed with the **standard** profile. The site name is
+the project name, the administrator is `admin` (`admin@example.com`).
+
+Administrator password, chosen during the questions:
+
+1. **Random** – 20 letters and digits, printed **once** at the end of the
+   installation and saved nowhere. Put it in your password manager.
+2. **Your own** – at least 8 characters, typed twice, never shown.
+
+Lost it? `./drush user:login` prints a one-time login link (Drush knows
+the project URL from the `./drush` launcher).
+
+`web/sites/default/settings.php` is Drupal's own template plus a block
+at the end with the database connection, `trusted_host_patterns` (only
+`<project>.localhost` is accepted) and `config_sync_directory`
+(`config/sync`, outside the web root).
+
+No password ever appears in a command line (where other users could see
+it with `ps`) or in the log: the database password goes into
+`settings.php` through stdin, the administrator password is passed to
+Drush through stdin. `site:install` itself prints a temporary password
+in the log; it is replaced immediately and no longer works.
 
 ## Web server
 
@@ -184,7 +211,7 @@ temporary directories.
 - [x] Readable output, logs, `--verbose`, `--step`
 - [x] Database creation (MariaDB/MySQL, PostgreSQL, SQLite) in the workflow
 - [x] Nginx site and PHP-FPM pool, validated before activation
-- [ ] `drush site:install`
+- [x] `drush site:install`, administrator password, sudo asked once
 - [ ] Final checks and project registry
 - [ ] Remove a project (with backup offer and confirmation)
 - [ ] Update a project

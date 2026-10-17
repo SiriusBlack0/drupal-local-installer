@@ -26,6 +26,7 @@ modules = [
     "lib/install_execution.sh",
     "lib/readiness.sh",
     "lib/project.sh",
+    "lib/site.sh",
     "lib/workflow.sh",
 ]
 

@@ -16,6 +16,7 @@ SUITES=(
     "PHP Compatibility & Selection Tests|bash tests/php_selection.sh"
     "Database Compatibility & Selection Tests|bash tests/database_selection.sh"
     "Database Configuration Tests|bash tests/database_configuration.sh"
+    "Administrator Account Tests|bash tests/admin_account.sh"
     "Final Confirmation Tests|bash tests/final_confirmation.sh"
     "UI Entry Point Tests|bash tests/ui_entry.sh"
     "Installation Execution Tests|bash tests/install_execution.sh"
@@ -32,6 +33,7 @@ SUITES=(
     "Nginx Configuration Tests|bash tests/nginx.sh"
     "PHP-FPM Configuration Tests|bash tests/php_fpm.sh"
     "Web Server Installation Tests|bash tests/web_server.sh"
+    "Drupal Site Installation Tests|bash tests/site.sh"
     "Confirmation Integration Tests|bash tests/integration.sh"
     "Runtime User Tests|bash tests/runtime_user.sh"
     "Project Path Tests|bash tests/project_path.sh"
@@ -54,7 +56,9 @@ for suite in "${SUITES[@]}"; do
 
     # Word splitting is intentional: the command and its file globs expand here.
     # shellcheck disable=SC2086
-    if ! $command; then
+    # stdin is /dev/null: a test that accidentally asks a question
+    # fails at once instead of waiting for the keyboard.
+    if ! $command < /dev/null; then
         echo
         echo "[FAILED] Suite $index/$total: $title"
         exit 1

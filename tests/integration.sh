@@ -15,6 +15,8 @@ export DATABASE_ENGINE="sqlite"
 export DATABASE_VERSION="3"
 export DATABASE_STATUS="installed"
 export SQLITE_DATABASE_PATH="/tmp/test.sqlite"
+export ADMIN_USER="admin"
+export ADMIN_PASSWORD_GENERATED=1
 
 # Test 1: User cancels installation.
 
@@ -30,6 +32,7 @@ fi
 
 if output="$(printf 'y\n' | confirm_installation)" &&
    [[ "$output" == *"Project configuration"* ]] &&
+   [[ "$output" == *"Admin:    admin (random password, shown at the end)"* ]] &&
    [[ "$output" != *"Installation cancelled."* ]]; then
     echo "[PASS] Installation confirmed by user"
 else

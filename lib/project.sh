@@ -155,6 +155,7 @@ write_project_launcher() {
     local php_binary="$2"
     local command="$3"
     local run_user="$4"
+    local extra_line="${5:-}"
 
     if [[ -e "$launcher_path" || -L "$launcher_path" ]]; then
         echo "[ERROR] File already exists: $launcher_path"
@@ -173,6 +174,7 @@ write_project_launcher() {
         'fi' \
         'project_dir="$(dirname "$(readlink -f "$0")")"' \
         'export PATH="$project_dir/.drupal-local-installer/bin:$PATH"' \
+        ${extra_line:+"$extra_line"} \
         "exec $command \"\$@\"" \
         | run_as_project_user "$run_user" tee "$launcher_path" > /dev/null &&
     run_as_project_user "$run_user" chmod 0750 "$launcher_path"
@@ -202,9 +204,23 @@ create_project_launchers() {
     # Literal text: expanded when the launcher runs, not now.
     # shellcheck disable=SC2016
     local drush_command='"$project_dir/vendor/bin/drush"'
+    local machine_name
+    local drush_uri
+
+    # The project URL lets Drush build correct links ("./drush user:login").
+    # An environment variable is used because the drush/ config directory
+    # name is taken by the ./drush launcher itself.
+    machine_name="$(basename "$project_path")"
+
+    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
+        echo "[ERROR] Invalid project directory name: $machine_name"
+        return 1
+    fi
+
+    drush_uri="export DRUSH_OPTIONS_URI=\"\${DRUSH_OPTIONS_URI:-http://$(get_project_nginx_domain "$machine_name")}\""
 
     write_project_launcher "$project_path/drush" "$php_binary" \
-        "$drush_command" "$run_user" &&
+        "$drush_command" "$run_user" "$drush_uri" &&
     write_project_launcher "$project_path/composer" "$php_binary" \
         "$php_binary $composer_path" "$run_user" &&
     echo "[OK] Project launchers created: ./drush and ./composer (PHP $php_version)"

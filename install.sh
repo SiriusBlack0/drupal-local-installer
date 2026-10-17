@@ -21,6 +21,7 @@ source "$SCRIPT_DIR/lib/plan.sh"
 source "$SCRIPT_DIR/lib/install_execution.sh"
 source "$SCRIPT_DIR/lib/readiness.sh"
 source "$SCRIPT_DIR/lib/project.sh"
+source "$SCRIPT_DIR/lib/site.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
 check_operating_system() {
@@ -77,7 +78,13 @@ main() {
 
     # Detailed command output goes to a private log file.
     init_log "$PROJECT_MACHINE_NAME"
-    STEP_TOTAL=6
+    STEP_TOTAL=7
+
+    # Ask for the sudo password once, right after the confirmation.
+    # sudo remembers it per terminal for the rest of the run.
+    if ! require_sudo; then
+        exit 1
+    fi
 
     if [[ -n "$LOG_FILE" ]]; then
         echo
@@ -99,11 +106,41 @@ main() {
         exit 1
     fi
 
+    print_project_summary
+}
+
+print_project_summary() {
     echo
     echo "======================================"
-    echo "[DONE] $PROJECT_PATH"
+    echo "[DONE] $PROJECT_NAME is ready"
+    echo "======================================"
+    echo
+    echo "Path:     $PROJECT_PATH"
+    echo "Site:     http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")"
+    echo "Admin:    http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")/user/login"
+    echo "User:     $ADMIN_USER"
+
+    if [[ "$ADMIN_PASSWORD_GENERATED" -eq 1 ]]; then
+        echo "Password: $ADMIN_PASSWORD"
+        echo
+        echo "This password is shown only now and is not saved anywhere."
+        echo "Store it in your password manager, or change it after logging in"
+        echo "(My account > Edit)."
+    else
+        echo "Password: the one you entered"
+    fi
+
+    echo
+    echo "Forgot the password? Log in without it:"
+    echo "  cd $PROJECT_PATH && ./drush user:login"
+    echo
+    echo "Before working on the project (e.g. after a reboot):"
+    echo "  $PROJECT_PATH/start"
+    echo
     [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
     echo "======================================"
+
+    ADMIN_PASSWORD=""
 }
 
 main "$@"

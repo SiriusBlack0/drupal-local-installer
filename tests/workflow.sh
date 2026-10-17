@@ -52,6 +52,12 @@ install_nginx_site() {
     return "${site_result:-0}"
 }
 
+install_drupal_site() {
+    calls+="drupal "
+    drupal_args="$*"
+    return "${drupal_result:-0}"
+}
+
 verify_nginx_site() {
     calls+="verify "
     return "${verify_result:-0}"
@@ -69,6 +75,10 @@ create_start_script() {
 }
 
 PROJECT_MACHINE_NAME="test_drupal"
+PROJECT_NAME="Test Drupal"
+ADMIN_USER="admin"
+ADMIN_MAIL="admin@example.com"
+ADMIN_PASSWORD="Admin#Pass9"
 
 DRUPAL_VERSION="11.4.8"
 PROJECT_PATH="/tmp/test-drupal"
@@ -98,7 +108,8 @@ provision_drupal_project() {
 }
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness provision database pool site verify start_script " ]] &&
+   [[ "$calls" == "plan execute readiness provision database pool site verify drupal start_script " ]] &&
+   [[ "$drupal_args" == "/tmp/test-drupal devuser Test Drupal admin admin@example.com Admin#Pass9" ]] &&
    [[ "$pool_args" == "test_drupal 8.5 devuser" ]] &&
    [[ "$site_args" == "test_drupal /tmp/test-drupal 8.5" ]] &&
    [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]] &&
@@ -314,6 +325,27 @@ if [[ "$calls" == "plan execute readiness provision database pool site verify re
     echo "[PASS] Unanswered site: site, pool, database and directory rolled back"
 else
     echo "[FAIL] Unexpected rollback after failed site check: $calls"
+    exit 1
+fi
+
+# Test 13: A failed site:install rolls back everything, newest first.
+
+verify_result=0
+drupal_result=1
+calls=""
+
+if output="$(run_installation_workflow)"; then
+    echo "[FAIL] Workflow ignored site:install failure"
+    exit 1
+fi
+
+run_installation_workflow > /dev/null || true
+
+if [[ "$calls" == "plan execute readiness provision database pool site verify drupal remove_site remove_pool remove_database remove_directory " ]] &&
+   [[ "$output" == *"[ERROR] Drupal site installation failed."* ]]; then
+    echo "[PASS] site:install failure rolls back site, pool, database and directory"
+else
+    echo "[FAIL] Unexpected site:install rollback: $calls"
     exit 1
 fi
 

@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 
 source lib/output.sh
 source lib/registry.sh
+source lib/php_fpm.sh
+source lib/nginx.sh
 source lib/project.sh
 
 work_dir="$(mktemp -d)"
@@ -249,6 +251,8 @@ if create_project_launchers "$site" "8.5" "$current_user" > /dev/null &&
    [[ "$(readlink "$site/.drupal-local-installer/bin/php")" == "$stub_bin/php8.5" ]] &&
    grep -qxF 'export PATH="$project_dir/.drupal-local-installer/bin:$PATH"' "$site/drush" &&
    grep -qxF 'exec "$project_dir/vendor/bin/drush" "$@"' "$site/drush" &&
+   grep -qxF 'export DRUSH_OPTIONS_URI="${DRUSH_OPTIONS_URI:-http://site_six.localhost}"' "$site/drush" &&
+   ! grep -qF 'DRUSH_OPTIONS_URI' "$site/composer" &&
    grep -qxF "exec $stub_bin/php8.5 $stub_bin/composer \"\$@\"" "$site/composer" &&
    [[ "$(stat -c '%a' "$site/drush")" == "750" ]] &&
    [[ "$(stat -c '%a' "$site/composer")" == "750" ]]; then
