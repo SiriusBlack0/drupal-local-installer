@@ -16,23 +16,35 @@ DATABASE_USER="drupal_user"
 DATABASE_PASSWORD="Secret#Pass1"
 SQLITE_DATABASE_PATH="/tmp/test-drupal/private/database.sqlite"
 
-# Each stub returns the value of its *_result variable (default 0), so
-# the tests change results without redefining functions.
+PROJECT_MACHINE_NAME="test_drupal"
+PROJECT_NAME="Test Drupal"
+ADMIN_USER="admin"
+ADMIN_MAIL="admin@example.com"
+ADMIN_PASSWORD="Admin#Pass9"
+DRUPAL_VERSION="11.4.8"
+PROJECT_PATH="/tmp/test-drupal"
+PHP_VERSION="8.5"
+PROJECT_USER="devuser"
+
+# Every stub records its name in $calls and returns the value of its
+# *_result variable (default 0), so tests change results without
+# redefining functions.
+calls=""
+
+prepare_installation_plan() { calls+="plan "; }
+execute_installation_plan() { calls+="execute "; return "${execute_result:-0}"; }
+verify_environment_ready() { calls+="readiness "; return "${readiness_result:-0}"; }
+
+create_project_directory() {
+    calls+="directory "
+    directory_args="$*"
+    return "${directory_result:-0}"
+}
+
 provision_project_database() {
     calls+="database "
     database_args="$*"
     return "${database_result:-0}"
-}
-
-remove_project_directory() {
-    calls+="remove_directory "
-    return 0
-}
-
-remove_project_database() {
-    calls+="remove_database "
-    remove_database_args="$*"
-    return 0
 }
 
 install_php_fpm_pool() {
@@ -41,31 +53,24 @@ install_php_fpm_pool() {
     return "${pool_result:-0}"
 }
 
-remove_php_fpm_pool() {
-    calls+="remove_pool "
-    return "${remove_pool_result:-0}"
-}
-
 install_nginx_site() {
     calls+="site "
     site_args="$*"
     return "${site_result:-0}"
 }
 
+install_drupal_codebase() {
+    calls+="composer "
+    codebase_args="$*"
+    return "${composer_result:-0}"
+}
+
+verify_nginx_site() { calls+="verify "; return "${verify_result:-0}"; }
+
 install_drupal_site() {
     calls+="drupal "
     drupal_args="$*"
     return "${drupal_result:-0}"
-}
-
-verify_nginx_site() {
-    calls+="verify "
-    return "${verify_result:-0}"
-}
-
-remove_nginx_site() {
-    calls+="remove_site "
-    return 0
 }
 
 create_start_script() {
@@ -74,279 +79,176 @@ create_start_script() {
     return 0
 }
 
-PROJECT_MACHINE_NAME="test_drupal"
-PROJECT_NAME="Test Drupal"
-ADMIN_USER="admin"
-ADMIN_MAIL="admin@example.com"
-ADMIN_PASSWORD="Admin#Pass9"
+remove_nginx_site() { calls+="remove_site "; return 0; }
+remove_php_fpm_pool() { calls+="remove_pool "; return "${remove_pool_result:-0}"; }
+remove_project_database() { calls+="remove_database "; remove_database_args="$*"; return 0; }
+remove_project_directory() { calls+="remove_directory "; return 0; }
+get_php_fpm_pool_config_path() { echo "/etc/php/$2/fpm/pool.d/$1.conf"; }
 
-DRUPAL_VERSION="11.4.8"
-PROJECT_PATH="/tmp/test-drupal"
-PHP_VERSION="8.5"
-PROJECT_USER="devuser"
-
-calls=""
-
-prepare_installation_plan() {
-    calls+="plan "
+reset_results() {
+    calls=""
+    unset execute_result readiness_result directory_result database_result \
+        pool_result site_result composer_result verify_result drupal_result \
+        remove_pool_result
 }
 
-execute_installation_plan() {
-    calls+="execute "
-    return 0
-}
+pass() { echo "[PASS] $1"; }
+fail() { echo "[FAIL] $1"; exit 1; }
 
-verify_environment_ready() {
-    calls+="readiness "
-    return 0
-}
+# Test 1: Order: everything that needs sudo runs before Composer,
+# which clears the cached sudo password.
 
-provision_drupal_project() {
-    calls+="provision "
-    provision_args="$*"
-    return 0
-}
+reset_results
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness provision database pool site verify drupal start_script " ]] &&
-   [[ "$drupal_args" == "/tmp/test-drupal devuser Test Drupal admin admin@example.com Admin#Pass9" ]] &&
+   [[ "$calls" == "plan execute readiness directory database pool site composer verify drupal start_script " ]] &&
+   [[ "$directory_args" == "/tmp/test-drupal devuser" ]] &&
+   [[ "$codebase_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]] &&
    [[ "$pool_args" == "test_drupal 8.5 devuser" ]] &&
    [[ "$site_args" == "test_drupal /tmp/test-drupal 8.5" ]] &&
-   [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]] &&
-   [[ "$provision_args" == "11.4.8 /tmp/test-drupal 8.5 devuser" ]]; then
-    echo "[PASS] Installation workflow executes in correct order"
+   [[ "$drupal_args" == "/tmp/test-drupal devuser Test Drupal admin admin@example.com Admin#Pass9" ]] &&
+   [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]]; then
+    pass "Order: directory, database, web server (sudo) before Composer"
 else
-    echo "[FAIL] Installation workflow execution order"
-    exit 1
+    fail "Installation workflow order: $calls"
 fi
 
-# Test 2: Stop workflow when installation execution fails.
+# Test 2: SQLite: the database file is created after Composer, which
+# needs an empty directory.
 
-calls=""
-
-execute_installation_plan() {
-    calls+="execute "
-    return 1
-}
-
-if run_installation_workflow; then
-    echo "[FAIL] Workflow continued after installation failure"
-    exit 1
-else
-    if [[ "$calls" == "plan execute " ]]; then
-        echo "[PASS] Workflow stops on installation failure"
-    else
-        echo "[FAIL] Unexpected workflow execution: $calls"
-        exit 1
-    fi
-fi
-
-# Test 3: Stop workflow when environment readiness fails.
-
-calls=""
-
-execute_installation_plan() {
-    calls+="execute "
-    return 0
-}
-
-verify_environment_ready() {
-    calls+="readiness "
-    return 1
-}
-
-if run_installation_workflow; then
-    echo "[FAIL] Workflow continued after readiness failure"
-    exit 1
-else
-    if [[ "$calls" == "plan execute readiness " ]]; then
-        echo "[PASS] Workflow stops on readiness failure"
-    else
-        echo "[FAIL] Unexpected workflow execution: $calls"
-        exit 1
-    fi
-fi
-
-# Test 4: Detect Drupal provisioning failure.
-
-calls=""
-
-verify_environment_ready() {
-    calls+="readiness "
-    return 0
-}
-
-provision_drupal_project() {
-    calls+="provision "
-    return 1
-}
-
-if run_installation_workflow; then
-    echo "[FAIL] Workflow ignored provisioning failure"
-    exit 1
-else
-    if [[ "$calls" == "plan execute readiness provision " ]]; then
-        echo "[PASS] Workflow detects provisioning failure"
-    else
-        echo "[FAIL] Unexpected workflow execution: $calls"
-        exit 1
-    fi
-fi
-
-# Test 5: Server databases get name, user and password.
-
-provision_drupal_project() {
-    calls+="provision "
-    return 0
-}
-
-calls=""
-run_installation_workflow > /dev/null
-
-if [[ "$database_args" == "mariadb drupal_db drupal_user Secret#Pass1" ]]; then
-    echo "[PASS] Server database created with the chosen credentials"
-else
-    echo "[FAIL] Unexpected database arguments: $database_args"
-    exit 1
-fi
-
-# Test 6: SQLite gets the file path and the project owner.
-
+reset_results
 DATABASE_ENGINE="sqlite"
-calls=""
 run_installation_workflow > /dev/null
 
-if [[ "$database_args" == "sqlite /tmp/test-drupal/private/database.sqlite devuser" ]]; then
-    echo "[PASS] SQLite created at the project path for the project owner"
+if [[ "$calls" == "plan execute readiness directory pool site composer database verify drupal start_script " ]] &&
+   [[ "$database_args" == "sqlite /tmp/test-drupal/private/database.sqlite devuser" ]]; then
+    pass "SQLite created after Composer, at the project path, for the owner"
 else
-    echo "[FAIL] Unexpected SQLite arguments: $database_args"
-    exit 1
+    fail "SQLite order or arguments: $calls / $database_args"
 fi
 
 DATABASE_ENGINE="mariadb"
 
-# Test 7: Database failure removes the project directory.
+# Test 3: Early failures stop without creating anything.
 
-database_result=1
+reset_results
+execute_result=1
 
-calls=""
+if run_installation_workflow > /dev/null || [[ "$calls" != "plan execute " ]]; then
+    fail "Workflow continued after package installation failure: $calls"
+fi
 
-if output="$(run_installation_workflow)"; then
-    echo "[FAIL] Workflow ignored database failure"
-    exit 1
-elif [[ "$output" == *"[ERROR] Database creation failed."* ]] &&
-     [[ "$output" == *"[OK] Rollback completed."* ]] &&
-     [[ "$(run_installation_workflow > /dev/null; echo "$calls")" == *"database remove_directory " ]]; then
-    echo "[PASS] Database failure rolls back the project directory"
+reset_results
+readiness_result=1
+
+if run_installation_workflow > /dev/null || [[ "$calls" != "plan execute readiness " ]]; then
+    fail "Workflow continued after readiness failure: $calls"
+fi
+
+reset_results
+directory_result=1
+
+if run_installation_workflow > /dev/null || [[ "$calls" != "plan execute readiness directory " ]]; then
+    fail "Workflow continued after directory failure: $calls"
+fi
+
+pass "Package, readiness and directory failures stop before anything is created"
+
+# Test 4: Server databases get name, user and password.
+
+reset_results
+run_installation_workflow > /dev/null
+
+if [[ "$database_args" == "mariadb drupal_db drupal_user Secret#Pass1" ]]; then
+    pass "Server database created with the chosen credentials"
 else
-    echo "[FAIL] Unexpected database failure result: $output"
-    exit 1
+    fail "Unexpected database arguments: $database_args"
 fi
 
-# Test 8: The database password never reaches the log.
+# Test 5: Each failure rolls back everything created so far, newest first.
 
-if grep -q "Secret#Pass1" "$LOG_FILE"; then
-    echo "[FAIL] Database password written to the log"
-    exit 1
-elif grep -q "Database: mariadb (credentials are not logged)" "$LOG_FILE"; then
-    echo "[PASS] Database password kept out of the log"
-else
-    echo "[FAIL] Database step not logged"
-    exit 1
-fi
+check_rollback() {
+    local description="$1"
+    local expected="$2"
+    local message="$3"
+    local output
 
-# Test 9: Nginx failure removes everything created, newest first.
+    calls=""
+    output="$(run_installation_workflow)" && fail "$description: reported as success"
+    calls=""
+    run_installation_workflow > /dev/null || true
 
-database_result=0
-site_result=1
-
-calls=""
-
-if output="$(run_installation_workflow)"; then
-    echo "[FAIL] Workflow ignored Nginx failure"
-    exit 1
-fi
-
-calls=""
-run_installation_workflow > /dev/null || true
-
-if [[ "$calls" == "plan execute readiness provision database pool site remove_pool remove_database remove_directory " ]] &&
-   [[ "$remove_database_args" == "mariadb drupal_db drupal_user" ]] &&
-   [[ "$output" == *"[ERROR] Web server configuration failed."* ]]; then
-    echo "[PASS] Nginx failure rolls back pool, database and directory"
-else
-    echo "[FAIL] Unexpected Nginx rollback: $calls"
-    exit 1
-fi
-
-# Test 10: PHP-FPM failure: no Nginx site, pool not removed twice.
-
-pool_result=1
-
-calls=""
-run_installation_workflow > /dev/null || true
-
-if [[ "$calls" == "plan execute readiness provision database pool remove_database remove_directory " ]]; then
-    echo "[PASS] PHP-FPM failure rolls back database and directory only"
-else
-    echo "[FAIL] Unexpected PHP-FPM rollback: $calls"
-    exit 1
-fi
-
-# Test 11: A failed rollback step is reported with a manual command.
-
-pool_result=0
-remove_pool_result=1
-
-get_php_fpm_pool_config_path() {
-    echo "/etc/php/$2/fpm/pool.d/$1.conf"
+    if [[ "$calls" == "$expected" && "$output" == *"$message"* ]]; then
+        pass "$description"
+    else
+        fail "$description: $calls"
+    fi
 }
 
+reset_results
+database_result=1
+check_rollback "Database failure removes the directory" \
+    "plan execute readiness directory database remove_directory " \
+    "[ERROR] Database creation failed."
+
+reset_results
+pool_result=1
+check_rollback "PHP-FPM failure removes database and directory" \
+    "plan execute readiness directory database pool remove_database remove_directory " \
+    "[ERROR] Web server configuration failed."
+
+reset_results
+site_result=1
+check_rollback "Nginx failure removes pool, database and directory" \
+    "plan execute readiness directory database pool site remove_pool remove_database remove_directory " \
+    "[ERROR] Web server configuration failed."
+
+reset_results
+composer_result=1
+check_rollback "Composer failure removes site, pool, database and directory" \
+    "plan execute readiness directory database pool site composer remove_site remove_pool remove_database remove_directory " \
+    "Rolling back"
+
+reset_results
+verify_result=1
+check_rollback "Unanswered site removes everything" \
+    "plan execute readiness directory database pool site composer verify remove_site remove_pool remove_database remove_directory " \
+    "[ERROR] Web server configuration failed."
+
+reset_results
+drupal_result=1
+check_rollback "site:install failure removes everything" \
+    "plan execute readiness directory database pool site composer verify drupal remove_site remove_pool remove_database remove_directory " \
+    "[ERROR] Drupal site installation failed."
+
+if [[ "$remove_database_args" == "mariadb drupal_db drupal_user" ]]; then
+    pass "Rollback removes the project database and user"
+else
+    fail "Unexpected database removal: $remove_database_args"
+fi
+
+# Test 6: A failed rollback step is reported with the path to remove.
+
+reset_results
+drupal_result=1
+remove_pool_result=1
 output="$(run_installation_workflow || true)"
 
 if [[ "$output" == *"[WARNING] Remove the PHP-FPM pool manually: /etc/php/8.5/fpm/pool.d/test_drupal.conf"* ]] &&
    [[ "$output" != *"[OK] Rollback completed."* ]]; then
-    echo "[PASS] Failed rollback step reported with the path to remove"
+    pass "Failed rollback step reported with the path to remove"
 else
-    echo "[FAIL] Unexpected failed rollback output: $output"
-    exit 1
+    fail "Unexpected failed rollback output: $output"
 fi
 
-# Test 12: A site that does not answer is rolled back completely.
+# Test 7: The database password never reaches the log.
 
-pool_result=0
-remove_pool_result=0
-site_result=0
-verify_result=1
-calls=""
-run_installation_workflow > /dev/null || true
-
-if [[ "$calls" == "plan execute readiness provision database pool site verify remove_site remove_pool remove_database remove_directory " ]]; then
-    echo "[PASS] Unanswered site: site, pool, database and directory rolled back"
+if grep -q "Secret#Pass1" "$LOG_FILE"; then
+    fail "Database password written to the log"
+elif grep -q "Database: mariadb (credentials are not logged)" "$LOG_FILE"; then
+    pass "Database password kept out of the log"
 else
-    echo "[FAIL] Unexpected rollback after failed site check: $calls"
-    exit 1
-fi
-
-# Test 13: A failed site:install rolls back everything, newest first.
-
-verify_result=0
-drupal_result=1
-calls=""
-
-if output="$(run_installation_workflow)"; then
-    echo "[FAIL] Workflow ignored site:install failure"
-    exit 1
-fi
-
-run_installation_workflow > /dev/null || true
-
-if [[ "$calls" == "plan execute readiness provision database pool site verify drupal remove_site remove_pool remove_database remove_directory " ]] &&
-   [[ "$output" == *"[ERROR] Drupal site installation failed."* ]]; then
-    echo "[PASS] site:install failure rolls back site, pool, database and directory"
-else
-    echo "[FAIL] Unexpected site:install rollback: $calls"
-    exit 1
+    fail "Database step not logged"
 fi
 
 echo "[SUCCESS] Installation workflow tests passed."

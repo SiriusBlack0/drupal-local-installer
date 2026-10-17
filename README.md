@@ -34,8 +34,16 @@ The installer works in three phases:
    PHP extensions, services. Nothing is changed on the system.
 3. **Installation** – only after you confirm: missing packages (with a
    simulation and a second confirmation first), project directory,
-   Drupal, Drush, database, PHP-FPM pool, Nginx site, `drush site:install`.
+   project directory, database, PHP-FPM pool, Nginx site, then Drupal and
+   Drush (Composer), then `drush site:install`.
    The sudo password is asked once, right after you confirm.
+
+Why this order: Composer runs `sudo -K` every time it starts, on
+purpose. It forgets your cached sudo password so that scripts from the
+packages it downloads cannot use it. The installer respects that: all
+work that needs sudo is done **before** Composer, and Composer, Drush and
+`site:install` run as your normal user. (Only if something fails after
+Composer, the rollback asks for the sudo password again.)
 
 ## Supported versions
 

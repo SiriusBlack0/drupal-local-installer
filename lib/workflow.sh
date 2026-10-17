@@ -92,10 +92,11 @@ setup_web_server() {
     fi
 
     record_created nginx_site
-
-    verify_nginx_site "$PROJECT_MACHINE_NAME"
 }
 
+# Order matters: every step that needs sudo runs before Composer,
+# because Composer clears the cached sudo password on start (see
+# install_drupal_codebase). The password is then asked only once.
 run_installation_workflow() {
     CREATED_RESOURCES=()
 
@@ -114,34 +115,57 @@ run_installation_workflow() {
         return 1
     fi
 
-    step "Creating the Drupal project"
+    step "Creating the project directory and database"
 
-    # provision_drupal_project removes its own directory on failure.
-    if ! provision_drupal_project \
-        "$DRUPAL_VERSION" \
-        "$PROJECT_PATH" \
-        "$PHP_VERSION" \
-        "$PROJECT_USER"; then
-        echo "[ERROR] Drupal provisioning failed."
+    if ! create_project_directory "$PROJECT_PATH" "$PROJECT_USER"; then
+        echo "[ERROR] Project directory creation failed."
         return 1
     fi
 
     record_created project_directory
 
-    step "Creating the database"
+    # SQLite needs no server and no sudo: its file is created after
+    # Composer, which needs an empty project directory.
+    if [[ "$DATABASE_ENGINE" != "sqlite" ]]; then
+        # The database functions remove what they created themselves.
+        if ! setup_project_database; then
+            echo "[ERROR] Database creation failed."
+            rollback_installation
+            return 1
+        fi
 
-    # The database functions remove what they created themselves.
-    if ! setup_project_database; then
-        echo "[ERROR] Database creation failed."
-        rollback_installation
-        return 1
+        record_created database
     fi
-
-    record_created database
 
     step "Configuring the web server"
 
     if ! setup_web_server; then
+        echo "[ERROR] Web server configuration failed."
+        rollback_installation
+        return 1
+    fi
+
+    step "Downloading Drupal"
+
+    if ! install_drupal_codebase \
+        "$DRUPAL_VERSION" \
+        "$PROJECT_PATH" \
+        "$PHP_VERSION" \
+        "$PROJECT_USER"; then
+        rollback_installation
+        return 1
+    fi
+
+    if [[ "$DATABASE_ENGINE" == "sqlite" ]]; then
+        if ! setup_project_database; then
+            echo "[ERROR] Database creation failed."
+            rollback_installation
+            return 1
+        fi
+    fi
+
+    # Now the Drupal installer must answer through Nginx and PHP-FPM.
+    if ! verify_nginx_site "$PROJECT_MACHINE_NAME"; then
         echo "[ERROR] Web server configuration failed."
         rollback_installation
         return 1

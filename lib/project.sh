@@ -388,35 +388,27 @@ create_start_script() {
     echo "[OK] Start script created: ./start ($services)"
 }
 
-provision_drupal_project() {
+# Downloads Drupal with Composer into the (empty) project directory,
+# adds Drush and the launchers, and checks that Drush runs.
+#
+# Composer runs "sudo -K" on every start: it deliberately forgets the
+# cached sudo password so that scripts from downloaded packages cannot
+# use it. All sudo work is therefore done before this step, and
+# Composer and Drush only ever run as the project user.
+install_drupal_codebase() {
     local drupal_version="$1"
     local project_path="$2"
     local php_version="$3"
     local run_user="$4"
-
-    if ! create_project_directory "$project_path" "$run_user"; then
-        echo "[ERROR] Drupal project creation failed."
-        return 1
-    fi
 
     if ! create_drupal_project \
             "$drupal_version" "$project_path" "$php_version" "$run_user" ||
        ! install_drush "$project_path" "$php_version" "$run_user" ||
        ! create_project_launchers "$project_path" "$php_version" "$run_user" ||
        ! verify_drush "$project_path" "$run_user"; then
-        echo "[ERROR] Drupal project creation failed."
-        echo "Rolling back: removing $project_path..."
-
-        if remove_project_directory "$project_path"; then
-            echo "[OK] Rollback completed."
-        else
-            echo "[WARNING] Rollback failed. Remove the directory manually:"
-            echo "  sudo rm -rf -- '$project_path'"
-        fi
-
+        echo "[ERROR] Drupal download failed."
         return 1
     fi
 
     echo "[SUCCESS] Drupal project files created."
-    return 0
 }

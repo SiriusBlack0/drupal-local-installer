@@ -182,50 +182,39 @@ else
     exit 1
 fi
 
-# Test 10: Successful provisioning: directory, then Composer.
+# Test 10: Composer downloads Drupal into the existing empty directory,
+# as the project user and never through sudo (Composer clears the
+# cached sudo password, so all sudo work happens before it).
 
 : > "$mock_log"
 site="$DRUPAL_PROJECTS_DIR/site_three"
+mkdir "$site"
 
-if output="$(provision_drupal_project "11.4.8" "$site" "8.5" "$current_user")" &&
-   [[ "$(sed -n 1p "$mock_log")" == "sudo install -d"* ]] &&
-   [[ "$(sed -n 2p "$mock_log")" == "php8.5 "* ]] &&
+if output="$(install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")" &&
+   [[ "$(sed -n 1p "$mock_log")" == "php8.5 "*" create-project "* ]] &&
+   ! grep -q "^sudo" "$mock_log" &&
    [[ "$output" == *"[SUCCESS] Drupal project files created."* ]]; then
-    echo "[PASS] Drupal provisioning creates directory then runs Composer"
+    echo "[PASS] Drupal downloaded with the project PHP, without sudo"
 else
-    echo "[FAIL] Drupal provisioning order incorrect"
+    echo "[FAIL] Drupal download incorrect: $(cat "$mock_log")"
     exit 1
 fi
 
-# Test 11: Composer failure removes the new directory.
+# Test 11: Composer failure is reported; the directory is left for the
+# workflow, which rolls back everything it created.
 
 : > "$mock_log"
 site="$DRUPAL_PROJECTS_DIR/site_four"
+mkdir "$site"
 
-if output="$(MOCK_COMPOSER_EXIT=1 provision_drupal_project "11.4.8" "$site" "8.5" "$current_user")"; then
+if output="$(MOCK_COMPOSER_EXIT=1 install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")"; then
     echo "[FAIL] Composer failure ignored"
     exit 1
-elif [[ "$output" == *"[OK] Rollback completed."* ]] &&
-     [[ ! -e "$site" ]] &&
-     [[ "$(tail -n 1 "$mock_log")" == "sudo rm -rf -- $site" ]]; then
-    echo "[PASS] Composer failure rolls back the project directory"
+elif [[ "$output" == *"[ERROR] Drupal download failed."* ]] &&
+     ! grep -q "install_drush\| require " "$mock_log"; then
+    echo "[PASS] Composer failure stops before Drush"
 else
-    echo "[FAIL] Rollback after Composer failure incorrect"
-    exit 1
-fi
-
-# Test 12: Existing directory stops provisioning before Composer.
-
-: > "$mock_log"
-mkdir "$DRUPAL_PROJECTS_DIR/site_five"
-
-if provision_drupal_project "11.4.8" "$DRUPAL_PROJECTS_DIR/site_five" "8.5" "$current_user" > /dev/null; then
-    echo "[FAIL] Existing project directory accepted"
-    exit 1
-elif [[ ! -s "$mock_log" ]] && [[ -d "$DRUPAL_PROJECTS_DIR/site_five" ]]; then
-    echo "[PASS] Existing directory untouched and Composer not run"
-else
-    echo "[FAIL] Existing directory handling incorrect"
+    echo "[FAIL] Composer failure handling incorrect"
     exit 1
 fi
 
@@ -325,32 +314,34 @@ else
     exit 1
 fi
 
-# Test 17: Full provisioning adds Drush and checks it runs.
+# Test 17: Full download adds Drush, the launchers and checks Drush.
 
 : > "$mock_log"
 site="$DRUPAL_PROJECTS_DIR/site_seven"
+mkdir "$site"
 
-if output="$(provision_drupal_project "11.4.8" "$site" "8.5" "$current_user")" &&
+if output="$(install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")" &&
    grep -q " require --no-interaction --working-dir=$site drush/drush" "$mock_log" &&
    [[ "$output" == *"[OK] Drush Commandline Tool 13.6.0"* ]] &&
    [[ -x "$site/drush" && -x "$site/composer" ]]; then
-    echo "[PASS] Provisioning installs Drush, launchers and verifies Drush"
+    echo "[PASS] Download installs Drush, launchers and verifies Drush"
 else
-    echo "[FAIL] Provisioning with Drush incorrect"
+    echo "[FAIL] Download with Drush incorrect"
     exit 1
 fi
 
-# Test 18: Drush failure rolls back the whole project directory.
+# Test 18: Drush failure is reported.
 
 site="$DRUPAL_PROJECTS_DIR/site_eight"
+mkdir "$site"
 
-if output="$(MOCK_REQUIRE_EXIT=1 provision_drupal_project "11.4.8" "$site" "8.5" "$current_user")"; then
+if output="$(MOCK_REQUIRE_EXIT=1 install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")"; then
     echo "[FAIL] Drush failure ignored"
     exit 1
-elif [[ "$output" == *"[OK] Rollback completed."* ]] && [[ ! -e "$site" ]]; then
-    echo "[PASS] Drush failure rolls back the project directory"
+elif [[ "$output" == *"[ERROR] Drupal download failed."* ]]; then
+    echo "[PASS] Drush failure reported"
 else
-    echo "[FAIL] Rollback after Drush failure incorrect"
+    echo "[FAIL] Drush failure handling incorrect"
     exit 1
 fi
 
