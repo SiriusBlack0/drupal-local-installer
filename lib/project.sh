@@ -269,6 +269,7 @@ create_start_script() {
         "fpm_service=php${php_version}-fpm" \
         "fpm_binary=php-fpm${php_version}" \
         "error_log=/var/log/nginx/${machine_name}.error.log" \
+        'ipv6_flag=/proc/net/if_inet6' \
         "url=http://$(get_project_nginx_domain "$machine_name")" \
         '' \
         'has_systemd() { [[ -d /run/systemd/system ]]; }' \
@@ -291,9 +292,14 @@ create_start_script() {
         '' \
         '# Before site:install Drupal redirects to install.php,' \
         '# afterwards it answers with "X-Generator: Drupal".' \
+        '# Checked over IPv4 and IPv6: browsers try ::1 first for *.localhost.' \
         'is_drupal_answering() {' \
-        '    curl -sI --max-time 5 "$url/" 2>/dev/null |' \
-        "        grep -qiE '^(x-generator: drupal|location: .*install\\.php)'" \
+        '    local family' \
+        '    for family in 4 6; do' \
+        '        if [[ "$family" == 6 && ! -e "$ipv6_flag" ]]; then continue; fi' \
+        '        curl "-$family" -sI --max-time 5 "$url/" 2>/dev/null |' \
+        "            grep -qiE '^(x-generator: drupal|location: .*install\\.php)' || return 1" \
+        '    done' \
         '}' \
         '' \
         'failed=()' \

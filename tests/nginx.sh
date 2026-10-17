@@ -82,3 +82,24 @@ else
 fi
 
 rm -rf "$test_dir"
+# IPv4 and IPv6: *.localhost resolves to ::1 first in browsers and curl.
+
+ipv6_config="$(NGINX_IPV6=1 generate_nginx_config "mydrupal" "/var/www/mydrupal" "8.5")"
+ipv4_config="$(NGINX_IPV6=0 generate_nginx_config "mydrupal" "/var/www/mydrupal" "8.5")"
+
+if grep -qFx "    listen 80;" <<< "$ipv6_config" &&
+   grep -qFx "    listen [::]:80;" <<< "$ipv6_config" &&
+   ! grep -qF "default_server" <<< "$ipv6_config"; then
+    echo "[PASS] Site listens on IPv4 and IPv6 (never as default server)"
+else
+    echo "[FAIL] IPv6 listen directive missing"
+    exit 1
+fi
+
+if grep -qFx "    listen 80;" <<< "$ipv4_config" &&
+   ! grep -qF "[::]" <<< "$ipv4_config"; then
+    echo "[PASS] No IPv6 listen on a system without IPv6"
+else
+    echo "[FAIL] IPv6 listen on a system without IPv6"
+    exit 1
+fi

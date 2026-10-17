@@ -62,8 +62,13 @@ exit 0
 STUB
 
 # curl prints the headers stored in .http (nothing = no answer).
+# With .ipv6_default, IPv6 requests get the default Nginx page instead.
 cat > "$stub_bin/curl" <<STUB
 #!/usr/bin/env bash
+if [[ "\$1" == "-6" && -e "$state_dir/.ipv6_default" ]]; then
+    printf 'HTTP/1.1 200 OK\\r\\nServer: nginx\\r\\n'
+    exit 0
+fi
 cat "$state_dir/.http" 2>/dev/null
 STUB
 
@@ -198,6 +203,7 @@ touch "$state_dir/site.conf"
 sed -i \
     -e "s#^site_config=.*#site_config=$state_dir/site.conf#" \
     -e "s#^socket=.*#socket=$state_dir/pool.sock#" \
+    -e "s#^ipv6_flag=.*#ipv6_flag=$state_dir/ipv6#" \
     "$site_project/start"
 
 reset_site_state() {
@@ -266,7 +272,38 @@ else
     fail "non-Drupal answer: $output"
 fi
 
-# Test 12: The generated script itself passes ShellCheck.
+# Test 12: A site that answers over IPv4 but not over IPv6 is not
+# reported as ready (browsers try ::1 first for *.localhost).
+
+touch "$state_dir/ipv6"
+reset_site_state
+make_socket "$state_dir/pool.sock"
+printf 'HTTP/1.1 302 Found\r\nLocation: http://mysite.localhost/core/install.php\r\n' > "$state_dir/.http"
+touch "$state_dir/.ipv6_default"
+
+if output="$("$site_project/start" 2>&1)"; then
+    fail "Site missing on IPv6 reported as ready"
+elif [[ "$output" == *"does not answer as a Drupal site"* ]]; then
+    pass "Site missing on IPv6 is reported"
+else
+    fail "IPv6 check: $output"
+fi
+
+rm -f "$state_dir/.ipv6_default"
+
+# Without IPv6 only IPv4 is asked.
+rm -f "$state_dir/ipv6"
+touch "$state_dir/.ipv6_default"
+
+if output="$("$site_project/start")" && [[ "$output" == *"Project ready"* ]]; then
+    pass "Without IPv6 only IPv4 is checked"
+else
+    fail "IPv4-only ./start: $output"
+fi
+
+rm -f "$state_dir/.ipv6_default"
+
+# Test 13: The generated script itself passes ShellCheck.
 
 if ! command -v shellcheck > /dev/null; then
     echo "[SKIP] ShellCheck not installed"

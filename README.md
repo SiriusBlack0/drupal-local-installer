@@ -96,6 +96,14 @@ touched, so a mistake never takes down other projects. `*.localhost`
 resolves to your own machine in browsers and curl, so no `/etc/hosts`
 entry is needed.
 
+Browsers try IPv6 (`::1`) first for `*.localhost`, so every site listens
+on IPv4 and IPv6. After the reload the installer asks the site over both
+(with `curl`, like a browser) and only shows the URL once Drupal really
+answers; otherwise everything is rolled back. `./start` runs the same
+check. This matters because a browser that once received another page
+for the URL (for example the default Nginx page) may keep showing it
+from its cache. If that ever happens, reload with **Ctrl+Shift+R**.
+
 ### Drush and Composer
 
 Always use the project launchers, so the right PHP is used:

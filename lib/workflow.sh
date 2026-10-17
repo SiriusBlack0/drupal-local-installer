@@ -92,6 +92,8 @@ setup_web_server() {
     fi
 
     record_created nginx_site
+
+    verify_nginx_site "$PROJECT_MACHINE_NAME"
 }
 
 run_installation_workflow() {

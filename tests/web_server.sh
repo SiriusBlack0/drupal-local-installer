@@ -266,4 +266,59 @@ else
     fail "SQLite/unknown engine removal"
 fi
 
+# Test 12: verify_nginx_site asks the site over IPv4 and IPv6.
+# The curl stub answers like Drupal except for the family in
+# $CURL_FAIL_FAMILY, where the default site answers instead.
+
+cat > "$stub_bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "curl $*" >> "$CALLS_FILE"
+if [[ "$1" == "-${CURL_FAIL_FAMILY:-none}" ]]; then
+    printf 'HTTP/1.1 200 OK\r\nServer: nginx\r\n'
+else
+    printf 'HTTP/1.1 302 Found\r\nLocation: http://mysite.localhost/core/install.php\r\n'
+fi
+STUB
+chmod +x "$stub_bin/curl"
+sleep() { echo "sleep $*" >> "$CALLS_FILE"; }
+
+reset_state
+
+if output="$(NGINX_IPV6=1 verify_nginx_site "mysite")" &&
+   [[ "$output" == *"[OK] http://mysite.localhost answers (IPv4 and IPv6)"* ]] &&
+   [[ "$(calls)" == *"curl -4 "*"curl -6 "* ]]; then
+    pass "Site checked over IPv4 and IPv6"
+else
+    fail "verify both families: $output / $(calls)"
+fi
+
+reset_state
+
+if output="$(NGINX_IPV6=1 CURL_FAIL_FAMILY=6 verify_nginx_site "mysite")"; then
+    fail "Site answering only over IPv4 reported as OK"
+elif [[ "$output" == *"does not answer as this Drupal site over: IPv6"* &&
+        "$output" == *"nginx -T"* &&
+        "$(grep -c '^curl -6' "$calls_file")" == "5" &&
+        "$(grep -c '^sleep' "$calls_file")" == "4" ]]; then
+    pass "Wrong answer over IPv6 detected after 5 attempts"
+else
+    fail "IPv6 failure: $output / $(calls)"
+fi
+
+reset_state
+
+if output="$(NGINX_IPV6=0 verify_nginx_site "mysite")" &&
+   [[ "$output" == *"answers (IPv4)"* && "$(calls)" != *"curl -6"* ]]; then
+    pass "Only IPv4 checked on a system without IPv6"
+else
+    fail "IPv4-only check: $output / $(calls)"
+fi
+
+if output="$(PATH="/nonexistent" verify_nginx_site "mysite")" &&
+   [[ "$output" == *"curl is not installed"* ]]; then
+    pass "Missing curl: warning, not a failure"
+else
+    fail "missing curl: $output"
+fi
+
 echo "[SUCCESS] Web server installation tests passed."

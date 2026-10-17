@@ -52,6 +52,11 @@ install_nginx_site() {
     return "${site_result:-0}"
 }
 
+verify_nginx_site() {
+    calls+="verify "
+    return "${verify_result:-0}"
+}
+
 remove_nginx_site() {
     calls+="remove_site "
     return 0
@@ -93,7 +98,7 @@ provision_drupal_project() {
 }
 
 if run_installation_workflow > /dev/null &&
-   [[ "$calls" == "plan execute readiness provision database pool site start_script " ]] &&
+   [[ "$calls" == "plan execute readiness provision database pool site verify start_script " ]] &&
    [[ "$pool_args" == "test_drupal 8.5 devuser" ]] &&
    [[ "$site_args" == "test_drupal /tmp/test-drupal 8.5" ]] &&
    [[ "$start_script_args" == "/tmp/test-drupal 8.5 mariadb test_drupal devuser" ]] &&
@@ -293,6 +298,22 @@ if [[ "$output" == *"[WARNING] Remove the PHP-FPM pool manually: /etc/php/8.5/fp
     echo "[PASS] Failed rollback step reported with the path to remove"
 else
     echo "[FAIL] Unexpected failed rollback output: $output"
+    exit 1
+fi
+
+# Test 12: A site that does not answer is rolled back completely.
+
+pool_result=0
+remove_pool_result=0
+site_result=0
+verify_result=1
+calls=""
+run_installation_workflow > /dev/null || true
+
+if [[ "$calls" == "plan execute readiness provision database pool site verify remove_site remove_pool remove_database remove_directory " ]]; then
+    echo "[PASS] Unanswered site: site, pool, database and directory rolled back"
+else
+    echo "[FAIL] Unexpected rollback after failed site check: $calls"
     exit 1
 fi
 
