@@ -24,6 +24,7 @@ source "$SCRIPT_DIR/lib/project.sh"
 source "$SCRIPT_DIR/lib/site.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
+source "$SCRIPT_DIR/lib/update.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
 check_operating_system() {
@@ -83,6 +84,22 @@ main() {
             PROJECT_USER="$(get_runtime_user)" || exit 1
             run_unregister_project "$REMOVE_PROJECT"
             exit $?
+            ;;
+        7)
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            run_check_updates
+            exit $?
+            ;;
+        8)
+            local update_status=0
+
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "$(get_project_machine_name "$REMOVE_PROJECT")-update"
+            # Every step checks its own result; a failure must reach the
+            # restore code instead of stopping the script (set -e).
+            run_update_project "$REMOVE_PROJECT" || update_status=$?
+            exit "$update_status"
             ;;
         *) exit 1 ;;
     esac

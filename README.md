@@ -301,6 +301,59 @@ with three extra rules: shared resources are never touched, the database
 **user** is kept (it may be shared; only the database is dropped), and an
 Nginx site that no longer serves the project is left in place.
 
+## Updating Drupal core (`--check-updates`, `--update`)
+
+```bash
+./install.sh --check-updates            # all registered projects, read only
+./install.sh --update mysite --dry-run  # checks and plan, nothing changes
+./install.sh --update mysite
+```
+
+Only **patch** (11.3.10 → 11.3.12) and **minor** (11.3 → 11.4) releases
+of Drupal core are installed. Contributed modules are not touched, and
+major upgrades (10 → 11) are not automated. A minor release is offered
+only when it is in `config/compatibility.conf`.
+
+Before anything changes, the installer checks that:
+
+- the project folder belongs to you (Composer never runs as root);
+- the project's PHP is installed and supported by the target release,
+  and the database server is new enough;
+- it is a Composer project with `drupal/core-recommended` or
+  `drupal/core` (Drupal 7 is refused);
+- `composer.json` and `composer.lock` have no uncommitted changes (git);
+- the site works now (Drush bootstraps it);
+- Composer can resolve the update (`--dry-run`). If a constraint in
+  `composer.json` blocks it, Composer's reason is shown and nothing
+  changes. `composer.json` itself is never edited: the version is fixed
+  with `composer update --with`.
+
+The update then asks for the project name and runs: backup → maintenance
+mode → `composer update` → `drush updatedb` → `drush cache:rebuild` →
+maintenance mode off → checks (version, Drush, HTTP answer, new errors in
+the status report). The registry records the new version.
+
+The backup goes to
+`~/drupal-local-installer-backups/<name>-update-<date>/` (folder 700,
+files 600): the database and `composer.json`/`composer.lock`. Keep it
+until you are sure the update is fine. If any step fails, the code
+(`composer install` of the old lock file) and, after `updatedb`, the
+database are restored automatically; restoring the database uses sudo
+again, so it may ask for your password.
+
+Restore by hand, if the automatic restore fails (`B` is the backup folder):
+
+```bash
+cp B/composer.json B/composer.lock /var/www/mysite/ && (cd /var/www/mysite && ./composer install)
+gunzip -c B/database.sql.gz | sudo mysql                       # MariaDB/MySQL
+sudo -u postgres dropdb mysite && sudo -u postgres createdb -O "$(cat B/database.owner)" mysite \
+  && gunzip -c B/database.sql.gz | sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d mysite   # PostgreSQL
+cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
+```
+
+If the project keeps its configuration in git, run `drush config:export`
+after the update and commit the changes.
+
 ## Development
 
 ```bash
@@ -322,5 +375,7 @@ temporary directories.
 - [x] Final checks and project registry (`--list`)
 - [x] Remove a project (`--remove`, backup offer, typed confirmation, `--dry-run`)
 - [x] Register existing projects (`--scan`, adopted, support levels)
-- [ ] Update a project
+- [x] Update Drupal core: patch and minor (`--check-updates`, `--update`)
+- [ ] Change the PHP version of a project
+- [ ] Major upgrades (with Upgrade Status)
 - [ ] Optional package source for other PHP versions; Docker mode

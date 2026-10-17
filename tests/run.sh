@@ -41,6 +41,7 @@ SUITES=(
     "Project Registry Tests|bash tests/registry.sh"
     "Project Removal Tests|bash tests/remove.sh"
     "Project Scan Tests|bash tests/scan.sh"
+    "Drupal Core Update Tests|bash tests/update.sh"
 )
 
 echo "======================================"

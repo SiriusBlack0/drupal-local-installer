@@ -91,6 +91,22 @@ else
 fi
 
 REMOVE_DRY_RUN=0
+status=0
+parse_options --check-updates > /dev/null || status=$?
+status2=0
+REMOVE_PROJECT=""
+parse_options --update mysite --dry-run > /dev/null || status2=$?
+status3=0
+output3="$(parse_options --update)" || status3=$?
+
+if [[ "$status" -eq 7 && "$status2" -eq 8 && "$REMOVE_PROJECT" == "mysite" &&
+      "$REMOVE_DRY_RUN" == "1" && "$status3" -eq 1 && "$output3" == *"needs a project name"* ]]; then
+    pass "--check-updates and --update NAME [--dry-run] recognised"
+else
+    fail "--check-updates/--update: $status/$status2/$status3 '$REMOVE_PROJECT'"
+fi
+
+REMOVE_DRY_RUN=0
 VERBOSE=0 STEP_MODE=0
 
 # Test 2: Log file is private.

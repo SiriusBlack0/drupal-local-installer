@@ -29,6 +29,7 @@ modules = [
     "lib/site.sh",
     "lib/scan.sh",
     "lib/remove.sh",
+    "lib/update.sh",
     "lib/workflow.sh",
 ]
 

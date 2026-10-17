@@ -152,6 +152,11 @@ Options:
               register them (adopted: their configuration is never changed)
   --unregister NAME
               Remove a project from the registry only; nothing else changes
+  --check-updates
+              Show available Drupal core updates for registered projects
+  --update NAME
+              Update Drupal core of a project (patch or minor release), with
+              backup and automatic restore on failure; --dry-run only checks
   --help      Show this help
 USAGE
     echo
@@ -163,7 +168,7 @@ USAGE
 # Sets VERBOSE and STEP_MODE from the command line.
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
-# 5 --scan, 6 --unregister.
+# 5 --scan, 6 --unregister, 7 --check-updates, 8 --update.
 REMOVE_PROJECT=""
 
 parse_options() {
@@ -175,6 +180,19 @@ parse_options() {
             --step) STEP_MODE=1 ;;
             --list) action="list" ;;
             --scan) action="scan" ;;
+            --check-updates) action="check-updates" ;;
+            --update)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --update needs a project name, e.g. --update mysite"
+                    return 1
+                fi
+
+                action="update"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                shift
+                ;;
             --unregister)
                 if [[ -z "${2:-}" || "$2" == --* ]]; then
                     echo "[ERROR] --unregister needs a project name"
@@ -200,7 +218,7 @@ parse_options() {
                 shift
                 ;;
             --dry-run)
-                # Used by lib/remove.sh.
+                # Used by lib/remove.sh and lib/update.sh.
                 # shellcheck disable=SC2034
                 REMOVE_DRY_RUN=1
                 ;;
@@ -217,8 +235,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" ]]; then
-        echo "[ERROR] --dry-run only works with --remove"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" ]]; then
+        echo "[ERROR] --dry-run only works with --remove and --update"
         return 1
     fi
 
@@ -227,6 +245,8 @@ parse_options() {
         remove) return 4 ;;
         scan) return 5 ;;
         unregister) return 6 ;;
+        check-updates) return 7 ;;
+        update) return 8 ;;
     esac
 
     return 0
