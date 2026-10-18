@@ -291,6 +291,7 @@ restore_launchers() {
 # Ctrl+C (or kill) while the project is being changed: undo, then stop.
 interrupt_php_change() {
     trap '' INT TERM
+    to_console
     echo
     echo "[INTERRUPTED] Stopping the PHP change and restoring the project..."
     rollback_php_change

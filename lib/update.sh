@@ -608,6 +608,7 @@ remove_code_snapshot() {
 # Ctrl+C (or kill) while the project is being changed: undo, then stop.
 interrupt_update() {
     trap '' INT TERM
+    to_console
     echo
     echo "[INTERRUPTED] Stopping the update and restoring the project..."
     rollback_update

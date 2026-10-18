@@ -603,6 +603,23 @@ else
     fail "interrupt: $run_status / $output"
 fi
 
+# The same with a log file, as in a real run: Composer's output goes to
+# the log, but what the restore reports must reach the terminal.
+make_project kappa
+LOG_FILE="$work_dir/kappa.log"
+: > "$LOG_FILE"
+run_status=0
+output="$(remember_console; printf '1\nkappa\n' | UPDATE_INTERRUPT=1 run_update_project kappa)" || run_status=$?
+LOG_FILE=""
+
+if [[ "$run_status" -eq 130 && "$output" == *"[INTERRUPTED] Stopping the update"* &&
+      "$output" == *"[OK] The project is back to its previous version."* ]] &&
+   ! grep -q "INTERRUPTED" "$work_dir/kappa.log"; then
+    pass "Ctrl+C with a log file: the restore is reported on the terminal, not hidden in the log"
+else
+    fail "interrupt with log: $run_status / $output / $(tail -5 "$work_dir/kappa.log")"
+fi
+
 # Test 12: A network error during "composer update" is retried once.
 
 make_project lambda

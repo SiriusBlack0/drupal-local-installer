@@ -98,6 +98,7 @@ setup_web_server() {
 # created, then stop.
 interrupt_installation() {
     trap '' INT TERM
+    to_console
     echo
     echo "[INTERRUPTED] Stopping the installation."
     rollback_installation

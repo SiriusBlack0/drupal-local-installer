@@ -70,6 +70,8 @@ run_command() {
 main() {
     local options_status=0
 
+    remember_console
+
     parse_options "$@" || options_status=$?
 
     case "$options_status" in

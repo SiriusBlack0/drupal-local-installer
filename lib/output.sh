@@ -137,6 +137,21 @@ run_logged() {
     return "$status"
 }
 
+# Ctrl+C handlers run inside the command that was interrupted. When that
+# command's output goes to the log file (run_logged), so would theirs:
+# they switch back to the terminal saved here first.
+CONSOLE_FD=""
+
+remember_console() {
+    exec {CONSOLE_FD}>&1
+}
+
+to_console() {
+    if [[ -n "$CONSOLE_FD" ]]; then
+        exec 1>&"$CONSOLE_FD" 2>&1
+    fi
+}
+
 print_usage() {
     cat <<'USAGE'
 Usage: ./install.sh [options]
