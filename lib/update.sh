@@ -29,6 +29,7 @@ UPDATE_PREVIOUS_VERSION=""
 UPDATE_TARGET=""
 UPDATE_WEB_ROOT=""
 UPDATE_SNAPSHOT_DIR=""
+UPDATE_SITES_DEFAULT_MODE=""
 
 get_composer_path() {
     command -v composer
@@ -123,6 +124,22 @@ foreach ($d["versions"] as $v) {
 }
 echo $patch, "|", $minor, "\n";
 ' "$current" "$known_minors"
+}
+
+# has_core_security_advisory, asked once more after a short wait when it
+# could not check (an unstable connection).
+check_core_security() {
+    local status=0
+
+    has_core_security_advisory "$@" || status=$?
+
+    if [[ "$status" -eq 2 ]]; then
+        sleep "${COMPOSER_RETRY_DELAY:-10}"
+        status=0
+        has_core_security_advisory "$@" || status=$?
+    fi
+
+    return "$status"
 }
 
 # Asks "composer audit" whether the installed Drupal core has a
@@ -248,15 +265,16 @@ run_check_updates() {
         # The first line is the core package; the rest are companions.
         UPDATE_CORE_PACKAGE="${UPDATE_CORE_PACKAGE%%$'\n'*}"
 
-        if ! targets="$(get_update_targets "$path" "$php" "$current")"; then
-            printf '%-20s %-9s %s\n' "$name" "$current" "could not ask Packagist"
+        if ! targets="$(get_update_targets "$path" "$php" "$current")" &&
+           ! { sleep "${COMPOSER_RETRY_DELAY:-10}"; targets="$(get_update_targets "$path" "$php" "$current")"; }; then
+            printf '%-20s %-9s %s\n' "$name" "$current" "could not ask Packagist (network?)"
             continue
         fi
 
         IFS='|' read -r patch minor <<< "$targets"
 
         security_status=0
-        has_core_security_advisory "$path" "$php" || security_status=$?
+        check_core_security "$path" "$php" || security_status=$?
 
         case "$security_status" in
             0)
@@ -467,6 +485,48 @@ get_scaffold_files() {
     ) | sed 's|^\./||' | sort -u
 }
 
+# Copies paths (relative to $1) into $2 with tar, as the developer.
+# Unlike "cp -a --parents", tar sets the mode of read-only folders (such
+# as web/sites/default after a Drupal installation) only after their
+# files are written.
+copy_tree() {
+    local from="$1"
+    local to="$2"
+    shift 2
+
+    [[ "$#" -gt 0 ]] || return 0
+
+    run_as_project_user "$PROJECT_USER" tar -C "$from" -cf - -- "$@" |
+        run_as_project_user "$PROJECT_USER" tar -C "$to" -xpf -
+}
+
+# Drupal makes web/sites/default read-only after the installation. The
+# core scaffold (and an offline restore) must replace default.settings.php
+# and default.services.yml in it, so it is made writable for the owner
+# during the update and gets its old mode back afterwards.
+make_sites_default_writable() {
+    local dir="$UPDATE_WEB_ROOT/sites/default"
+    local mode
+
+    UPDATE_SITES_DEFAULT_MODE=""
+    [[ -d "$dir" && ! -L "$dir" ]] || return 0
+
+    mode="$(stat -c '%a' "$dir")" || return 0
+    (( (8#$mode & 8#200) != 0 )) && return 0
+
+    if run_as_project_user "$PROJECT_USER" chmod u+w -- "$dir"; then
+        UPDATE_SITES_DEFAULT_MODE="$mode"
+        echo "[INFO] web/sites/default is writable during the update (Drupal protects it; mode $mode is restored afterwards)"
+    fi
+}
+
+restore_sites_default_mode() {
+    [[ -n "$UPDATE_SITES_DEFAULT_MODE" ]] || return 0
+    run_as_project_user "$PROJECT_USER" chmod "$UPDATE_SITES_DEFAULT_MODE" -- "$UPDATE_WEB_ROOT/sites/default" ||
+        echo "[WARNING] Could not protect web/sites/default again: chmod $UPDATE_SITES_DEFAULT_MODE $UPDATE_WEB_ROOT/sites/default"
+    UPDATE_SITES_DEFAULT_MODE=""
+}
+
 # A copy of the code as it is now, inside the project folder (same disk),
 # so that a failed update can be undone without the network: "composer
 # install" would have to download the old packages again. Skipped, with
@@ -503,7 +563,7 @@ create_code_snapshot() {
     if run_as_project_user "$PROJECT_USER" rm -rf -- "$project/.drupal-local-installer/update-snapshot" &&
        run_as_project_user "$PROJECT_USER" mkdir -p -- "$project/.drupal-local-installer/update-snapshot/code" &&
        printf '%s\n' "${dirs[@]}" | run_as_project_user "$PROJECT_USER" tee "$project/.drupal-local-installer/update-snapshot/dirs.list" > /dev/null &&
-       (cd "$project" && run_as_project_user "$PROJECT_USER" cp -a --parents --reflink=auto -- "${dirs[@]}" "${files[@]}" "$project/.drupal-local-installer/update-snapshot/code/"); then
+       copy_tree "$project" "$project/.drupal-local-installer/update-snapshot/code" "${dirs[@]}" "${files[@]}"; then
         UPDATE_SNAPSHOT_DIR="$project/.drupal-local-installer/update-snapshot"
         echo "OK"
     else
@@ -523,11 +583,12 @@ restore_code_snapshot() {
         run_as_project_user "$PROJECT_USER" rm -rf -- "${RECORD_PROJECT_PATH:?}/$dir" || return 1
     done < "$UPDATE_SNAPSHOT_DIR/dirs.list"
 
-    run_as_project_user "$PROJECT_USER" cp -a --reflink=auto -- "$UPDATE_SNAPSHOT_DIR/code/." "$RECORD_PROJECT_PATH/"
+    copy_tree "$UPDATE_SNAPSHOT_DIR/code" "$RECORD_PROJECT_PATH" .
 }
 
 remove_code_snapshot() {
     [[ -n "$UPDATE_SNAPSHOT_DIR" ]] || return 0
+    run_as_project_user "$PROJECT_USER" chmod -R u+w -- "$UPDATE_SNAPSHOT_DIR" 2>/dev/null
     run_as_project_user "$PROJECT_USER" rm -rf -- "$UPDATE_SNAPSHOT_DIR"
     UPDATE_SNAPSHOT_DIR=""
 }
@@ -583,6 +644,8 @@ rollback_update() {
         echo "[FAILED] Drupal does not report version $UPDATE_PREVIOUS_VERSION again."
         failed=1
     fi
+
+    restore_sites_default_mode
 
     if [[ "$failed" -eq 0 ]]; then
         remove_code_snapshot
@@ -666,6 +729,7 @@ run_update_project() {
     local errors_before=""
     local errors_after=""
     local new_errors
+    local security_status
 
     machine_name="$(get_project_machine_name "$1")"
 
@@ -678,6 +742,7 @@ run_update_project() {
 
     if [[ ! -f "$record" ]]; then
         echo "[ERROR] '$machine_name' is not in the registry. Register it with --scan first."
+        suggest_registered_name "$machine_name"
         return 1
     fi
 
@@ -757,7 +822,8 @@ run_update_project() {
     echo
     echo "Looking for updates of $UPDATE_CORE_PACKAGE $current..."
 
-    if ! targets="$(get_update_targets "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" "$current")"; then
+    if ! targets="$(get_update_targets "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" "$current")" &&
+       ! { sleep "${COMPOSER_RETRY_DELAY:-10}"; targets="$(get_update_targets "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" "$current")"; }; then
         echo "[ERROR] Composer could not list the available versions (network?)."
         return 1
     fi
@@ -796,9 +862,14 @@ run_update_project() {
     echo "======================================"
     echo
     echo "Drupal core:  $current -> $UPDATE_TARGET"
-    if has_core_security_advisory "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION"; then
-        echo "              Security: $current has a published security advisory; this update is needed."
-    fi
+    security_status=0
+    check_core_security "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" || security_status=$?
+
+    case "$security_status" in
+        0) echo "              Security: $current has a published security advisory; this update is needed." ;;
+        1) echo "              Security: no known advisory for $current." ;;
+        *) echo "              Security: could not be checked (composer audit failed; network?)." ;;
+    esac
     echo "PHP $RECORD_PHP_VERSION:      supported by $(echo "$UPDATE_TARGET" | cut -d. -f1,2)"
     echo "Packages:     $(describe_lock_operations "$dry_output")"
     echo "composer.json is not changed (the version is fixed with --with)."
@@ -839,6 +910,7 @@ run_update_project() {
 # The changing part of --update. Uses the variables of run_update_project.
 perform_update() {
     UPDATE_DATABASE_CHANGED=0
+    make_sites_default_writable
     create_code_snapshot
 
     echo
@@ -880,6 +952,7 @@ perform_update() {
 
     update_record_version "$record" "$UPDATE_TARGET" || true
     remove_code_snapshot
+    restore_sites_default_mode
 
     echo
     echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"

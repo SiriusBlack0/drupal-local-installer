@@ -236,8 +236,11 @@ The location follows `XDG_STATE_HOME` if it is set.
 - **Ctrl+C** during an installation, `--update` or `--php` is safe: the
   installer first undoes what the run changed, then stops (exit code 130).
 - **Network problems:** when Composer fails because of the network (for
-  example "curl error 7 ... Failed to connect"), it is tried once more
-  after 10 seconds before anything is rolled back.
+  example "curl error 7 ... Failed to connect"), it is tried up to 3 times
+  (after 10 and 30 seconds) before anything is rolled back. Other errors
+  are not retried. The security check and the version lookup of
+  `--check-updates` are asked once more as well; when they still cannot
+  run, the output says so (`not checked`) instead of guessing.
 - **One run per project:** `--update`, `--php` and `--remove` lock the
   project; a second run on the same project at the same time stops with
   a message instead of interfering.
@@ -364,6 +367,12 @@ failed update can be undone **without the network**. The copy is removed
 after the update (or the restore) succeeds. When the disk is too full
 for it, the installer says so and restores with `composer install`
 instead.
+
+Drupal makes `web/sites/default` read-only after the installation, but
+the core scaffold has to replace `default.settings.php` and
+`default.services.yml` in it. The folder is therefore writable for its
+owner during the update and gets its old mode back afterwards (also after
+a restore).
 
 If any step fails, the code and, after `updatedb`, the database are
 restored automatically; restoring the database uses sudo again, so it may

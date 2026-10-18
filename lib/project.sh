@@ -98,32 +98,53 @@ composer_failed_on_network() {
         grep -qiE 'curl error|failed to download|could not resolve host|failed to connect|connection timed out|operation timed out|connection reset|network is unreachable'
 }
 
-# run_logged, and once more when the first attempt failed because of the
-# network: a short network problem should not undo a whole run.
-# $2 names a function that cleans up before the second attempt ("-" for
-# none).
+# Seconds to wait before the second and the third attempt.
+get_network_retry_delay() {
+    local base="${COMPOSER_RETRY_DELAY:-10}"
+
+    if [[ "$1" -le 2 ]]; then
+        echo "$base"
+    else
+        echo "$((base * 3))"
+    fi
+}
+
+# run_logged, tried up to 3 times while it fails because of the network:
+# an unstable connection should not undo a whole run. Other errors are
+# not retried. $2 names a function that cleans up before each new
+# attempt ("-" for none).
 run_logged_retrying_network() {
     local description="$1"
     local cleanup="$2"
     shift 2
     local from_line=0
+    local attempt=1
+    local attempts="${COMPOSER_NETWORK_ATTEMPTS:-3}"
+    local delay
+    local label="$description"
 
-    [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] && from_line="$(wc -l < "$LOG_FILE")"
+    while true; do
+        [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] && from_line="$(wc -l < "$LOG_FILE")"
 
-    if run_logged "$description" "$@"; then
-        return 0
-    fi
+        if run_logged "$label" "$@"; then
+            return 0
+        fi
 
-    composer_failed_on_network "$from_line" || return 1
+        if [[ "$attempt" -ge "$attempts" ]] || ! composer_failed_on_network "$from_line"; then
+            return 1
+        fi
 
-    echo "[RETRY] That was a network problem; trying once more in ${COMPOSER_RETRY_DELAY:-10} seconds..."
-    sleep "${COMPOSER_RETRY_DELAY:-10}"
+        attempt=$((attempt + 1))
+        delay="$(get_network_retry_delay "$attempt")"
+        echo "[RETRY] That was a network problem; attempt $attempt of $attempts in $delay seconds..."
+        sleep "$delay"
 
-    if [[ "$cleanup" != "-" ]] && ! "$cleanup"; then
-        return 1
-    fi
+        if [[ "$cleanup" != "-" ]] && ! "$cleanup"; then
+            return 1
+        fi
 
-    run_logged "$description (second attempt)" "$@"
+        label="$description (attempt $attempt of $attempts)"
+    done
 }
 
 # create-project needs an empty directory: a failed download may have

@@ -307,6 +307,46 @@ acquire_project_lock() {
     PROJECT_LOCKS_HELD="${PROJECT_LOCKS_HELD:-} $machine_name"
 }
 
+# "Did you mean ...?" for a mistyped project name: registered names at
+# most 2 edits away (Levenshtein distance), or that contain the name.
+suggest_registered_name() {
+    local wanted="$1"
+    local record
+    local name
+    local -a names=()
+    local match
+
+    for record in "$(get_registry_directory 2>/dev/null)"/*.conf; do
+        [[ -f "$record" ]] || continue
+        name="$(read_project_field "$record" machine_name)" || continue
+        names+=("$name")
+    done
+
+    [[ "${#names[@]}" -gt 0 ]] || return 0
+
+    match="$(printf '%s\n' "${names[@]}" | awk -v w="$wanted" '
+        function lev(a, b,    i, j, la, lb, d, cost, x) {
+            la = length(a); lb = length(b)
+            for (i = 0; i <= la; i++) d[i, 0] = i
+            for (j = 0; j <= lb; j++) d[0, j] = j
+            for (i = 1; i <= la; i++)
+                for (j = 1; j <= lb; j++) {
+                    cost = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+                    x = d[i - 1, j] + 1
+                    if (d[i, j - 1] + 1 < x) x = d[i, j - 1] + 1
+                    if (d[i - 1, j - 1] + cost < x) x = d[i - 1, j - 1] + cost
+                    d[i, j] = x
+                }
+            return d[la, lb]
+        }
+        $0 != w && (lev($0, w) <= 2 || (length(w) >= 3 && index($0, w) > 0)) { print }
+    ' | head -n 3 | paste -sd ',' - | sed 's/,/, /g')"
+
+    if [[ -n "$match" ]]; then
+        echo "        Did you mean: $match ?"
+    fi
+}
+
 # Changes one field of a record (atomic: temporary file, then rename).
 # Values with a newline are refused.
 set_project_field() {

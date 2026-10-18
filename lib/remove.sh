@@ -52,6 +52,7 @@ explain_unregistered_project() {
 
     echo
     echo "[NOT REGISTERED] '$machine_name' is not in the registry."
+    suggest_registered_name "$machine_name"
     echo "It was not created by this installer, or it was created before the"
     echo "registry existed. To stay safe, nothing is removed automatically."
     echo

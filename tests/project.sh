@@ -370,7 +370,7 @@ LOG_FILE="$work_dir/download.log"
 : > "$LOG_FILE"
 
 if output="$(COMPOSER_RETRY_DELAY=0 MOCK_NET_FAIL_ONCE="$work_dir/net-failed" create_drupal_project "11.4.8" "$site" "8.5" "$current_user")" &&
-   [[ "$output" == *"[RETRY] That was a network problem"* && "$output" == *"(second attempt)"* ]]; then
+   [[ "$output" == *"[RETRY] That was a network problem; attempt 2 of 3"* && "$output" == *"(attempt 2 of 3) ... OK"* ]]; then
     echo "[PASS] Network error during the download: partial files removed, tried once more"
 else
     echo "[FAIL] Network retry: $output"

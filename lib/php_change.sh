@@ -471,6 +471,7 @@ run_change_php() {
 
     if [[ ! -f "$record" ]]; then
         echo "[ERROR] '$machine_name' is not in the registry. Register it with --scan first."
+        suggest_registered_name "$machine_name"
         return 1
     fi
 

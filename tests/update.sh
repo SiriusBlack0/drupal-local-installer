@@ -21,11 +21,12 @@ source lib/remove.sh
 source lib/update.sh
 
 work_dir="$(mktemp -d)"
-trap 'rm -rf "$work_dir"' EXIT
+trap 'chmod -R u+w "$work_dir" 2>/dev/null; rm -rf "$work_dir"' EXIT
 
 export XDG_DATA_HOME="$work_dir/data"
 export XDG_STATE_HOME="$work_dir/state"
 export COMPOSER_RETRY_DELAY=0
+export work_dir_net="$work_dir/net-fail-count"
 export DRUPAL_PROJECTS_DIR="$work_dir/www"
 etc_dir="$work_dir/etc"
 stub_bin="$work_dir/bin"
@@ -144,6 +145,12 @@ case "${args[0]}" in
         fi
         # NET_FAIL_ONCE: the first real update fails like a dropped
         # connection (the file marks that it happened).
+        # NET_FAILS=<n>: the first n real updates fail that way.
+        if [[ -n "${NET_FAILS:-}" ]] && [[ "$(cat "$work_dir_net" 2>/dev/null || echo 0)" -lt "$NET_FAILS" ]]; then
+            echo $(( $(cat "$work_dir_net" 2>/dev/null || echo 0) + 1 )) > "$work_dir_net"
+            echo "curl error 28 while downloading https://packages.drupal.org/8/x: Operation timed out"
+            exit 1
+        fi
         if [[ -n "${NET_FAIL_ONCE:-}" && ! -e "$NET_FAIL_ONCE" ]]; then
             touch "$NET_FAIL_ONCE"
             echo "curl error 7 while downloading https://api.github.com/x: Failed to connect to api.github.com port 443"
@@ -152,10 +159,21 @@ case "${args[0]}" in
         echo "core=$target" > "$dir/composer.lock"
         [[ "${UPDATE_FAILS:-0}" == "1" ]] && exit 1
         set_version "$target"
-        # Like the real update: new code and changed scaffold files.
+        # Like the real update: new code and changed scaffold files. The
+        # core scaffold replaces web/sites/default/default.settings.php and
+        # fails, as the real one does, when that folder is read-only.
         if [[ -d "$dir/web/modules/contrib" ]]; then
             mkdir -p "$dir/web/modules/contrib/new_module"
             echo "<?php // new" > "$dir/web/index.php"
+        fi
+        if [[ -f "$dir/web/sites/default/default.settings.php" ]]; then
+            if (( (8#$(stat -c %a "$dir/web/sites/default") & 8#200) == 0 )); then
+                echo "In Filesystem.php line 305:"
+                echo "  Could not delete $dir/web/sites/default/default.settings.php:"
+                exit 1
+            fi
+            rm -f "$dir/web/sites/default/default.settings.php"
+            echo "<?php // new defaults" > "$dir/web/sites/default/default.settings.php"
         fi
         # UPDATE_INTERRUPT: Ctrl+C arrives while Composer runs.
         if [[ "${UPDATE_INTERRUPT:-0}" == "1" ]]; then
@@ -531,9 +549,12 @@ cat > "$PROJECT_PATH/composer.json" <<'JSON'
     }
 }
 JSON
-mkdir -p "$PROJECT_PATH/vendor/composer" "$PROJECT_PATH/web/modules/contrib/old_module"
+mkdir -p "$PROJECT_PATH/vendor/composer" "$PROJECT_PATH/web/modules/contrib/old_module" "$PROJECT_PATH/web/sites/default"
 echo "<?php // autoload" > "$PROJECT_PATH/vendor/autoload.php"
 echo "<?php // old" > "$PROJECT_PATH/web/index.php"
+echo "<?php // old defaults" > "$PROJECT_PATH/web/sites/default/default.settings.php"
+# Read-only, as Drupal leaves it after the installation.
+chmod 555 "$PROJECT_PATH/web/sites/default"
 : > "$CALLS_FILE"
 
 if output="$(printf '1\nomega\n' | UPDB_FAILS=1 INSTALL_FAILS=1 run_update_project omega)"; then
@@ -544,6 +565,8 @@ elif [[ "$output" == *"Copying the current code (for an offline restore) ... OK"
      [[ "$(version_of omega)" == "11.3.10" && "$(cat "$PROJECT_PATH/web/index.php")" == "<?php // old" ]] &&
      [[ -d "$PROJECT_PATH/web/modules/contrib/old_module" && ! -e "$PROJECT_PATH/web/modules/contrib/new_module" ]] &&
      [[ -f "$PROJECT_PATH/vendor/autoload.php" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]] &&
+     [[ "$(cat "$PROJECT_PATH/web/sites/default/default.settings.php")" == "<?php // old defaults" ]] &&
+     [[ "$(stat -c '%a' "$PROJECT_PATH/web/sites/default")" == "555" ]] &&
      ! grep -q "composer install" "$CALLS_FILE"; then
     pass "Offline restore: code, new modules and scaffold files back without the network; copy removed"
 else
@@ -551,8 +574,11 @@ else
 fi
 
 if output="$(printf '1\nomega\n' | run_update_project omega)" &&
-   [[ "$(version_of omega)" == "11.3.12" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]]; then
-    pass "Successful update removes the offline copy"
+   [[ "$(version_of omega)" == "11.3.12" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]] &&
+   [[ "$output" == *"web/sites/default is writable during the update"* ]] &&
+   [[ "$(cat "$PROJECT_PATH/web/sites/default/default.settings.php")" == "<?php // new defaults" ]] &&
+   [[ "$(stat -c '%a' "$PROJECT_PATH/web/sites/default")" == "555" ]]; then
+    pass "Read-only web/sites/default: writable for the scaffold, protected again; offline copy removed"
 else
     fail "snapshot cleanup: $output"
 fi
@@ -586,6 +612,32 @@ else
     fail "network retry: $output"
 fi
 
+make_project nu
+LOG_FILE="$work_dir/nu.log"
+: > "$LOG_FILE"
+rm -f "$work_dir_net"
+
+if output="$(printf '1\nnu\n' | NET_FAILS=2 run_update_project nu)" &&
+   [[ "$output" == *"attempt 2 of 3"* && "$output" == *"attempt 3 of 3"* && "$output" == *"[DONE] nu"* ]]; then
+    pass "Unstable network: up to 3 attempts, then updated"
+else
+    fail "3 attempts: $output"
+fi
+
+make_project xi
+LOG_FILE="$work_dir/xi.log"
+: > "$LOG_FILE"
+rm -f "$work_dir_net"
+
+if output="$(printf '1\nxi\n' | NET_FAILS=5 run_update_project xi)"; then
+    fail "Update that never gets through reported as done"
+elif [[ "$output" == *"attempt 3 of 3"* && "$output" != *"attempt 4"* &&
+        "$output" == *"[OK] The project is back to its previous version."* ]]; then
+    pass "Network down for good: 3 attempts, then restored"
+else
+    fail "network down: $output"
+fi
+
 LOG_FILE=""
 
 # Test 13: Only one run at a time per project.
@@ -607,5 +659,25 @@ fi
 
 kill "$lock_holder" 2>/dev/null || true
 wait "$lock_holder" 2>/dev/null || true
+
+# Test 14: A mistyped name suggests the registered one; an audit that
+# cannot run is reported as such in the plan.
+
+if output="$(run_update_project omegaa < /dev/null)"; then
+    fail "Unknown name accepted"
+elif [[ "$output" == *"Did you mean: omega ?"* ]]; then
+    pass "Mistyped project name: the registered one is suggested"
+else
+    fail "suggestion: $output"
+fi
+
+make_project pi
+
+if output="$(printf '1\n' | AUDIT_FAILS=1 REMOVE_DRY_RUN=1 run_update_project pi)" &&
+   [[ "$output" == *"Security: could not be checked (composer audit failed; network?)"* ]]; then
+    pass "Plan says when the security check could not run"
+else
+    fail "audit failed: $output"
+fi
 
 echo "[SUCCESS] Update tests passed."
