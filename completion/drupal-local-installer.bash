@@ -110,4 +110,8 @@ _drupal_local_installer() {
     return 0
 }
 
-complete -F _drupal_local_installer install.sh
+# Registered for "./install.sh" and the full path too, not only for
+# "install.sh": bash prefers a spec for the exact word typed, and
+# bash-completion leaves a minimal one on "./install.sh" when Tab was
+# pressed before this file existed (then nothing would be completed).
+complete -F _drupal_local_installer install.sh ./install.sh "$_dli_installer_dir/install.sh"

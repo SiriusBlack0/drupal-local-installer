@@ -127,6 +127,18 @@ else
     fail "installed file: '$installed_result'"
 fi
 
+# bash-completion leaves a minimal spec on "./install.sh" when Tab was
+# pressed before the file existed; sourcing the file must replace it.
+registered="$(bash -c "complete -F _comp_complete_minimal ./install.sh; source '$target'; complete -p ./install.sh; complete -p '$repo_dir/install.sh'; complete -p install.sh")"
+
+if [[ "$registered" == *"_drupal_local_installer ./install.sh"* &&
+      "$registered" == *"_drupal_local_installer $repo_dir/install.sh"* &&
+      "$registered" == *"_drupal_local_installer install.sh"* ]]; then
+    pass "Registered for ./install.sh, the full path and install.sh (replaces a minimal spec)"
+else
+    fail "registration: $registered"
+fi
+
 id() { if [[ "${1:-}" == "-u" ]]; then echo 0; else command id "$@"; fi; }
 
 if output="$(run_install_completion)"; then
