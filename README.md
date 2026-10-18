@@ -7,8 +7,9 @@ correct PHP version.
 
 > **Status:** work in progress. The installer creates a working Drupal
 > site at `http://<project>.localhost`: project files (Drupal + Drush),
-> database, PHP-FPM pool, Nginx site and `drush site:install`. Removing
-> and updating projects come next. See [Roadmap](#roadmap).
+> database, PHP-FPM pool, Nginx site and `drush site:install`, and it
+> removes, registers and updates projects and changes their PHP version.
+> Major upgrades and a Docker mode come next. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -134,7 +135,7 @@ The minimum database versions come from the drupal.org requirements in
 (for example PostgreSQL 14 and SQLite 3.37 on Ubuntu 22.04 for Drupal 11)
 is still listed, as `[too old: Drupal 11 needs 16+]`, and cannot be
 chosen. The installer explains the options: a newer version from the
-vendor's repository (it never adds package sources itself), another
+vendor's repository (the installer never adds database package sources), another
 database, DDEV (`ddev config --database=postgres:16`), or the previous
 Drupal major when that one supports the installed version.
 
@@ -361,6 +362,90 @@ cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
 If the project keeps its configuration in git, run `drush config:export`
 after the update and commit the changes.
 
+## Other PHP versions (`--php-source`)
+
+Ubuntu has one PHP version per release (22.04: 8.1, 24.04: 8.3,
+26.04: 8.5). Other versions come from Ondřej Surý's repository,
+<https://packages.sury.org/php/> (he maintains PHP in Debian). His
+Launchpad PPA `ppa:ondrej/php` is being replaced by it, and Ubuntu 26.04
+is only served there.
+
+```bash
+./install.sh --php-source
+```
+
+shows the PHP versions installed and available, and offers to add the
+repository. Nothing changes without a `y`. Then the installer:
+
+- checks that the repository has packages for your Ubuntu release;
+- downloads its keyring package (`debsuryorg-archive-keyring`), checks
+  its name and that it holds an OpenPGP key, and shows the fingerprint;
+- installs **only the key**, as
+  `/usr/share/keyrings/debsuryorg-php-drupal-local-installer.gpg`. The
+  package itself is not installed: it also puts the key in
+  `/etc/apt/trusted.gpg.d`, where apt would trust it for every package
+  source, not only this one;
+- writes `/etc/apt/sources.list.d/php-sury.sources` (deb822, `Signed-By`
+  that key only) and runs `apt-get update`;
+- disables the old PPA file, if there is one, by renaming it to
+  `.disabled` (a PPA line inside another file is shown for manual
+  editing);
+- removes the new source and key again, and enables the PPA again, if
+  apt cannot use it.
+
+Run it again later and it also checks for an old PPA that is still
+active next to the new repository (apt would see the same PHP packages
+twice, perhaps built for another Ubuntu release) and offers to disable
+it; `--php` refuses to install PHP packages while it is active.
+
+If the repository ever changes its signing key, `apt-get update` reports
+it; run `./install.sh --php-source` again to fetch the new key.
+
+Note: the repository also has newer builds of PHP packages you already
+have; `apt upgrade` takes them from there afterwards. `--php` offers the
+same step when the PHP version you ask for is not available.
+
+## Changing the PHP version (`--php`)
+
+```bash
+./install.sh --php mysite 8.4 --dry-run   # checks and plan, nothing changes
+./install.sh --php mysite 8.4
+```
+
+Checks first (nothing changes): the Drupal release supports that PHP
+(`config/compatibility.conf`), the site works now (Drush), the Nginx site
+uses a `fastcgi_pass` line the installer can switch, and Composer's
+`check-platform-reqs` says the installed packages accept the new PHP.
+Packages of the new PHP are planned: FPM, CLI, the extensions Drupal
+needs, and the extension packages the old PHP has (`php8.3-redis` →
+`php8.4-redis`); one that does not exist for the new PHP is shown as a
+warning.
+
+Then, after the project name is typed: packages (apt shows them and asks;
+nothing is ever removed) → a new PHP-FPM pool next to the old one
+(`php-fpm8.4 -t`, reload) → the `fastcgi_pass` line of the Nginx site
+switched to the new socket (`nginx -t`, reload) → `./drush`, `./composer`
+and `./start` rewritten for the new PHP → checks (Drush and the HTTP
+answer with the new PHP) → the old pool removed → registry updated.
+Copies of the old Nginx site and launchers go to
+`~/drupal-local-installer-backups/<name>-php-<date>/`. If a step fails,
+the site, the launchers and the pools are restored; the packages stay.
+Code and database are never changed, nor the system's default `php`.
+
+When PHP was not installed yet, Composer can only check the packages
+after it is installed; Composer then clears sudo's cached password, so
+sudo asks once more.
+
+**Adopted projects** (`--scan`) are changed the same way, but only their
+`fastcgi_pass` line changes; the new pool copies the `user`, `group` and
+`php_value`/`php_admin_value`/`env` lines of the old pool, and the old
+pool is never removed (other sites may use it). The plan says so before
+you confirm. Projects without launchers then run Drush with the new PHP
+by hand, e.g. `php8.4 vendor/bin/drush status`.
+
+Settings in the new version's `fpm/php.ini` that differ from the old one
+(`memory_limit`, `upload_max_filesize`, ...) are listed at the end.
+
 ## Development
 
 ```bash
@@ -383,6 +468,7 @@ temporary directories.
 - [x] Remove a project (`--remove`, backup offer, typed confirmation, `--dry-run`)
 - [x] Register existing projects (`--scan`, adopted, support levels)
 - [x] Update Drupal core: patch and minor (`--check-updates`, `--update`)
-- [ ] Change the PHP version of a project
+- [x] Change the PHP version of a project (`--php`)
+- [x] Optional package source for other PHP versions (`--php-source`)
 - [ ] Major upgrades (with Upgrade Status)
-- [ ] Optional package source for other PHP versions; Docker mode
+- [ ] Docker mode

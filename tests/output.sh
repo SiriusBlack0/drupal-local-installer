@@ -107,6 +107,28 @@ else
 fi
 
 REMOVE_DRY_RUN=0
+status=0
+REMOVE_PROJECT="" PHP_TARGET_VERSION=""
+parse_options --php mysite 8.4 --dry-run > /dev/null || status=$?
+dry_run_seen="$REMOVE_DRY_RUN"
+REMOVE_DRY_RUN=0
+status2=0
+parse_options --php-source > /dev/null || status2=$?
+status3=0
+output3="$(parse_options --php mysite)" || status3=$?
+status4=0
+output4="$(parse_options --php mysite eight)" || status4=$?
+
+if [[ "$status" -eq 10 && "$REMOVE_PROJECT" == "mysite" && "$PHP_TARGET_VERSION" == "8.4" &&
+      "$dry_run_seen" == "1" && "$status2" -eq 9 &&
+      "$status3" -eq 1 && "$output3" == *"needs a project name and a PHP version"* &&
+      "$status4" -eq 1 && "$output4" == *"needs a project name and a PHP version"* ]]; then
+    pass "--php NAME VERSION [--dry-run] and --php-source recognised; bad use rejected"
+else
+    fail "--php parsing: $status/$status2/$status3/$status4 '$REMOVE_PROJECT' '$PHP_TARGET_VERSION'"
+fi
+
+REMOVE_DRY_RUN=0
 VERBOSE=0 STEP_MODE=0
 
 # Test 2: Log file is private.

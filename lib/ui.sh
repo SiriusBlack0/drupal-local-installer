@@ -532,8 +532,8 @@ resolve_compatible_php_versions() {
         echo "Required PHP version(s): ${required_versions[*]}"
         echo "PHP versions on this system or in its package sources: ${found_versions:-none}"
         echo
-        echo "Install one of the required PHP versions first."
-        echo "This installer does not add package sources automatically."
+        echo "Install one of the required PHP versions first. Other PHP versions"
+        echo "come from packages.sury.org: ./install.sh --php-source (asks first)."
         print_container_hint
         return 1
     fi
@@ -644,6 +644,7 @@ prompt_php_version() {
             echo "[NOT AVAILABLE] PHP $PHP_VERSION is not installed and not available"
             echo "from the package sources of this system."
             echo "Usable for Drupal $DRUPAL_VERSION on this system: $(get_usable_php_versions | paste -sd ' ' -)"
+            echo "Other PHP versions: ./install.sh --php-source"
             continue
         fi
 

@@ -30,6 +30,8 @@ modules = [
     "lib/scan.sh",
     "lib/remove.sh",
     "lib/update.sh",
+    "lib/php_source.sh",
+    "lib/php_change.sh",
     "lib/workflow.sh",
 ]
 

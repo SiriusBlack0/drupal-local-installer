@@ -25,6 +25,8 @@ source "$SCRIPT_DIR/lib/site.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"
+source "$SCRIPT_DIR/lib/php_source.sh"
+source "$SCRIPT_DIR/lib/php_change.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
 check_operating_system() {
@@ -100,6 +102,26 @@ main() {
             # restore code instead of stopping the script (set -e).
             run_update_project "$REMOVE_PROJECT" || update_status=$?
             exit "$update_status"
+            ;;
+        9)
+            local source_status=0
+
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "php-source"
+            run_php_source || source_status=$?
+            exit "$source_status"
+            ;;
+        10)
+            local php_status=0
+
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "$(get_project_machine_name "$REMOVE_PROJECT")-php"
+            # As with --update: every step checks its own result and the
+            # restore code must run, so set -e must not stop the script.
+            run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION" || php_status=$?
+            exit "$php_status"
             ;;
         *) exit 1 ;;
     esac

@@ -157,6 +157,12 @@ Options:
   --update NAME
               Update Drupal core of a project (patch or minor release), with
               backup and automatic restore on failure; --dry-run only checks
+  --php NAME VERSION
+              Change the PHP version of a project, e.g. --php mysite 8.4
+              (restored automatically on failure; --dry-run only checks)
+  --php-source
+              Add packages.sury.org as a source of other PHP versions
+              (asks first; Ubuntu itself has one PHP version per release)
   --help      Show this help
 USAGE
     echo
@@ -168,8 +174,10 @@ USAGE
 # Sets VERBOSE and STEP_MODE from the command line.
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
-# 5 --scan, 6 --unregister, 7 --check-updates, 8 --update.
+# 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
+# 9 --php-source, 10 --php.
 REMOVE_PROJECT=""
+PHP_TARGET_VERSION=""
 
 parse_options() {
     local action=""
@@ -181,6 +189,21 @@ parse_options() {
             --list) action="list" ;;
             --scan) action="scan" ;;
             --check-updates) action="check-updates" ;;
+            --php-source) action="php-source" ;;
+            --php)
+                if [[ -z "${2:-}" || "$2" == --* || ! "${3:-}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                    echo "[ERROR] --php needs a project name and a PHP version, e.g. --php mysite 8.4"
+                    return 1
+                fi
+
+                action="php"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                # shellcheck disable=SC2034
+                PHP_TARGET_VERSION="$3"
+                shift 2
+                ;;
             --update)
                 if [[ -z "${2:-}" || "$2" == --* ]]; then
                     echo "[ERROR] --update needs a project name, e.g. --update mysite"
@@ -235,8 +258,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" ]]; then
-        echo "[ERROR] --dry-run only works with --remove and --update"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "php" ]]; then
+        echo "[ERROR] --dry-run only works with --remove, --update and --php"
         return 1
     fi
 
@@ -247,6 +270,8 @@ parse_options() {
         unregister) return 6 ;;
         check-updates) return 7 ;;
         update) return 8 ;;
+        php-source) return 9 ;;
+        php) return 10 ;;
     esac
 
     return 0

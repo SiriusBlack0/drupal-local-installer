@@ -277,6 +277,31 @@ read_project_field() {
     return 1
 }
 
+# Changes one field of a record (atomic: temporary file, then rename).
+# Values with a newline are refused.
+set_project_field() {
+    local record_path="$1"
+    local field="$2"
+    local value="$3"
+    local temp_file
+
+    [[ -f "$record_path" && "$field" =~ ^[a-z_]+$ && "$value" != *$'\n'* ]] || return 1
+
+    temp_file="$(dirname "$record_path")/.$(basename "$record_path").tmp"
+
+    if ! awk -v key="$field" -v value="$value" '
+            BEGIN { done = 0 }
+            index($0, key "=") == 1 { print key "=" value; done = 1; next }
+            { print }
+            END { if (!done) print key "=" value }
+        ' "$record_path" | run_as_project_user "$PROJECT_USER" tee "$temp_file" > /dev/null ||
+       ! run_as_project_user "$PROJECT_USER" chmod 0600 "$temp_file" ||
+       ! run_as_project_user "$PROJECT_USER" mv -f "$temp_file" "$record_path"; then
+        rm -f "$temp_file" 2>/dev/null
+        return 1
+    fi
+}
+
 list_registered_projects() {
     local registry_dir
     local record
