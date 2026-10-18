@@ -27,6 +27,7 @@ source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"
 source "$SCRIPT_DIR/lib/php_source.sh"
 source "$SCRIPT_DIR/lib/php_change.sh"
+source "$SCRIPT_DIR/lib/completion.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
 check_operating_system() {
@@ -117,6 +118,9 @@ main() {
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-php"
             run_command run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION"
+            ;;
+        11)
+            run_command run_install_completion
             ;;
         *) exit 1 ;;
     esac

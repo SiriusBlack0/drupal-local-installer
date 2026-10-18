@@ -26,6 +26,7 @@ correct PHP version.
 ./install.sh --step     # pause before each installation step
 ./install.sh --verbose  # show the full output of every command
 ./install.sh --help
+./install.sh --install-completion   # Tab completion, once (see below)
 ```
 
 The installer works in three phases:
@@ -521,6 +522,29 @@ by hand, e.g. `php8.4 vendor/bin/drush status`.
 
 Settings in the new version's `fpm/php.ini` that differ from the old one
 (`memory_limit`, `upload_max_filesize`, ...) are listed at the end.
+
+## Tab completion (`--install-completion`)
+
+```bash
+./install.sh --install-completion
+```
+
+installs Tab completion for your user only (no sudo), in
+`~/.local/share/bash-completion/completions/install.sh`; it works in every
+new terminal (in the current one: `source` the file it names). Then:
+
+| You type | Tab offers |
+|---|---|
+| `./install.sh --` | every option (`--update`, `--php`, `--remove`, ...) |
+| `./install.sh --update ` (also `--php`, `--remove`, `--unregister`) | the registered projects |
+| `./install.sh --php mysite ` | the PHP versions that project's Drupal release supports |
+| `./install.sh --update mysite ` | `--dry-run` |
+
+Project names come from the registry each time, so new projects appear at
+once. Another program called `install.sh` keeps the normal file name
+completion. Without the `bash-completion` package the file is not loaded
+automatically: install it (`sudo apt-get install bash-completion`) or add
+the `source` line to `~/.bashrc`. To remove it, delete the file.
 
 ## Development
 

@@ -32,6 +32,7 @@ modules = [
     "lib/update.sh",
     "lib/php_source.sh",
     "lib/php_change.sh",
+    "lib/completion.sh",
     "lib/workflow.sh",
 ]
 

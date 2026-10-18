@@ -134,6 +134,10 @@ case "${args[0]}" in
         for a in "${args[@]}"; do [[ "$a" == drupal/core*:* ]] && target="${a##*:}"; done
         # BLOCK_ADVISORIES=1: Composer 2.9+ refuses a package with advisories
         # unless --no-security-blocking is given.
+        if [[ "${BLOCK_CORE_ADVISORIES:-0}" == "1" && " ${args[*]} " != *" --no-security-blocking "* ]]; then
+            echo "    - Root composer.json requires drupal/core-recommended $target -> found drupal/core[$target] but these were not loaded, because they are affected by security advisories (\"SA-CORE-2026-012\", \"SA-CORE-2026-010\")."
+            exit 2
+        fi
         if [[ "${BLOCK_ADVISORIES:-0}" == "1" && " ${args[*]} " != *" --no-security-blocking "* ]]; then
             echo "Your requirements could not be resolved to an installable set of packages."
             echo "  Problem 1"
@@ -742,6 +746,17 @@ if output="$(printf '1\naccept\nrho\n' | BLOCK_ADVISORIES=1 run_update_project r
     pass "Advisories accepted: update installed for this run only, noted in the registry"
 else
     fail "advisories accepted: $output / $(cat "$CALLS_FILE")"
+fi
+
+make_project sigma
+
+if output="$(printf '1\n' | BLOCK_CORE_ADVISORIES=1 REMOVE_DRY_RUN=1 run_update_project sigma)" &&
+   [[ "$output" == *"- drupal/core 11.3.12: SA-CORE-2026-012, SA-CORE-2026-010"* &&
+      "$output" == *"Drupal core 11.3.12 itself has these advisories"* &&
+      "$output" == *"Try the other choice first: Drupal 11.4.2."* ]]; then
+    pass "Advisories on Drupal core itself: explained as an unsupported line"
+else
+    fail "core advisories: $output"
 fi
 
 echo "[SUCCESS] Update tests passed."

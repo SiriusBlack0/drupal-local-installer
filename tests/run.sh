@@ -9,7 +9,7 @@ SUITES=(
     "Bash Syntax|bash tests/syntax.sh"
     "Module Structure|bash tests/module_structure.sh"
     "Output Tests|bash tests/output.sh"
-    "ShellCheck|shellcheck -S style -x install.sh lib/*.sh tests/*.sh"
+    "ShellCheck|shellcheck -S style -x install.sh lib/*.sh tests/*.sh completion/*.bash"
     "Project Name Functional Tests|bash tests/project_name.sh"
     "Drupal Version Selection Tests|bash tests/drupal_version_selection.sh"
     "Compatibility Matrix Tests|bash tests/compatibility.sh"
@@ -44,6 +44,7 @@ SUITES=(
     "Drupal Core Update Tests|bash tests/update.sh"
     "PHP Source Tests|bash tests/php_source.sh"
     "PHP Change Tests|bash tests/php_change.sh"
+    "Tab Completion Tests|bash tests/completion.sh"
 )
 
 echo "======================================"

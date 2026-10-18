@@ -178,6 +178,9 @@ Options:
   --php-source
               Add packages.sury.org as a source of other PHP versions
               (asks first; Ubuntu itself has one PHP version per release)
+  --install-completion
+              Tab completion for options, project names and PHP versions
+              (for your user only)
   --help      Show this help
 USAGE
     echo
@@ -190,7 +193,7 @@ USAGE
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
 # 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
-# 9 --php-source, 10 --php.
+# 9 --php-source, 10 --php, 11 --install-completion.
 REMOVE_PROJECT=""
 PHP_TARGET_VERSION=""
 
@@ -205,6 +208,7 @@ parse_options() {
             --scan) action="scan" ;;
             --check-updates) action="check-updates" ;;
             --php-source) action="php-source" ;;
+            --install-completion) action="install-completion" ;;
             --php)
                 if [[ -z "${2:-}" || "$2" == --* || ! "${3:-}" =~ ^[0-9]+\.[0-9]+$ ]]; then
                     echo "[ERROR] --php needs a project name and a PHP version, e.g. --php mysite 8.4"
@@ -287,6 +291,7 @@ parse_options() {
         update) return 8 ;;
         php-source) return 9 ;;
         php) return 10 ;;
+        install-completion) return 11 ;;
     esac
 
     return 0

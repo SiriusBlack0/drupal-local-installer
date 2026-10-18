@@ -450,6 +450,8 @@ confirm_php_change() {
 # ---------------------------------------------------
 
 PHP_COMPAT_CODE_DIRS=()
+# Summary of the PHPCompatibility findings for the plan ("" = none).
+PHP_COMPAT_FINDINGS=""
 
 # Folders with the project's own code: web/modules/custom, ...
 find_custom_code_dirs() {
@@ -617,6 +619,7 @@ run_php_compat_checks() {
     # current one is gone.
     is_php_cli_installed "$tool_php" || tool_php="$new"
 
+    PHP_COMPAT_FINDINGS=""
     find_custom_code_dirs "$web_root"
     file_count="$(list_custom_php_files | grep -c . || true)"
 
@@ -661,7 +664,8 @@ run_php_compat_checks() {
             case "$scan_status" in
                 0) echo "  [OK]      PHPCompatibility: nothing found in the custom code" ;;
                 1|2)
-                    echo "  [WARNING] PHPCompatibility: $(head -n 1 <<< "$scan") in the custom code:"
+                    PHP_COMPAT_FINDINGS="$(head -n 1 <<< "$scan")"
+                    echo "  [WARNING] PHPCompatibility: $PHP_COMPAT_FINDINGS in the custom code:"
                     tail -n +2 <<< "$scan" | sed 's/^/              /'
                     echo "            (A pre-release checker: read the findings, they are advice.)"
                     if [[ "$scan_status" -eq 1 && "$result" -eq 0 ]]; then
@@ -992,7 +996,11 @@ run_change_php() {
     fi
 
     if [[ "$platform_checked" -eq 1 ]]; then
-        echo "Checks:       passed (see above)"
+        if [[ -n "$PHP_COMPAT_FINDINGS" ]]; then
+            echo "Checks:       passed; PHPCompatibility found $PHP_COMPAT_FINDINGS (see above)"
+        else
+            echo "Checks:       passed (see above)"
+        fi
     else
         echo "Checks:       run right after PHP $new is installed (Composer, syntax of the"
         echo "              custom code, trial run with Drush, PHPCompatibility); the change"

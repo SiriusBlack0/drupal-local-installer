@@ -666,6 +666,7 @@ chmod +x "$tool/vendor/bin/phpcs"
 if output="$(REMOVE_DRY_RUN=1 PHPCOMPAT_TOOL_DIR="$tool" run_change_php nu 8.4 < /dev/null)" &&
    [[ "$output" == *"[WARNING] PHPCompatibility: 1 error(s), 1 warning(s) in the custom code:"* &&
       "$output" == *"web/modules/custom/shop/shop.module:2 ERROR: Function each() is removed since PHP 8.0"* &&
+      "$output" == *"Checks:       passed; PHPCompatibility found 1 error(s), 1 warning(s) (see above)"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]]; then
     pass "PHPCompatibility findings shown in the dry run"
 else

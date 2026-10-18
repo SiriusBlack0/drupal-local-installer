@@ -34,6 +34,8 @@ UPDATE_SITES_DEFAULT_MODE=""
 # user accepted the advisories that block it).
 UPDATE_EXTRA_ARGS=()
 UPDATE_ACCEPTED_ADVISORIES=""
+# The target that was not chosen (patch or minor), for advice.
+UPDATE_ALTERNATIVE=""
 
 get_composer_path() {
     command -v composer
@@ -702,6 +704,17 @@ explain_blocking_advisories() {
     echo "           security advisories, so Composer refuses to install them:"
     printf '%s\n' "$blocked" | sed 's/^/             - /'
     echo "           Details: https://packagist.org/security-advisories/"
+
+    if grep -qE '^drupal/core(-recommended)? ' <<< "$blocked"; then
+        echo
+        echo "           Drupal core $UPDATE_TARGET itself has these advisories: its line"
+        echo "           ($(echo "$UPDATE_TARGET" | cut -d. -f1,2)) has no release with them fixed (often because it"
+        echo "           no longer gets security fixes)."
+    fi
+
+    if [[ -n "$UPDATE_ALTERNATIVE" ]]; then
+        echo "           Try the other choice first: Drupal $UPDATE_ALTERNATIVE."
+    fi
     echo
     echo "           Usually another target is the better choice (a newer minor"
     echo "           brings fixed versions). You may still install this one: the"
@@ -741,6 +754,8 @@ choose_update_target() {
     local minor="$2"
     local answer
 
+    UPDATE_ALTERNATIVE=""
+
     if [[ -n "$patch" && -z "$minor" ]]; then
         UPDATE_TARGET="$patch"
         return 0
@@ -762,8 +777,8 @@ choose_update_target() {
         fi
 
         case "$answer" in
-            1) UPDATE_TARGET="$patch"; return 0 ;;
-            2) UPDATE_TARGET="$minor"; return 0 ;;
+            1) UPDATE_TARGET="$patch"; UPDATE_ALTERNATIVE="$minor"; return 0 ;;
+            2) UPDATE_TARGET="$minor"; UPDATE_ALTERNATIVE="$patch"; return 0 ;;
             *) echo "Invalid selection." ;;
         esac
     done
