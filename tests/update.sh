@@ -557,6 +557,11 @@ echo "<?php // old defaults" > "$PROJECT_PATH/web/sites/default/default.settings
 chmod 555 "$PROJECT_PATH/web/sites/default"
 : > "$CALLS_FILE"
 
+# A copy left behind by an older run, with a read-only folder in it.
+mkdir -p "$PROJECT_PATH/.drupal-local-installer/update-snapshot/code/web/sites/default"
+echo "stale" > "$PROJECT_PATH/.drupal-local-installer/update-snapshot/code/web/sites/default/default.services.yml"
+chmod 555 "$PROJECT_PATH/.drupal-local-installer/update-snapshot/code/web/sites/default"
+
 if output="$(printf '1\nomega\n' | UPDB_FAILS=1 INSTALL_FAILS=1 run_update_project omega)"; then
     fail "Failed update reported as success"
 elif [[ "$output" == *"Copying the current code (for an offline restore) ... OK"* &&
@@ -568,7 +573,7 @@ elif [[ "$output" == *"Copying the current code (for an offline restore) ... OK"
      [[ "$(cat "$PROJECT_PATH/web/sites/default/default.settings.php")" == "<?php // old defaults" ]] &&
      [[ "$(stat -c '%a' "$PROJECT_PATH/web/sites/default")" == "555" ]] &&
      ! grep -q "composer install" "$CALLS_FILE"; then
-    pass "Offline restore: code, new modules and scaffold files back without the network; copy removed"
+    pass "Offline restore (stale read-only copy replaced): code, modules, scaffold files back offline; copy removed"
 else
     fail "offline restore: $output / $(cat "$CALLS_FILE")"
 fi

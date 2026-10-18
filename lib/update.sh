@@ -560,7 +560,9 @@ create_code_snapshot() {
 
     printf 'Copying the current code (for an offline restore) ... '
 
-    if run_as_project_user "$PROJECT_USER" rm -rf -- "$project/.drupal-local-installer/update-snapshot" &&
+    # A copy left behind by an interrupted or older run may contain
+    # read-only folders: make them writable before removing it.
+    if remove_snapshot_folder "$project/.drupal-local-installer/update-snapshot" &&
        run_as_project_user "$PROJECT_USER" mkdir -p -- "$project/.drupal-local-installer/update-snapshot/code" &&
        printf '%s\n' "${dirs[@]}" | run_as_project_user "$PROJECT_USER" tee "$project/.drupal-local-installer/update-snapshot/dirs.list" > /dev/null &&
        copy_tree "$project" "$project/.drupal-local-installer/update-snapshot/code" "${dirs[@]}" "${files[@]}"; then
@@ -568,7 +570,7 @@ create_code_snapshot() {
         echo "OK"
     else
         echo "FAILED"
-        run_as_project_user "$PROJECT_USER" rm -rf -- "$project/.drupal-local-installer/update-snapshot" 2>/dev/null
+        remove_snapshot_folder "$project/.drupal-local-installer/update-snapshot" 2>/dev/null
         echo "[WARNING] No offline copy of the code; restoring would need the network."
     fi
 }
@@ -586,10 +588,20 @@ restore_code_snapshot() {
     copy_tree "$UPDATE_SNAPSHOT_DIR/code" "$RECORD_PROJECT_PATH" .
 }
 
+# Removes a snapshot folder, also when it holds read-only folders.
+remove_snapshot_folder() {
+    local folder="$1"
+
+    [[ "$folder" == */.drupal-local-installer/update-snapshot ]] || return 1
+    [[ -e "$folder" ]] || return 0
+
+    run_as_project_user "$PROJECT_USER" chmod -R u+w -- "$folder" 2>/dev/null
+    run_as_project_user "$PROJECT_USER" rm -rf -- "$folder"
+}
+
 remove_code_snapshot() {
     [[ -n "$UPDATE_SNAPSHOT_DIR" ]] || return 0
-    run_as_project_user "$PROJECT_USER" chmod -R u+w -- "$UPDATE_SNAPSHOT_DIR" 2>/dev/null
-    run_as_project_user "$PROJECT_USER" rm -rf -- "$UPDATE_SNAPSHOT_DIR"
+    remove_snapshot_folder "$UPDATE_SNAPSHOT_DIR"
     UPDATE_SNAPSHOT_DIR=""
 }
 
