@@ -132,6 +132,14 @@ case "${args[0]}" in
     update)
         target=""
         for a in "${args[@]}"; do [[ "$a" == drupal/core*:* ]] && target="${a##*:}"; done
+        # BLOCK_ADVISORIES=1: Composer 2.9+ refuses a package with advisories
+        # unless --no-security-blocking is given.
+        if [[ "${BLOCK_ADVISORIES:-0}" == "1" && " ${args[*]} " != *" --no-security-blocking "* ]]; then
+            echo "Your requirements could not be resolved to an installable set of packages."
+            echo "  Problem 1"
+            echo "    - drupal/core-recommended $target requires guzzlehttp/guzzle ~7.9.3 -> found guzzlehttp/guzzle[7.9.3] but these were not loaded, because they are affected by security advisories (\"PKSA-gcrk-3vtt-1r14\", \"PKSA-cnw1-2ytm-cgr8\"). Go to https://packagist.org/security-advisories/ to find advisory details."
+            exit 2
+        fi
         if [[ " ${args[*]} " == *" --dry-run "* ]]; then
             if [[ "${DRYRUN_FAILS:-0}" == "1" ]]; then
                 echo "Your requirements could not be resolved to an installable set of packages."
@@ -700,6 +708,40 @@ if output="$(printf '1\n' | AUDIT_FAILS=1 REMOVE_DRY_RUN=1 run_update_project pi
     pass "Plan says when the security check could not run"
 else
     fail "audit failed: $output"
+fi
+
+# Test 15: Composer blocks the target because of advisories: explained;
+# the user may accept them for this update only.
+
+make_project rho
+
+if output="$(printf '1\n' | BLOCK_ADVISORIES=1 REMOVE_DRY_RUN=1 run_update_project rho)" &&
+   [[ "$output" == *"[SECURITY] Drupal 11.3.12 needs package versions that have published"* &&
+      "$output" == *"- guzzlehttp/guzzle 7.9.3: PKSA-gcrk-3vtt-1r14, PKSA-cnw1-2ytm-cgr8"* &&
+      "$output" == *"Advisories:   accepted for this update"* && "$output" == *"[DRY RUN] Nothing was changed."* ]]; then
+    pass "Advisories block the target: explained in plain words; dry run shows the plan"
+else
+    fail "advisories dry run: $output"
+fi
+
+if output="$(printf '1\nno\n' | BLOCK_ADVISORIES=1 run_update_project rho)"; then
+    fail "Advisories accepted without 'accept'"
+elif [[ "$output" == *"Update cancelled; nothing was changed."* && "$(version_of rho)" == "11.3.10" ]] &&
+     ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "Advisories not accepted: nothing changed, no sudo"
+else
+    fail "advisories declined: $output"
+fi
+
+: > "$CALLS_FILE"
+
+if output="$(printf '1\naccept\nrho\n' | BLOCK_ADVISORIES=1 run_update_project rho)" &&
+   [[ "$output" == *"[DONE] rho: Drupal 11.3.10 -> 11.3.12"* && "$output" == *"[NOTE] Installed with accepted security advisories"* ]] &&
+   grep -q "composer update .* --with-all-dependencies --no-security-blocking$" "$CALLS_FILE" &&
+   [[ "$(read_project_field "$(record_of rho)" accepted_advisories)" == *"11.3.12: guzzlehttp/guzzle 7.9.3: PKSA-gcrk-3vtt-1r14"* ]]; then
+    pass "Advisories accepted: update installed for this run only, noted in the registry"
+else
+    fail "advisories accepted: $output / $(cat "$CALLS_FILE")"
 fi
 
 echo "[SUCCESS] Update tests passed."

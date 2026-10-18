@@ -72,7 +72,7 @@ get_php_version_status() {
 for version in 8.2 8.3 8.4 8.5; do
     cat > "$stub_bin/php$version" <<'STUB'
 #!/usr/bin/env bash
-[[ "$1" == "-r" || "$1" == "-n" ]] && exec "$REAL_PHP" "$@"
+[[ "$1" == -* ]] && exec "$REAL_PHP" "$@"
 exec "$@"
 STUB
     cat > "$stub_bin/php-fpm$version" <<'STUB'
@@ -179,6 +179,17 @@ write_vendor_drush() {
 php_used="$(basename "$(readlink -f "$(command -v php)")")"
 echo "drush($php_used) $*" >> "$CALLS_FILE"
 [[ -n "${DRUSH_FAILS_WITH:-}" && "$php_used" == "php${DRUSH_FAILS_WITH}" ]] && exit 1
+# DRUSH_FAILS_AFTER_SWITCH=<php>: fails only through the ./drush launcher
+# (which sets DRUSH_OPTIONS_URI), i.e. after the change, not in the trial.
+[[ -n "${DRUSH_FAILS_AFTER_SWITCH:-}" && -n "${DRUSH_OPTIONS_URI:-}" && "$php_used" == "php${DRUSH_FAILS_AFTER_SWITCH}" ]] && exit 1
+if [[ "$1" == "watchdog:show" ]]; then
+    if [[ "${WATCHDOG_NEW:-0}" == "1" && "$php_used" != "php8.3" ]]; then
+        echo '{"6":{"wid":"6","type":"php","message":"Deprecated function: old_call() in custom_module_page()"},"5":{"wid":"5","type":"php","message":"old error"}}'
+    else
+        echo '{"5":{"wid":"5","type":"php","message":"old error"}}'
+    fi
+    exit 0
+fi
 [[ "$1" == "status" ]] && echo "Successful"
 [[ "$1" == "--version" ]] && echo "Drush Commandline Tool 13.6.0"
 exit 0
@@ -245,7 +256,8 @@ if output="$(REMOVE_DRY_RUN=1 run_change_php alpha 8.4 < /dev/null)" &&
       "$output" == *"install php8.4-fpm php8.4-cli"*"php8.4-gd"* &&
       "$output" == *"[WARNING] Not available for PHP 8.4: php8.4-redis"* &&
       "$output" != *"php8.4-dev"* &&
-      "$output" == *"Composer:     checked right after PHP 8.4 is installed"* &&
+      "$output" == *"Checks:       run right after PHP 8.4 is installed"* &&
+      "$output" == *"Check it yourself (the installer only opened the front page):"* &&
       "$output" == *"fastcgi_pass unix:/run/php/php8.3-fpm-alpha.sock -> unix:/run/php/php8.4-fpm-alpha.sock (1 line(s))"* &&
       "$output" == *"Launchers:    ./drush, ./composer and ./start are rewritten for PHP 8.4"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
@@ -278,7 +290,8 @@ touch "$STATE_DIR/php8.4"
 
 if output="$(PLATFORM_FAILS=1 run_change_php alpha 8.4 < /dev/null)"; then
     fail "Package that refuses PHP 8.4 accepted"
-elif [[ "$output" == *"The installed packages do not accept PHP 8.4"* &&
+elif [[ "$output" == *"[FAILED]  Composer: the installed packages do not accept PHP 8.4"* &&
+        "$output" == *"[BLOCKED] The checks above show that the site would not work with PHP 8.4."* &&
         "$output" == *"php 8.4.1: failed (old/package requires php <8.4)"* ]] &&
      ! grep -q "sudo-asked" "$CALLS_FILE"; then
     pass "Composer check-platform-reqs failure: shown, stopped before sudo"
@@ -370,7 +383,7 @@ check_restored() {
 
 make_installer_project beta
 
-if output="$(printf 'beta\n' | DRUSH_FAILS_WITH=8.4 run_change_php beta 8.4)"; then
+if output="$(printf 'beta\n' | DRUSH_FAILS_AFTER_SWITCH=8.4 run_change_php beta 8.4)"; then
     fail "Site that fails with PHP 8.4 reported as changed"
 elif [[ "$output" == *"Drush cannot bootstrap the site with PHP 8.4"* &&
         "$output" == *"[OK] The project runs with PHP 8.3 again"* ]] && check_restored beta; then
@@ -586,5 +599,102 @@ fi
 
 kill "$lock_holder" 2>/dev/null || true
 wait "$lock_holder" 2>/dev/null || true
+
+# Test 12: Compatibility checks with the new PHP, before anything changes.
+
+touch "$STATE_DIR/php8.4"
+make_installer_project nu
+
+if output="$(REMOVE_DRY_RUN=1 run_change_php nu 8.4 < /dev/null)" &&
+   [[ "$output" == *"Compatibility checks with PHP 8.4 (they change nothing):"* &&
+      "$output" == *"[OK]      Drupal 11.3.10 supports PHP 8.4"* &&
+      "$output" == *"[OK]      Composer: the installed packages accept PHP 8.4"* &&
+      "$output" == *"[OK]      No custom modules, themes or profiles"* &&
+      "$output" == *"[OK]      Trial run: Drush bootstraps the site with PHP 8.4"* &&
+      "$output" == *"Checks:       passed (see above)"* ]] &&
+   grep -q "drush(php8.4) status --field=bootstrap" "$CALLS_FILE"; then
+    pass "Dry run: compatibility checks listed, including a trial run with PHP 8.4"
+else
+    fail "checks dry run: $output"
+fi
+
+mkdir -p "$PROJECT_PATH/web/modules/custom/shop/src"
+printf '<?php\nfunction shop_ok() { return 1; }\n' > "$PROJECT_PATH/web/modules/custom/shop/shop.module"
+printf '<?php\nfunction broken( {\n' > "$PROJECT_PATH/web/modules/custom/shop/src/Broken.php"
+: > "$CALLS_FILE"
+
+if output="$(printf 'nu\n' | run_change_php nu 8.4)"; then
+    fail "Syntax error in custom code accepted"
+elif [[ "$output" == *"[FAILED]  Syntax errors in the custom code with PHP 8.4:"* &&
+        "$output" == *"web/modules/custom/shop/src/Broken.php"* ]] &&
+     ! grep -q "sudo-asked" "$CALLS_FILE" && cmp -s "$(site_of nu)" "$work_dir/nu.nginx.orig"; then
+    pass "Syntax error in custom code: shown with the file, blocked before sudo"
+else
+    fail "lint: $output"
+fi
+
+rm -f "$PROJECT_PATH/web/modules/custom/shop/src/Broken.php"
+
+if output="$(DRUSH_FAILS_WITH=8.4 run_change_php nu 8.4 < /dev/null)"; then
+    fail "Failed trial run accepted"
+elif [[ "$output" == *"[FAILED]  Trial run: Drush cannot bootstrap the site with PHP 8.4."* ]] &&
+     cmp -s "$(site_of nu)" "$work_dir/nu.nginx.orig"; then
+    pass "Trial run with PHP 8.4 fails: blocked, nothing changed"
+else
+    fail "trial: $output"
+fi
+
+# PHPCompatibility: not installed (offer declined), then a fake checker.
+if output="$(REMOVE_DRY_RUN=1 PHPCOMPAT_TOOL_DIR="$work_dir/no-tool" run_change_php nu 8.4 < /dev/null)" &&
+   [[ "$output" == *"[OK]      Syntax of the custom code with PHP 8.4: 1 file(s)"* &&
+      "$output" == *"The PHPCompatibility checker scans the custom code"* && "$output" == *"[SKIPPED] PHPCompatibility scan"* ]]; then
+    pass "PHPCompatibility offered when missing; skipped when declined"
+else
+    fail "phpcompat offer: $output"
+fi
+
+tool="$work_dir/tool"
+mkdir -p "$tool/vendor/bin"
+cat > "$tool/vendor/bin/phpcs" <<'STUB'
+#!/usr/bin/env bash
+dir="${*: -1}"
+echo "{\"totals\":{\"errors\":1,\"warnings\":1},\"files\":{\"$dir/shop/shop.module\":{\"messages\":[{\"line\":2,\"type\":\"ERROR\",\"message\":\"Function each() is removed since PHP 8.0\"},{\"line\":5,\"type\":\"WARNING\",\"message\":\"Passing null to parameter is deprecated since PHP 8.1\"}]}}}"
+exit 2
+STUB
+chmod +x "$tool/vendor/bin/phpcs"
+
+if output="$(REMOVE_DRY_RUN=1 PHPCOMPAT_TOOL_DIR="$tool" run_change_php nu 8.4 < /dev/null)" &&
+   [[ "$output" == *"[WARNING] PHPCompatibility: 1 error(s), 1 warning(s) in the custom code:"* &&
+      "$output" == *"web/modules/custom/shop/shop.module:2 ERROR: Function each() is removed since PHP 8.0"* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]]; then
+    pass "PHPCompatibility findings shown in the dry run"
+else
+    fail "phpcompat dry run: $output"
+fi
+
+: > "$CALLS_FILE"
+
+if output="$(printf 'n\n' | PHPCOMPAT_TOOL_DIR="$tool" run_change_php nu 8.4)"; then
+    fail "PHPCompatibility errors ignored without asking"
+elif [[ "$output" == *"Cancelled; nothing was changed."* ]] &&
+     ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "PHPCompatibility errors: the user decides; 'n' changes nothing"
+else
+    fail "phpcompat confirm: $output"
+fi
+
+# Test 13: After the change, errors Drupal logged with the new PHP are
+# reported, and the manual checks are listed.
+
+if output="$(printf 'y\nnu\n' | PHPCOMPAT_TOOL_DIR="$tool" WATCHDOG_NEW=1 run_change_php nu 8.4)" &&
+   [[ "$output" == *"[DONE] nu: PHP 8.3 -> 8.4"* &&
+      "$output" == *"[WARNING] Drupal logged new errors with PHP 8.4:"* &&
+      "$output" == *"php: Deprecated function: old_call() in custom_module_page()"* &&
+      "$output" != *"old error"* &&
+      "$output" == *"back to PHP 8.3 if something breaks: ./install.sh --php nu 8.3"* ]]; then
+    pass "After the change: new log errors reported (old ones not), manual checks listed"
+else
+    fail "after checks: $output"
+fi
 
 echo "[SUCCESS] PHP change tests passed."

@@ -349,6 +349,21 @@ Before anything changes, the installer checks that:
   changes. `composer.json` itself is never edited: the version is fixed
   with `composer update --with`.
 
+**Security advisories.** Composer 2.9 and newer refuses package versions
+that have published security advisories. Then a target can need, for
+example, a `guzzlehttp/guzzle` version with known problems (an old patch
+release of an unsupported minor). The installer explains this in plain
+words and lists the packages and advisories. Usually the other target
+(a newer minor) is the better choice. You may still install it: type
+`accept`, and the advisories are accepted **for this update only**
+(`composer update --no-security-blocking`); `composer.json` is not
+changed, and the registry notes what was accepted (`accepted_advisories`).
+`--dry-run` shows the plan as it would be with them accepted.
+
+The choice between a patch and a minor update says what each one is: the
+patch stays on the same minor line; Drupal gives security fixes only to
+recent minors.
+
 The update then asks for the project name and runs: backup → maintenance
 mode → `composer update` → `drush updatedb` → `drush cache:rebuild` →
 maintenance mode off → checks (version, Drush, HTTP answer, new errors in
@@ -441,16 +456,45 @@ same step when the PHP version you ask for is not available.
 ./install.sh --php mysite 8.4
 ```
 
-Checks first (nothing changes): the Drupal release supports that PHP
-(`config/compatibility.conf`), the site works now (Drush; a site that is
-broken *because of* its PHP, e.g. Drupal 10.5 on PHP 8.5 or a PHP that is
-no longer installed, may be changed: that is the fix), the Nginx site
-uses a `fastcgi_pass` line the installer can switch, and Composer's
-`check-platform-reqs` says the installed packages accept the new PHP.
+First, nothing changes while the installer checks that the site works now
+(Drush; a site that is broken *because of* its PHP, e.g. Drupal 10.5 on
+PHP 8.5 or a PHP that is no longer installed, may be changed: that is the
+fix) and that the Nginx site uses a `fastcgi_pass` line it can switch.
 Packages of the new PHP are planned: FPM, CLI, the extensions Drupal
 needs, and the extension packages the old PHP has (`php8.3-redis` →
 `php8.4-redis`); one that does not exist for the new PHP is shown as a
 warning.
+
+### Compatibility checks (also in `--dry-run`)
+
+These run with the **new** PHP and change nothing. When the new PHP is
+not installed yet, they run right after its packages are installed, and
+the change stops there if needed (the packages stay).
+
+| Check | What it finds | Result |
+|---|---|---|
+| Compatibility table | Drupal release that does not support that PHP | stops |
+| `composer check-platform-reqs` | Core, contrib and libraries whose `composer.json` refuses that PHP or needs a missing extension | stops |
+| `php -l` on the custom code (`web/modules/custom`, `web/themes/custom`, `web/profiles/custom`) | Syntax the new PHP does not accept | stops |
+| Trial run: Drush bootstraps the site with the new PHP (CLI) | Fatal errors while Drupal loads every enabled module | stops |
+| PHPCompatibility scan of the custom code | Functions and syntax the new PHP removed or deprecated | you decide |
+
+PHPCompatibility is installed once, after you agree, in
+`~/.local/share/drupal-local-installer/tools/phpcompatibility` (outside
+every project; no project's `composer.json` changes). Version 10, the
+first with rules for PHP 8.x, is still a pre-release, so its findings are
+advice: with errors you are asked whether to go on.
+
+**What no check can promise.** The checks see the code that is loaded and
+what packages declare. A custom module can still call something the new
+PHP removed on a page that is only opened later, or contrib can declare
+a loose `php` requirement. So after the change the installer checks Drush
+and the front page with the new PHP, reports **new errors in the Drupal
+log** (dblog), and lists what to try yourself: log in, open the pages your
+modules provide, submit a form, `./drush cron`,
+`./drush watchdog:show --severity=Error`. Going back is one command,
+`./install.sh --php mysite <old version>`, because the old PHP stays
+installed and code and database are never changed.
 
 Then, after the project name is typed: packages (apt shows them and asks;
 nothing is ever removed) → a new PHP-FPM pool next to the old one

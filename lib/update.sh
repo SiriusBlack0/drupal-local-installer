@@ -30,6 +30,10 @@ UPDATE_TARGET=""
 UPDATE_WEB_ROOT=""
 UPDATE_SNAPSHOT_DIR=""
 UPDATE_SITES_DEFAULT_MODE=""
+# Extra Composer options for this update (--no-security-blocking after the
+# user accepted the advisories that block it).
+UPDATE_EXTRA_ARGS=()
+UPDATE_ACCEPTED_ADVISORIES=""
 
 get_composer_path() {
     command -v composer
@@ -680,6 +684,43 @@ update_record_version() {
     set_project_field "$1" drupal_version "$2"
 }
 
+# Composer 2.9+ refuses packages with published security advisories. The
+# lines of its message that name the blocked packages, shortened.
+get_blocking_advisories() {
+    grep -oE 'found [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\[[^]]*\] but these were not loaded, because they are affected by security advisories \([^)]*\)' <<< "$1" |
+        sed -E 's/^found ([^[]+)\[([^]]*)\].*advisories \((.*)\)$/\1 \2: \3/' | tr -d '"' | sort -u
+}
+
+# Explains the block in plain words. In a real run the user may accept
+# the advisories for this one update (typed "accept"); returns 0 then.
+explain_blocking_advisories() {
+    local blocked="$1"
+    local answer
+
+    echo
+    echo "[SECURITY] Drupal $UPDATE_TARGET needs package versions that have published"
+    echo "           security advisories, so Composer refuses to install them:"
+    printf '%s\n' "$blocked" | sed 's/^/             - /'
+    echo "           Details: https://packagist.org/security-advisories/"
+    echo
+    echo "           Usually another target is the better choice (a newer minor"
+    echo "           brings fixed versions). You may still install this one: the"
+    echo "           advisories are then accepted for this update only; composer.json"
+    echo "           is not changed and the registry notes what was accepted."
+
+    if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
+        echo "           (Dry run: the plan below shows the update with them accepted.)"
+        return 0
+    fi
+
+    echo
+    if ! read -r -p "Type 'accept' to install it with these advisories, anything else to stop: " answer ||
+       [[ "$answer" != "accept" ]]; then
+        echo "Update cancelled; nothing was changed."
+        return 1
+    fi
+}
+
 confirm_update() {
     local machine_name="$1"
     local answer
@@ -712,8 +753,8 @@ choose_update_target() {
 
     while true; do
         echo
-        echo "1) Patch update to $patch (recommended: fixes and security)"
-        echo "2) Minor update to $minor"
+        echo "1) Patch update to $patch (stays on Drupal $(echo "$patch" | cut -d. -f1,2): fixes of that line)"
+        echo "2) Minor update to $minor (newer line; Drupal gives security fixes only to recent minors)"
 
         if ! read -r -p "Select [1-2]: " answer; then
             echo
@@ -743,6 +784,7 @@ run_update_project() {
     local errors_after=""
     local new_errors
     local security_status
+    local blocked
 
     machine_name="$(get_project_machine_name "$1")"
 
@@ -859,12 +901,28 @@ run_update_project() {
         with_args+=(--with "$package:$UPDATE_TARGET")
     done
 
+    UPDATE_EXTRA_ARGS=()
+    UPDATE_ACCEPTED_ADVISORIES=""
+
     if ! dry_output="$(run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
             update "${UPDATE_WITH_PACKAGES[@]}" "${with_args[@]}" --with-all-dependencies --dry-run 2>&1)"; then
-        echo "[BLOCKED] Composer cannot update to $UPDATE_TARGET with the current composer.json:"
-        printf '%s\n' "$dry_output" | tail -n 12 | sed 's/^/  /'
-        echo "  Nothing was changed."
-        return 1
+        blocked="$(get_blocking_advisories "$dry_output")"
+
+        if [[ -n "$blocked" ]]; then
+            explain_blocking_advisories "$blocked" || return 1
+            UPDATE_EXTRA_ARGS=(--no-security-blocking)
+            UPDATE_ACCEPTED_ADVISORIES="$(printf '%s\n' "$blocked" | paste -sd ';' -)"
+            dry_output="$(run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+                update "${UPDATE_WITH_PACKAGES[@]}" "${with_args[@]}" --with-all-dependencies --dry-run \
+                "${UPDATE_EXTRA_ARGS[@]}" 2>&1)" || blocked=""
+        fi
+
+        if [[ -z "$blocked" ]]; then
+            echo "[BLOCKED] Composer cannot update to $UPDATE_TARGET with the current composer.json:"
+            printf '%s\n' "$dry_output" | tail -n 12 | sed 's/^/  /'
+            echo "  Nothing was changed."
+            return 1
+        fi
     fi
 
     log_line "Dry run for $UPDATE_TARGET:"$'\n'"$dry_output"
@@ -885,6 +943,9 @@ run_update_project() {
     esac
     echo "PHP $RECORD_PHP_VERSION:      supported by $(echo "$UPDATE_TARGET" | cut -d. -f1,2)"
     echo "Packages:     $(describe_lock_operations "$dry_output")"
+    if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
+        echo "Advisories:   accepted for this update (see [SECURITY] above)"
+    fi
     echo "composer.json is not changed (the version is fixed with --with)."
     echo
     echo "Steps: backup -> maintenance mode -> composer -> drush updatedb -> cache -> checks"
@@ -931,7 +992,7 @@ perform_update() {
 
     if ! run_logged_retrying_network "Updating Drupal core to $UPDATE_TARGET" - \
             run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
-            update "${UPDATE_WITH_PACKAGES[@]}" "${with_args[@]}" --with-all-dependencies; then
+            update "${UPDATE_WITH_PACKAGES[@]}" "${with_args[@]}" --with-all-dependencies "${UPDATE_EXTRA_ARGS[@]}"; then
         rollback_update
         return 1
     fi
@@ -964,6 +1025,12 @@ perform_update() {
     fi
 
     update_record_version "$record" "$UPDATE_TARGET" || true
+
+    if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
+        set_project_field "$record" accepted_advisories "$(date +%F) $UPDATE_TARGET: $UPDATE_ACCEPTED_ADVISORIES" || true
+        echo "[NOTE] Installed with accepted security advisories; the registry notes them."
+    fi
+
     remove_code_snapshot
     restore_sites_default_mode
 
