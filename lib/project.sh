@@ -87,6 +87,52 @@ remove_project_directory() {
     sudo rm -rf -- "$project_path"
 }
 
+# True when the log lines written since line $1 show that Composer
+# failed because of the network (not because of the project).
+composer_failed_on_network() {
+    local from_line="$1"
+
+    [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] || return 1
+
+    tail -n "+$((from_line + 1))" "$LOG_FILE" |
+        grep -qiE 'curl error|failed to download|could not resolve host|failed to connect|connection timed out|operation timed out|connection reset|network is unreachable'
+}
+
+# run_logged, and once more when the first attempt failed because of the
+# network: a short network problem should not undo a whole run.
+# $2 names a function that cleans up before the second attempt ("-" for
+# none).
+run_logged_retrying_network() {
+    local description="$1"
+    local cleanup="$2"
+    shift 2
+    local from_line=0
+
+    [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] && from_line="$(wc -l < "$LOG_FILE")"
+
+    if run_logged "$description" "$@"; then
+        return 0
+    fi
+
+    composer_failed_on_network "$from_line" || return 1
+
+    echo "[RETRY] That was a network problem; trying once more in ${COMPOSER_RETRY_DELAY:-10} seconds..."
+    sleep "${COMPOSER_RETRY_DELAY:-10}"
+
+    if [[ "$cleanup" != "-" ]] && ! "$cleanup"; then
+        return 1
+    fi
+
+    run_logged "$description (second attempt)" "$@"
+}
+
+# create-project needs an empty directory: a failed download may have
+# left files in the project directory this run created.
+empty_new_project_directory() {
+    is_managed_project_path "$NEW_PROJECT_PATH" || return 1
+    run_as_project_user "$NEW_PROJECT_USER" find "$NEW_PROJECT_PATH" -mindepth 1 -delete
+}
+
 create_drupal_project() {
     local drupal_version="$1"
     local project_path="$2"
@@ -114,7 +160,11 @@ create_drupal_project() {
         return 1
     fi
 
-    run_logged "Downloading Drupal $drupal_version (PHP $php_version)" \
+    NEW_PROJECT_PATH="$project_path"
+    NEW_PROJECT_USER="$run_user"
+
+    run_logged_retrying_network "Downloading Drupal $drupal_version (PHP $php_version)" \
+        empty_new_project_directory \
         run_as_project_user "$run_user" \
         "php${php_version}" "$composer_path" create-project \
         --no-interaction \
@@ -135,7 +185,7 @@ install_drush() {
         return 1
     fi
 
-    run_logged "Adding Drush" \
+    run_logged_retrying_network "Adding Drush" - \
         run_as_project_user "$run_user" \
         "php${php_version}" "$composer_path" require \
         --no-interaction \

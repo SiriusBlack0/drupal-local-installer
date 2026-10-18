@@ -150,4 +150,25 @@ done
 
 echo "[PASS] Database driver extension planned for each engine"
 
+# Test 11: curl is planned when it is missing (the HTTP checks need it).
+
+(
+    is_composer_installed() { return 0; }
+    is_nginx_installed() { return 0; }
+    is_php_fpm_installed() { return 0; }
+    is_php_cli_installed() { return 0; }
+    PHP_VERSION="8.5"
+
+    empty_bin="$(mktemp -d)"
+    trap 'rm -rf "$empty_bin"' EXIT
+    INSTALL_PACKAGES=()
+    PATH="$empty_bin" plan_required_packages > /dev/null
+    check "curl planned when missing" "curl" "${INSTALL_PACKAGES[*]}"
+
+    INSTALL_PACKAGES=()
+    ln -s "$(type -P true)" "$empty_bin/curl"
+    PATH="$empty_bin" plan_required_packages > /dev/null
+    check "curl not planned when installed" "" "${INSTALL_PACKAGES[*]}"
+) || exit 1
+
 echo "[SUCCESS] Preflight tests passed."

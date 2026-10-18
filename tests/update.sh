@@ -24,6 +24,8 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 export XDG_DATA_HOME="$work_dir/data"
+export XDG_STATE_HOME="$work_dir/state"
+export COMPOSER_RETRY_DELAY=0
 export DRUPAL_PROJECTS_DIR="$work_dir/www"
 etc_dir="$work_dir/etc"
 stub_bin="$work_dir/bin"
@@ -140,11 +142,32 @@ case "${args[0]}" in
             echo "  - Upgrading symfony/console (v7.3.0 => v7.3.4)"
             exit 0
         fi
+        # NET_FAIL_ONCE: the first real update fails like a dropped
+        # connection (the file marks that it happened).
+        if [[ -n "${NET_FAIL_ONCE:-}" && ! -e "$NET_FAIL_ONCE" ]]; then
+            touch "$NET_FAIL_ONCE"
+            echo "curl error 7 while downloading https://api.github.com/x: Failed to connect to api.github.com port 443"
+            exit 1
+        fi
         echo "core=$target" > "$dir/composer.lock"
         [[ "${UPDATE_FAILS:-0}" == "1" ]] && exit 1
         set_version "$target"
+        # Like the real update: new code and changed scaffold files.
+        if [[ -d "$dir/web/modules/contrib" ]]; then
+            mkdir -p "$dir/web/modules/contrib/new_module"
+            echo "<?php // new" > "$dir/web/index.php"
+        fi
+        # UPDATE_INTERRUPT: Ctrl+C arrives while Composer runs.
+        if [[ "${UPDATE_INTERRUPT:-0}" == "1" ]]; then
+            kill -INT "$PPID"
+            exit 130
+        fi
         ;;
     install)
+        if [[ "${INSTALL_FAILS:-0}" == "1" ]]; then
+            echo "curl error 6: Could not resolve host: repo.packagist.org"
+            exit 1
+        fi
         set_version "$(grep -oP 'core=\K.*' "$dir/composer.lock")"
         ;;
 esac
@@ -492,5 +515,97 @@ elif [[ "$output" == *"[OK] Database restored"* ]] &&
 else
     fail "postgresql: $output / $(cat "$CALLS_FILE")"
 fi
+
+# Test 10: Offline restore: the code comes back from the copy made
+# before Composer, even when "composer install" (network) would fail.
+
+make_project omega
+cat > "$PROJECT_PATH/composer.json" <<'JSON'
+{
+    "require": { "drupal/core-recommended": "^11.3" },
+    "extra": {
+        "installer-paths": {
+            "web/core": ["type:drupal-core"],
+            "web/modules/contrib/{$name}": ["type:drupal-module"]
+        }
+    }
+}
+JSON
+mkdir -p "$PROJECT_PATH/vendor/composer" "$PROJECT_PATH/web/modules/contrib/old_module"
+echo "<?php // autoload" > "$PROJECT_PATH/vendor/autoload.php"
+echo "<?php // old" > "$PROJECT_PATH/web/index.php"
+: > "$CALLS_FILE"
+
+if output="$(printf '1\nomega\n' | UPDB_FAILS=1 INSTALL_FAILS=1 run_update_project omega)"; then
+    fail "Failed update reported as success"
+elif [[ "$output" == *"Copying the current code (for an offline restore) ... OK"* &&
+        "$output" == *"[OK] Code restored (from the offline copy)"* &&
+        "$output" == *"[OK] The project is back to its previous version."* ]] &&
+     [[ "$(version_of omega)" == "11.3.10" && "$(cat "$PROJECT_PATH/web/index.php")" == "<?php // old" ]] &&
+     [[ -d "$PROJECT_PATH/web/modules/contrib/old_module" && ! -e "$PROJECT_PATH/web/modules/contrib/new_module" ]] &&
+     [[ -f "$PROJECT_PATH/vendor/autoload.php" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]] &&
+     ! grep -q "composer install" "$CALLS_FILE"; then
+    pass "Offline restore: code, new modules and scaffold files back without the network; copy removed"
+else
+    fail "offline restore: $output / $(cat "$CALLS_FILE")"
+fi
+
+if output="$(printf '1\nomega\n' | run_update_project omega)" &&
+   [[ "$(version_of omega)" == "11.3.12" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]]; then
+    pass "Successful update removes the offline copy"
+else
+    fail "snapshot cleanup: $output"
+fi
+
+# Test 11: Ctrl+C while Composer runs: the project is restored, exit 130.
+
+make_project kappa
+run_status=0
+output="$(printf '1\nkappa\n' | UPDATE_INTERRUPT=1 run_update_project kappa)" || run_status=$?
+
+if [[ "$run_status" -eq 130 && "$output" == *"[INTERRUPTED] Stopping the update and restoring the project"* &&
+      "$output" == *"[OK] The project is back to its previous version."* ]] &&
+   [[ "$(version_of kappa)" == "11.3.10" ]] &&
+   grep -q "drush state:set system.maintenance_mode 0" "$CALLS_FILE"; then
+    pass "Ctrl+C during the update: restored, maintenance off, exit code 130"
+else
+    fail "interrupt: $run_status / $output"
+fi
+
+# Test 12: A network error during "composer update" is retried once.
+
+make_project lambda
+LOG_FILE="$work_dir/lambda.log"
+: > "$LOG_FILE"
+
+if output="$(printf '1\nlambda\n' | NET_FAIL_ONCE="$work_dir/net-failed" run_update_project lambda)" &&
+   [[ "$output" == *"[RETRY] That was a network problem"* && "$output" == *"[DONE] lambda"* ]] &&
+   [[ "$(version_of lambda)" == "11.3.12" ]]; then
+    pass "Network error during composer update: retried once, then updated"
+else
+    fail "network retry: $output"
+fi
+
+LOG_FILE=""
+
+# Test 13: Only one run at a time per project.
+
+make_project mu
+lock_file="$XDG_STATE_HOME/drupal-local-installer/locks/mu.lock"
+mkdir -p "$(dirname "$lock_file")"
+flock "$lock_file" sleep 5 &
+lock_holder=$!
+sleep 0.5
+
+if output="$(run_update_project mu < /dev/null)"; then
+    fail "Second run on a locked project accepted"
+elif [[ "$output" == *"Another run of the installer is working on 'mu' right now"* ]]; then
+    pass "A project another run is working on is refused"
+else
+    fail "lock: $output"
+fi
+
+kill "$lock_holder" 2>/dev/null || true
+wait "$lock_holder" 2>/dev/null || true
 
 echo "[SUCCESS] Update tests passed."

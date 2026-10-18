@@ -277,6 +277,36 @@ read_project_field() {
     return 1
 }
 
+# One run at a time per project: --update, --php and --remove take this
+# lock, so a second run on the same project stops instead of changing it
+# at the same time. The lock is released when the process ends, even
+# after Ctrl+C or a crash (flock).
+acquire_project_lock() {
+    local machine_name="$1"
+    local lock_dir
+    local lock_fd
+
+    [[ "$machine_name" =~ ^[a-z0-9_]+$ ]] || return 1
+    command -v flock > /dev/null || return 0
+
+    # Already held by this process (or the shell it was started from).
+    [[ " ${PROJECT_LOCKS_HELD:-} " == *" $machine_name "* ]] && return 0
+
+    lock_dir="$(dirname "$(get_log_directory)")/locks"
+    mkdir -p "$lock_dir" 2>/dev/null && chmod 700 "$lock_dir" 2>/dev/null || return 0
+
+    # The descriptor stays open until the process ends.
+    exec {lock_fd}>> "$lock_dir/$machine_name.lock" || return 0
+
+    if ! flock -n "$lock_fd"; then
+        echo "[BLOCKED] Another run of the installer is working on '$machine_name' right now."
+        echo "          Wait for it to finish, then try again."
+        return 1
+    fi
+
+    PROJECT_LOCKS_HELD="${PROJECT_LOCKS_HELD:-} $machine_name"
+}
+
 # Changes one field of a record (atomic: temporary file, then rename).
 # Values with a newline are refused.
 set_project_field() {

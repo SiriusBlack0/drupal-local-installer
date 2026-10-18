@@ -557,6 +557,7 @@ run_remove_project() {
         return 1
     fi
 
+    acquire_project_lock "$machine_name" || return 1
     load_project_record "$machine_name" "$record" || return 1
     print_removal_plan "$machine_name" "$record"
 

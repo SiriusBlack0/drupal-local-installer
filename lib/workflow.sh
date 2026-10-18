@@ -94,11 +94,31 @@ setup_web_server() {
     record_created nginx_site
 }
 
+# Ctrl+C (or kill) during the installation: remove what this run
+# created, then stop.
+interrupt_installation() {
+    trap '' INT TERM
+    echo
+    echo "[INTERRUPTED] Stopping the installation."
+    rollback_installation
+    exit 130
+}
+
+run_installation_workflow() {
+    local status=0
+
+    CREATED_RESOURCES=()
+    trap 'interrupt_installation' INT TERM
+    perform_installation_workflow || status=$?
+    trap - INT TERM
+
+    return "$status"
+}
+
 # Order matters: every step that needs sudo runs before Composer,
 # because Composer clears the cached sudo password on start (see
 # install_drupal_codebase). The password is then asked only once.
-run_installation_workflow() {
-    CREATED_RESOURCES=()
+perform_installation_workflow() {
 
     step "Installing required packages"
     prepare_installation_plan

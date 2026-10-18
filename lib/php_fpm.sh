@@ -111,6 +111,7 @@ install_php_fpm_pool() {
     local php_version="$2"
     local run_user="$3"
     local pool_path
+    local temp_dir
     local temp_file
 
     pool_path="$(get_php_fpm_pool_config_path "$machine_name" "$php_version")"
@@ -120,20 +121,23 @@ install_php_fpm_pool() {
         return 1
     fi
 
-    temp_file="$(mktemp -u)"
+    # A private directory (mode 700): nobody else can create, replace or
+    # link the file between writing it and installing it as root.
+    temp_dir="$(mktemp -d)" || return 1
+    temp_file="$temp_dir/pool.conf"
 
     if ! write_php_fpm_pool_config "$machine_name" "$php_version" "$run_user" "$temp_file"; then
-        rm -f "$temp_file"
+        rm -rf "$temp_dir"
         return 1
     fi
 
     if ! sudo install -m 0644 -o root -g root "$temp_file" "$pool_path"; then
-        rm -f "$temp_file"
+        rm -rf "$temp_dir"
         echo "[ERROR] Could not install the PHP-FPM pool."
         return 1
     fi
 
-    rm -f "$temp_file"
+    rm -rf "$temp_dir"
 
     if ! run_logged "Checking PHP-FPM configuration" sudo "php-fpm${php_version}" -t; then
         sudo rm -f -- "$pool_path"

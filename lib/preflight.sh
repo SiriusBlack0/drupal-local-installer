@@ -59,6 +59,18 @@ plan_required_packages() {
         add_install_package "composer"
     fi
 
+    # curl checks that the site answers over HTTP (installation, --update,
+    # --php, ./start). Without it only Drush could be checked.
+    echo
+    echo "Checking curl..."
+
+    if command -v curl > /dev/null 2>&1; then
+        echo "[OK] curl is installed."
+    else
+        echo "[MISSING] curl"
+        add_install_package "curl"
+    fi
+
     echo
     echo "Checking Nginx..."
 

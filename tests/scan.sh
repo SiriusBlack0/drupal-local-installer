@@ -23,6 +23,7 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 export XDG_DATA_HOME="$work_dir/data"
+export XDG_STATE_HOME="$work_dir/state"
 export DRUPAL_PROJECTS_DIR="$work_dir/www"
 export NGINX_SITES_ENABLED_DIR="$work_dir/nginx/sites-enabled"
 export NGINX_SITES_AVAILABLE_DIR="$work_dir/nginx/sites-available"

@@ -16,6 +16,8 @@ correct PHP version.
 - Ubuntu (native, or WSL with or without systemd)
 - A normal user with `sudo` rights. Do **not** run the installer as root.
 - Internet access (APT packages, Composer/Packagist)
+- `curl` (installed by the installer when missing): it checks that a site
+  answers over HTTP after installing, updating or changing PHP
 
 ## Usage
 
@@ -231,6 +233,14 @@ The location follows `XDG_STATE_HOME` if it is set.
   removed again, newest first.
 - If a rollback itself fails, the installer prints the exact command to
   finish the cleanup by hand.
+- **Ctrl+C** during an installation, `--update` or `--php` is safe: the
+  installer first undoes what the run changed, then stops (exit code 130).
+- **Network problems:** when Composer fails because of the network (for
+  example "curl error 7 ... Failed to connect"), it is tried once more
+  after 10 seconds before anything is rolled back.
+- **One run per project:** `--update`, `--php` and `--remove` lock the
+  project; a second run on the same project at the same time stops with
+  a message instead of interfering.
 - Check the log file shown at the end of the run.
 
 ## Removing a project
@@ -344,10 +354,20 @@ the status report). The registry records the new version.
 The backup goes to
 `~/drupal-local-installer-backups/<name>-update-<date>/` (folder 700,
 files 600): the database and `composer.json`/`composer.lock`. Keep it
-until you are sure the update is fine. If any step fails, the code
-(`composer install` of the old lock file) and, after `updatedb`, the
-database are restored automatically; restoring the database uses sudo
-again, so it may ask for your password.
+until you are sure the update is fine.
+
+Right before Composer runs, the current code (`vendor/`, the
+`installer-paths` folders such as `web/core` and `web/modules/contrib`,
+and the scaffold files such as `web/index.php`) is copied to
+`.drupal-local-installer/update-snapshot/` in the project folder, so a
+failed update can be undone **without the network**. The copy is removed
+after the update (or the restore) succeeds. When the disk is too full
+for it, the installer says so and restores with `composer install`
+instead.
+
+If any step fails, the code and, after `updatedb`, the database are
+restored automatically; restoring the database uses sudo again, so it may
+ask for your password.
 
 Restore by hand, if the automatic restore fails (`B` is the backup folder):
 
@@ -413,7 +433,9 @@ same step when the PHP version you ask for is not available.
 ```
 
 Checks first (nothing changes): the Drupal release supports that PHP
-(`config/compatibility.conf`), the site works now (Drush), the Nginx site
+(`config/compatibility.conf`), the site works now (Drush; a site that is
+broken *because of* its PHP, e.g. Drupal 10.5 on PHP 8.5 or a PHP that is
+no longer installed, may be changed: that is the fix), the Nginx site
 uses a `fastcgi_pass` line the installer can switch, and Composer's
 `check-platform-reqs` says the installed packages accept the new PHP.
 Packages of the new PHP are planned: FPM, CLI, the extensions Drupal
@@ -439,7 +461,8 @@ sudo asks once more.
 **Adopted projects** (`--scan`) are changed the same way, but only their
 `fastcgi_pass` line changes; the new pool copies the `user`, `group` and
 `php_value`/`php_admin_value`/`env` lines of the old pool, and the old
-pool is never removed (other sites may use it). The plan says so before
+pool is never removed (other sites may use it). A pool the installer
+created for it by an earlier `--php` is removed by the next one. The plan says so before
 you confirm. Projects without launchers then run Drush with the new PHP
 by hand, e.g. `php8.4 vendor/bin/drush status`.
 

@@ -28,6 +28,7 @@ UPDATE_DATABASE_CHANGED=0
 UPDATE_PREVIOUS_VERSION=""
 UPDATE_TARGET=""
 UPDATE_WEB_ROOT=""
+UPDATE_SNAPSHOT_DIR=""
 
 get_composer_path() {
     command -v composer
@@ -168,7 +169,7 @@ check_target_compatibility() {
     if ! get_supported_php_versions "$minor" | grep -qxF "$php_version"; then
         echo "[BLOCKED] Drupal $minor does not support PHP $php_version."
         echo "          Supported: $(get_supported_php_versions "$minor" | tr '\n' ' ')"
-        echo "          Changing the PHP version of a project is a separate, later feature."
+        echo "          Change the project's PHP first: ./install.sh --php <project> <version>"
         return 1
     fi
 
@@ -309,14 +310,14 @@ get_postgresql_database_owner() {
 # PostgreSQL: the database is dropped and recreated before the dump is
 # loaded. SQLite: a copy of the file (and its -wal file, if any).
 dump_database_for_restore() {
-    local -a status
+    local -a pipe_status
 
     case "$RECORD_DATABASE_ENGINE" in
         mariadb|mysql)
             UPDATE_DATABASE_BACKUP="$UPDATE_BACKUP_DIR/database.sql.gz"
             sudo mysqldump --single-transaction --routines --triggers \
                 --databases --add-drop-database -- "$RECORD_DATABASE_NAME" | gzip > "$UPDATE_DATABASE_BACKUP"
-            status=("${PIPESTATUS[@]}")
+            pipe_status=("${PIPESTATUS[@]}")
             ;;
         postgresql)
             UPDATE_DATABASE_BACKUP="$UPDATE_BACKUP_DIR/database.sql.gz"
@@ -324,7 +325,7 @@ dump_database_for_restore() {
             is_valid_database_user "$UPDATE_DATABASE_OWNER" || [[ "$UPDATE_DATABASE_OWNER" == "postgres" ]] || return 1
             printf '%s\n' "$UPDATE_DATABASE_OWNER" > "$UPDATE_BACKUP_DIR/database.owner"
             sudo -u postgres pg_dump -- "$RECORD_DATABASE_NAME" | gzip > "$UPDATE_DATABASE_BACKUP"
-            status=("${PIPESTATUS[@]}")
+            pipe_status=("${PIPESTATUS[@]}")
             ;;
         sqlite)
             UPDATE_DATABASE_BACKUP="$UPDATE_BACKUP_DIR/database.sqlite"
@@ -335,24 +336,24 @@ dump_database_for_restore() {
                 cp -- "$RECORD_SQLITE_PATH-wal" "$UPDATE_DATABASE_BACKUP-wal" || return 1
             fi
 
-            status=(0 0)
+            pipe_status=(0 0)
             ;;
         *)
             return 1
             ;;
     esac
 
-    [[ "${status[0]}" -eq 0 && "${status[1]}" -eq 0 && -s "$UPDATE_DATABASE_BACKUP" ]]
+    [[ "${pipe_status[0]}" -eq 0 && "${pipe_status[1]}" -eq 0 && -s "$UPDATE_DATABASE_BACKUP" ]]
 }
 
 restore_database_from_backup() {
-    local -a status
+    local -a pipe_status
     local dropdb_options=(--if-exists)
 
     case "$RECORD_DATABASE_ENGINE" in
         mariadb|mysql)
             gunzip -c -- "$UPDATE_DATABASE_BACKUP" | sudo mysql
-            status=("${PIPESTATUS[@]}")
+            pipe_status=("${PIPESTATUS[@]}")
             ;;
         postgresql)
             # --force (PostgreSQL 13+) closes connections left by PHP-FPM.
@@ -364,7 +365,7 @@ restore_database_from_backup() {
             sudo -u postgres createdb -O "$UPDATE_DATABASE_OWNER" -- "$RECORD_DATABASE_NAME" || return 1
             gunzip -c -- "$UPDATE_DATABASE_BACKUP" |
                 sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d "$RECORD_DATABASE_NAME" > /dev/null
-            status=("${PIPESTATUS[@]}")
+            pipe_status=("${PIPESTATUS[@]}")
             ;;
         sqlite)
             rm -f -- "$RECORD_SQLITE_PATH-wal" "$RECORD_SQLITE_PATH-shm"
@@ -374,14 +375,14 @@ restore_database_from_backup() {
                 cp -- "$UPDATE_DATABASE_BACKUP-wal" "$RECORD_SQLITE_PATH-wal" || return 1
             fi
 
-            status=(0 0)
+            pipe_status=(0 0)
             ;;
         *)
             return 1
             ;;
     esac
 
-    [[ "${status[0]}" -eq 0 && "${status[1]}" -eq 0 ]]
+    [[ "${pipe_status[0]}" -eq 0 && "${pipe_status[1]}" -eq 0 ]]
 }
 
 create_update_backup() {
@@ -430,17 +431,132 @@ set_maintenance_mode() {
         state:set system.maintenance_mode "$1" --input-format=integer > /dev/null 2>&1
 }
 
-# Restores code (composer.json/lock + composer install) and, when it was
-# changed, the database. Prints manual steps if that fails too.
+# Folders Composer writes code into: vendor/ and the installer-paths of
+# composer.json (web/core, web/modules/contrib, ...).
+get_composer_code_dirs() {
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    "php${2}" -r '
+$root = $argv[1];
+$c = json_decode(file_get_contents($root . "/composer.json"), true) ?: [];
+$dirs = [$c["config"]["vendor-dir"] ?? "vendor"];
+foreach (array_keys($c["extra"]["installer-paths"] ?? []) as $p) {
+    $i = strpos($p, "{\$");
+    if ($i !== false) { $p = substr($p, 0, $i); }
+    $dirs[] = rtrim($p, "/");
+}
+foreach (array_unique($dirs) as $d) {
+    if ($d === "" || $d[0] === "/" || strpos($d, "..") !== false || !is_dir("$root/$d")) { continue; }
+    echo $d, "\n";
+}
+' "$1"
+}
+
+# Files the core scaffold plugin writes (index.php, .htaccess,
+# default.settings.php, ...), relative to the project folder.
+get_scaffold_files() {
+    local web_rel="$1"
+
+    (
+        cd "$RECORD_PROJECT_PATH" || exit 1
+        find "$web_rel" "$web_rel/sites" -maxdepth 1 -type f 2>/dev/null
+        find "$web_rel/sites/default" -maxdepth 1 -type f -name 'default.*' 2>/dev/null
+        for file in .editorconfig .gitattributes; do
+            [[ -f "$file" ]] && printf '%s\n' "$file"
+        done
+    ) | sed 's|^\./||' | sort -u
+}
+
+# A copy of the code as it is now, inside the project folder (same disk),
+# so that a failed update can be undone without the network: "composer
+# install" would have to download the old packages again. Skipped, with
+# a warning, when the disk is too full.
+create_code_snapshot() {
+    local project="$RECORD_PROJECT_PATH"
+    local web_rel
+    local needed
+    local available
+    local -a dirs
+    local -a files
+
+    UPDATE_SNAPSHOT_DIR=""
+    web_rel="${UPDATE_WEB_ROOT#"$project"}"
+    web_rel="${web_rel#/}"
+    [[ -n "$web_rel" ]] || web_rel="."
+
+    mapfile -t dirs < <(get_composer_code_dirs "$project" "$RECORD_PHP_VERSION")
+    mapfile -t files < <(get_scaffold_files "$web_rel")
+
+    [[ "${#dirs[@]}" -gt 0 || "${#files[@]}" -gt 0 ]] || return 0
+
+    needed="$(cd "$project" && du -sk -- "${dirs[@]}" "${files[@]}" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')"
+    available="$(df -Pk "$project" 2>/dev/null | awk 'NR == 2 { print $4 + 0 }')"
+
+    if [[ -z "$available" ]] || (( available < needed + 102400 )); then
+        echo "[WARNING] Not enough free disk space for an offline copy of the code"
+        echo "          ($((needed / 1024)) MB needed); restoring would need the network."
+        return 0
+    fi
+
+    printf 'Copying the current code (for an offline restore) ... '
+
+    if run_as_project_user "$PROJECT_USER" rm -rf -- "$project/.drupal-local-installer/update-snapshot" &&
+       run_as_project_user "$PROJECT_USER" mkdir -p -- "$project/.drupal-local-installer/update-snapshot/code" &&
+       printf '%s\n' "${dirs[@]}" | run_as_project_user "$PROJECT_USER" tee "$project/.drupal-local-installer/update-snapshot/dirs.list" > /dev/null &&
+       (cd "$project" && run_as_project_user "$PROJECT_USER" cp -a --parents --reflink=auto -- "${dirs[@]}" "${files[@]}" "$project/.drupal-local-installer/update-snapshot/code/"); then
+        UPDATE_SNAPSHOT_DIR="$project/.drupal-local-installer/update-snapshot"
+        echo "OK"
+    else
+        echo "FAILED"
+        run_as_project_user "$PROJECT_USER" rm -rf -- "$project/.drupal-local-installer/update-snapshot" 2>/dev/null
+        echo "[WARNING] No offline copy of the code; restoring would need the network."
+    fi
+}
+
+restore_code_snapshot() {
+    local dir
+
+    [[ -n "$UPDATE_SNAPSHOT_DIR" && -d "$UPDATE_SNAPSHOT_DIR/code" && -f "$UPDATE_SNAPSHOT_DIR/dirs.list" ]] || return 1
+
+    while IFS= read -r dir; do
+        [[ -n "$dir" && "$dir" != /* && "$dir" != *..* ]] || continue
+        run_as_project_user "$PROJECT_USER" rm -rf -- "${RECORD_PROJECT_PATH:?}/$dir" || return 1
+    done < "$UPDATE_SNAPSHOT_DIR/dirs.list"
+
+    run_as_project_user "$PROJECT_USER" cp -a --reflink=auto -- "$UPDATE_SNAPSHOT_DIR/code/." "$RECORD_PROJECT_PATH/"
+}
+
+remove_code_snapshot() {
+    [[ -n "$UPDATE_SNAPSHOT_DIR" ]] || return 0
+    run_as_project_user "$PROJECT_USER" rm -rf -- "$UPDATE_SNAPSHOT_DIR"
+    UPDATE_SNAPSHOT_DIR=""
+}
+
+# Ctrl+C (or kill) while the project is being changed: undo, then stop.
+interrupt_update() {
+    trap '' INT TERM
+    echo
+    echo "[INTERRUPTED] Stopping the update and restoring the project..."
+    rollback_update
+    exit 130
+}
+
+# Restores code (composer.json/lock, then the offline copy or "composer
+# install") and, when it was changed, the database. Prints manual steps
+# if that fails too.
 rollback_update() {
     local failed=0
 
     echo
     echo "Restoring the project as it was before the update..."
 
-    if cp -p -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/" &&
-       run_logged "Restoring the previous code" \
-           run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
+    if ! cp -p -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/"; then
+        echo "[FAILED] composer.json and composer.lock could not be copied back"
+        failed=1
+    elif restore_code_snapshot; then
+        echo "[OK] Code restored (from the offline copy)"
+    elif run_logged "Restoring the previous code (composer install)" \
+            run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
         echo "[OK] Code restored"
     else
         echo "[FAILED] Code"
@@ -469,11 +585,13 @@ rollback_update() {
     fi
 
     if [[ "$failed" -eq 0 ]]; then
+        remove_code_snapshot
         echo "[OK] The project is back to its previous version."
         return 0
     fi
 
     echo
+    [[ -n "$UPDATE_SNAPSHOT_DIR" ]] && echo "Offline copy of the old code (kept): $UPDATE_SNAPSHOT_DIR/code"
     echo "[ERROR] Automatic restore did not complete. Restore by hand from:"
     echo "        $UPDATE_BACKUP_DIR"
     echo "  cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock $RECORD_PROJECT_PATH/"
@@ -483,10 +601,7 @@ rollback_update() {
 }
 
 update_record_version() {
-    local record="$1"
-    local version="$2"
-
-    run_as_project_user "$PROJECT_USER" sed -i "s/^drupal_version=.*/drupal_version=$version/" "$record"
+    set_project_field "$1" drupal_version "$2"
 }
 
 confirm_update() {
@@ -566,6 +681,7 @@ run_update_project() {
         return 1
     fi
 
+    acquire_project_lock "$machine_name" || return 1
     load_project_record "$machine_name" "$record" || return 1
     web_root="${RECORD_WEB_ROOT:-$RECORD_PROJECT_PATH/web}"
     UPDATE_WEB_ROOT="$web_root"
@@ -710,11 +826,25 @@ run_update_project() {
     fi
     create_update_backup "$machine_name" || return 1
 
+    local status=0
+
+    # From here on the project changes: Ctrl+C restores it first.
+    trap 'interrupt_update' INT TERM
+    perform_update || status=$?
+    trap - INT TERM
+
+    return "$status"
+}
+
+# The changing part of --update. Uses the variables of run_update_project.
+perform_update() {
     UPDATE_DATABASE_CHANGED=0
+    create_code_snapshot
+
     echo
     set_maintenance_mode 1 && echo "[OK] Maintenance mode on"
 
-    if ! run_logged "Updating Drupal core to $UPDATE_TARGET" \
+    if ! run_logged_retrying_network "Updating Drupal core to $UPDATE_TARGET" - \
             run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
             update "${UPDATE_WITH_PACKAGES[@]}" "${with_args[@]}" --with-all-dependencies; then
         rollback_update
@@ -749,6 +879,7 @@ run_update_project() {
     fi
 
     update_record_version "$record" "$UPDATE_TARGET" || true
+    remove_code_snapshot
 
     echo
     echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"

@@ -62,6 +62,8 @@ install_nginx_site() {
 install_drupal_codebase() {
     calls+="composer "
     codebase_args="$*"
+    # composer_interrupt=1: Ctrl+C arrives while Composer downloads.
+    [[ "${composer_interrupt:-0}" == "1" ]] && kill -INT "$BASHPID"
     return "${composer_result:-0}"
 }
 
@@ -82,17 +84,20 @@ create_start_script() {
 run_final_checks() { calls+="checks "; checks_args="$*"; return 0; }
 write_project_record() { calls+="record "; return "${record_result:-0}"; }
 
-remove_nginx_site() { calls+="remove_site "; return 0; }
-remove_php_fpm_pool() { calls+="remove_pool "; return "${remove_pool_result:-0}"; }
-remove_project_database() { calls+="remove_database "; remove_database_args="$*"; return 0; }
-remove_project_directory() { calls+="remove_directory "; return 0; }
+# Removals are also written to $removals_file when it is set (for runs
+# in a subshell, whose $calls is lost).
+note_removal() { [[ -n "${removals_file:-}" ]] && echo "$1" >> "$removals_file"; return 0; }
+remove_nginx_site() { calls+="remove_site "; note_removal site; return 0; }
+remove_php_fpm_pool() { calls+="remove_pool "; note_removal pool; return "${remove_pool_result:-0}"; }
+remove_project_database() { calls+="remove_database "; remove_database_args="$*"; note_removal database; return 0; }
+remove_project_directory() { calls+="remove_directory "; note_removal directory; return 0; }
 get_php_fpm_pool_config_path() { echo "/etc/php/$2/fpm/pool.d/$1.conf"; }
 
 reset_results() {
     calls=""
     unset execute_result readiness_result directory_result database_result \
         pool_result site_result composer_result verify_result drupal_result \
-        remove_pool_result record_result
+        remove_pool_result record_result composer_interrupt
 }
 
 pass() { echo "[PASS] $1"; }
@@ -265,6 +270,24 @@ elif grep -q "Database: mariadb (credentials are not logged)" "$LOG_FILE"; then
     pass "Database password kept out of the log"
 else
     fail "Database step not logged"
+fi
+
+# Ctrl+C during the installation: what the run created is removed,
+# newest first, and the run stops with exit code 130.
+
+reset_results
+status=0
+removals_file="$(mktemp)"
+output="$(composer_interrupt=1 run_installation_workflow)" || status=$?
+interrupt_calls="$(paste -sd' ' "$removals_file")"
+rm -f "$removals_file"
+removals_file=""
+
+if [[ "$status" -eq 130 && "$output" == *"[INTERRUPTED] Stopping the installation."* &&
+      "$output" == *"[OK] Rollback completed."* && "$interrupt_calls" == "site pool database directory" ]]; then
+    pass "Ctrl+C during the installation: created resources removed, exit code 130"
+else
+    fail "interrupt: $status / $output / $interrupt_calls"
 fi
 
 echo "[SUCCESS] Installation workflow tests passed."

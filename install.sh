@@ -56,6 +56,17 @@ print_banner() {
     echo
 }
 
+# Runs one of the commands (--remove, --update, ...) and exits with its
+# result. Each command checks every step itself and must reach its own
+# restore code after a failure, so "set -e" is not active inside it
+# (calling it as part of "||" switches set -e off for the call).
+run_command() {
+    local status=0
+
+    "$@" || status=$?
+    exit "$status"
+}
+
 main() {
     local options_status=0
 
@@ -66,62 +77,44 @@ main() {
         2) exit 0 ;;
         3)
             PROJECT_USER="$(get_runtime_user)" || exit 1
-            list_registered_projects
-            exit 0
+            run_command list_registered_projects
             ;;
         4)
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-remove"
-            run_remove_project "$REMOVE_PROJECT"
-            exit $?
+            run_command run_remove_project "$REMOVE_PROJECT"
             ;;
         5)
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
-            run_scan_projects
-            exit $?
+            run_command run_scan_projects
             ;;
         6)
             PROJECT_USER="$(get_runtime_user)" || exit 1
-            run_unregister_project "$REMOVE_PROJECT"
-            exit $?
+            run_command run_unregister_project "$REMOVE_PROJECT"
             ;;
         7)
             PROJECT_USER="$(get_runtime_user)" || exit 1
-            run_check_updates
-            exit $?
+            run_command run_check_updates
             ;;
         8)
-            local update_status=0
-
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-update"
-            # Every step checks its own result; a failure must reach the
-            # restore code instead of stopping the script (set -e).
-            run_update_project "$REMOVE_PROJECT" || update_status=$?
-            exit "$update_status"
+            run_command run_update_project "$REMOVE_PROJECT"
             ;;
         9)
-            local source_status=0
-
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "php-source"
-            run_php_source || source_status=$?
-            exit "$source_status"
+            run_command run_php_source
             ;;
         10)
-            local php_status=0
-
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-php"
-            # As with --update: every step checks its own result and the
-            # restore code must run, so set -e must not stop the script.
-            run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION" || php_status=$?
-            exit "$php_status"
+            run_command run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION"
             ;;
         *) exit 1 ;;
     esac

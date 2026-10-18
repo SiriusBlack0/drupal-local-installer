@@ -137,6 +137,22 @@ case "\$*" in
         exit "\${MOCK_REQUIRE_EXIT:-0}"
         ;;
     *"--version"*) echo "Drush Commandline Tool 13.6.0" ;;
+    *" create-project "*)
+        # MOCK_NET_FAIL_ONCE=<file>: the first download breaks off like a
+        # dropped connection and leaves a partial file behind.
+        if [[ -n "\${MOCK_NET_FAIL_ONCE:-}" && ! -e "\$MOCK_NET_FAIL_ONCE" ]]; then
+            touch "\$MOCK_NET_FAIL_ONCE"
+            target="\${*: -1}"
+            echo partial > "\$target/composer.json"
+            echo "curl error 7 while downloading https://api.github.com/x: Failed to connect"
+            exit 1
+        fi
+        target="\${*: -1}"
+        if [[ -n "\$(ls -A "\$target")" ]]; then
+            echo "Project directory \$target is not empty."
+            exit 1
+        fi
+        ;;
 esac
 exit "\${MOCK_COMPOSER_EXIT:-0}"
 STUB
@@ -344,5 +360,36 @@ else
     echo "[FAIL] Drush failure handling incorrect"
     exit 1
 fi
+
+# A network error during the download: the partial files are removed
+# and the download is tried once more.
+
+site="$DRUPAL_PROJECTS_DIR/site_nine"
+mkdir "$site"
+LOG_FILE="$work_dir/download.log"
+: > "$LOG_FILE"
+
+if output="$(COMPOSER_RETRY_DELAY=0 MOCK_NET_FAIL_ONCE="$work_dir/net-failed" create_drupal_project "11.4.8" "$site" "8.5" "$current_user")" &&
+   [[ "$output" == *"[RETRY] That was a network problem"* && "$output" == *"(second attempt)"* ]]; then
+    echo "[PASS] Network error during the download: partial files removed, tried once more"
+else
+    echo "[FAIL] Network retry: $output"
+    exit 1
+fi
+
+site="$DRUPAL_PROJECTS_DIR/site_ten"
+mkdir "$site"
+
+if output="$(COMPOSER_RETRY_DELAY=0 MOCK_COMPOSER_EXIT=1 create_drupal_project "11.4.8" "$site" "8.5" "$current_user")"; then
+    echo "[FAIL] Failed download accepted"
+    exit 1
+elif [[ "$output" != *"[RETRY]"* ]]; then
+    echo "[PASS] Other Composer errors are not retried"
+else
+    echo "[FAIL] Non-network error retried: $output"
+    exit 1
+fi
+
+LOG_FILE=""
 
 echo "[SUCCESS] Project directory tests passed."

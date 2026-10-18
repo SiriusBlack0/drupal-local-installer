@@ -29,6 +29,7 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 export XDG_DATA_HOME="$work_dir/data"
+export XDG_STATE_HOME="$work_dir/state"
 export DRUPAL_PROJECTS_DIR="$work_dir/www"
 export NGINX_SITES_AVAILABLE_DIR="$work_dir/nginx/sites-available"
 export NGINX_SITES_ENABLED_DIR="$work_dir/nginx/sites-enabled"
@@ -41,7 +42,7 @@ export CALLS_FILE="$work_dir/calls"
 export REAL_PHP
 REAL_PHP="$(command -v php)"
 mkdir -p "$DRUPAL_PROJECTS_DIR" "$NGINX_SITES_AVAILABLE_DIR" "$NGINX_SITES_ENABLED_DIR" \
-    "$PHP_ETC_DIR/8.3/fpm/pool.d" "$PHP_ETC_DIR/8.4/fpm/pool.d" "$APT_ETC_DIR/sources.list.d" \
+    "$PHP_ETC_DIR/8.2/fpm/pool.d" "$PHP_ETC_DIR/8.3/fpm/pool.d" "$PHP_ETC_DIR/8.4/fpm/pool.d" "$PHP_ETC_DIR/8.5/fpm/pool.d" "$APT_ETC_DIR/sources.list.d" \
     "$STATE_DIR" "$stub_bin"
 
 pass() { echo "[PASS] $1"; }
@@ -68,7 +69,7 @@ get_php_version_status() {
 
 # PHP binaries: PHP code runs with the real php; anything else
 # (composer) is started directly.
-for version in 8.3 8.4; do
+for version in 8.2 8.3 8.4 8.5; do
     cat > "$stub_bin/php$version" <<'STUB'
 #!/usr/bin/env bash
 [[ "$1" == "-r" || "$1" == "-n" ]] && exec "$REAL_PHP" "$@"
@@ -104,9 +105,15 @@ echo "nginx $*" >> "$CALLS_FILE"
 exit 0
 STUB
 
+# SYSTEMCTL_INTERRUPT=<file>: Ctrl+C arrives once, while Nginx reloads.
 cat > "$stub_bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
 echo "systemctl $*" >> "$CALLS_FILE"
+if [[ -n "${SYSTEMCTL_INTERRUPT:-}" && "$*" == "reload-or-restart nginx" && ! -e "$SYSTEMCTL_INTERRUPT" ]]; then
+    touch "$SYSTEMCTL_INTERRUPT"
+    kill -INT "$PPID"
+fi
+exit 0
 STUB
 
 cat > "$stub_bin/curl" <<'STUB'
@@ -192,13 +199,14 @@ make_drupal_codebase() {
 # A project made by the installer, with PHP 8.3.
 make_installer_project() {
     local name="$1"
+    local old="${2:-8.3}"
 
     PROJECT_NAME="$name"
     PROJECT_MACHINE_NAME="$name"
     PROJECT_USER="$(id -un)"
     PROJECT_PATH="$DRUPAL_PROJECTS_DIR/$name"
     DRUPAL_VERSION="11.3.10"
-    PHP_VERSION="8.3"
+    PHP_VERSION="$old"
     DATABASE_ENGINE="mariadb"
     DATABASE_NAME="$name"
     DATABASE_USER="${name}_user"
@@ -207,11 +215,11 @@ make_installer_project() {
 
     rm -rf "$PROJECT_PATH" "$(record_of "$name")" "$PHP_ETC_DIR"/8.4/fpm/pool.d/"$name".conf
     make_drupal_codebase "$PROJECT_PATH"
-    generate_nginx_config "$name" "$PROJECT_PATH" 8.3 > "$NGINX_SITES_AVAILABLE_DIR/$name.conf"
+    generate_nginx_config "$name" "$PROJECT_PATH" "$old" > "$NGINX_SITES_AVAILABLE_DIR/$name.conf"
     ln -sfn "$NGINX_SITES_AVAILABLE_DIR/$name.conf" "$NGINX_SITES_ENABLED_DIR/$name.conf"
-    generate_php_fpm_pool_config "$name" 8.3 "$PROJECT_USER" > "$PHP_ETC_DIR/8.3/fpm/pool.d/$name.conf"
-    create_project_launchers "$PROJECT_PATH" 8.3 "$PROJECT_USER" > /dev/null
-    create_start_script "$PROJECT_PATH" 8.3 mariadb "$name" "$PROJECT_USER" > /dev/null
+    generate_php_fpm_pool_config "$name" "$old" "$PROJECT_USER" > "$PHP_ETC_DIR/$old/fpm/pool.d/$name.conf"
+    create_project_launchers "$PROJECT_PATH" "$old" "$PROJECT_USER" > /dev/null
+    create_start_script "$PROJECT_PATH" "$old" mariadb "$name" "$PROJECT_USER" > /dev/null
     write_project_record > /dev/null
     cp "$NGINX_SITES_AVAILABLE_DIR/$name.conf" "$work_dir/$name.nginx.orig"
     : > "$CALLS_FILE"
@@ -224,6 +232,8 @@ site_of() { printf '%s/%s.conf\n' "$NGINX_SITES_AVAILABLE_DIR" "$1"; }
 
 echo "; default pool" > "$PHP_ETC_DIR/8.3/fpm/pool.d/www.conf"
 echo "; default pool" > "$PHP_ETC_DIR/8.4/fpm/pool.d/www.conf"
+echo "; default pool" > "$PHP_ETC_DIR/8.5/fpm/pool.d/www.conf"
+echo "; default pool" > "$PHP_ETC_DIR/8.2/fpm/pool.d/www.conf"
 export APT_AVAILABLE="php8.4-fpm php8.4-cli php8.4-gd php8.4-xml php8.4-mysql php8.4-common"
 
 # Test 1: --dry-run shows the plan and changes nothing.
@@ -493,5 +503,88 @@ if output="$(printf 'crm\n' | run_change_php crm 8.4)" &&
 else
     fail "adopted: $output / $(diff "$work_dir/crm.nginx.orig" "$NGINX_SITES_AVAILABLE_DIR/crm")"
 fi
+
+if [[ "$(head -n 1 "$PHP_ETC_DIR/8.4/fpm/pool.d/crm.conf")" == "$PHP_CHANGE_POOL_MARKER" ]]; then
+    pass "Pool created for an adopted project is marked as the installer's"
+else
+    fail "marker: $(head -n 2 "$PHP_ETC_DIR/8.4/fpm/pool.d/crm.conf")"
+fi
+
+# Test 8: Adopted again (8.4 -> 8.5): the pool the installer created is
+# removed, the project's own original pool stays.
+
+touch "$STATE_DIR/php8.5"
+: > "$CALLS_FILE"
+
+if output="$(printf 'crm\n' | run_change_php crm 8.5)" &&
+   [[ "$output" == *"Old pool:     removed after the site works ($PHP_ETC_DIR/8.4/fpm/pool.d/crm.conf, created by an earlier --php)"* &&
+      "$output" == *"[DONE] crm: PHP 8.4 -> 8.5"* ]] &&
+   [[ ! -e "$PHP_ETC_DIR/8.4/fpm/pool.d/crm.conf" && -f "$PHP_ETC_DIR/8.5/fpm/pool.d/crm.conf" ]] &&
+   cmp -s "$PHP_ETC_DIR/8.3/fpm/pool.d/crm.conf" "$work_dir/crm.pool.orig" &&
+   grep -qx "php_admin_value\[memory_limit\] = 512M" "$PHP_ETC_DIR/8.5/fpm/pool.d/crm.conf" &&
+   [[ "$(field crm support)" == "supported" ]]; then
+    pass "Adopted again: installer's pool removed, original pool kept, settings carried on, support updated"
+else
+    fail "adopted again: $output"
+fi
+
+# Test 9: A site broken BECAUSE of its PHP (Drupal 11.3 on PHP 8.2) may
+# be changed; a site broken for another reason may not.
+
+make_installer_project theta 8.2
+touch "$STATE_DIR/php8.2"
+
+if output="$(printf 'theta\n' | DRUSH_FAILS_WITH=8.2 run_change_php theta 8.4)" &&
+   [[ "$output" == *"[WARNING] The site does not work with PHP 8.2 now: Drupal 11.3 does not support PHP 8.2."* &&
+      "$output" == *"[DONE] theta: PHP 8.2 -> 8.4"* ]] &&
+   [[ "$(field theta php_version)" == "8.4" && ! -e "$PHP_ETC_DIR/8.2/fpm/pool.d/theta.conf" ]]; then
+    pass "Site broken by an unsupported PHP: change allowed with a warning, and it works afterwards"
+else
+    fail "broken by php: $output"
+fi
+
+make_installer_project iota
+
+if output="$(DRUSH_FAILS_WITH=8.3 run_change_php iota 8.4 < /dev/null)"; then
+    fail "Site broken for another reason accepted"
+elif [[ "$output" == *"[BLOCKED] The site does not work right now"* ]] &&
+     cmp -s "$(site_of iota)" "$work_dir/iota.nginx.orig"; then
+    pass "Site broken for another reason (supported PHP): refused, nothing changed"
+else
+    fail "broken other: $output"
+fi
+
+# Test 10: Ctrl+C while Nginx reloads: everything restored, exit 130.
+
+make_installer_project kappa
+status=0
+output="$(printf 'kappa\n' | SYSTEMCTL_INTERRUPT="$work_dir/interrupted" run_change_php kappa 8.4)" || status=$?
+
+if [[ "$status" -eq 130 && "$output" == *"[INTERRUPTED] Stopping the PHP change and restoring the project"* &&
+      "$output" == *"[OK] The project runs with PHP 8.3 again"* ]] && check_restored kappa; then
+    pass "Ctrl+C during the change: Nginx, pool, launchers restored, exit code 130"
+else
+    fail "interrupt: $status / $output"
+fi
+
+# Test 11: Only one run at a time per project.
+
+make_installer_project lambda
+lock_file="$XDG_STATE_HOME/drupal-local-installer/locks/lambda.lock"
+mkdir -p "$(dirname "$lock_file")"
+flock "$lock_file" sleep 5 &
+lock_holder=$!
+sleep 0.5
+
+if output="$(run_change_php lambda 8.4 < /dev/null)"; then
+    fail "Locked project accepted"
+elif [[ "$output" == *"Another run of the installer is working on 'lambda'"* ]]; then
+    pass "A project another run is working on is refused"
+else
+    fail "lock: $output"
+fi
+
+kill "$lock_holder" 2>/dev/null || true
+wait "$lock_holder" 2>/dev/null || true
 
 echo "[SUCCESS] PHP change tests passed."

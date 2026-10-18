@@ -27,6 +27,10 @@ PHP_CHANGE_SITE_SWITCHED=0
 PHP_CHANGE_LAUNCHERS_CHANGED=0
 PHP_CHANGE_MISSING_PACKAGES=()
 
+# First line of the pools this feature creates for adopted projects: such
+# a pool belongs to the installer and is removed again by a later change.
+PHP_CHANGE_POOL_MARKER="; Created by drupal-local-installer (--php)"
+
 # Package suffixes of the old PHP that are not copied to the new one.
 PHP_CHANGE_SKIP_SUFFIXES="dev dbgsym phpdbg cgi"
 
@@ -159,6 +163,7 @@ generate_adopted_pool_config() {
         [[ "$value" =~ ^[a-z_][a-z0-9_-]*$ ]] && pool_group="$value"
     fi
 
+    echo "$PHP_CHANGE_POOL_MARKER"
     generate_php_fpm_pool_config "$machine_name" "$new" "$pool_user" |
         sed "s/^group = www-data$/group = $pool_group/" || return 1
 
@@ -281,6 +286,22 @@ restore_launchers() {
         run_as_project_user "$PROJECT_USER" rm -f -- "$path/.drupal-local-installer/bin/php" &&
         run_as_project_user "$PROJECT_USER" cp -P -- "$PHP_CHANGE_BACKUP_DIR/php-link" "$path/.drupal-local-installer/bin/php" || return 1
     fi
+}
+
+# Ctrl+C (or kill) while the project is being changed: undo, then stop.
+interrupt_php_change() {
+    trap '' INT TERM
+    echo
+    echo "[INTERRUPTED] Stopping the PHP change and restoring the project..."
+    rollback_php_change
+    exit 130
+}
+
+# A pool of an adopted project that the installer itself created earlier
+# (first line PHP_CHANGE_POOL_MARKER) and that the registry records.
+is_installer_created_pool() {
+    [[ -n "$1" && -f "$1" && "$1" == "$RECORD_POOL" ]] &&
+        [[ "$(head -n 1 "$1")" == "$PHP_CHANGE_POOL_MARKER" ]]
 }
 
 # Undoes the steps that were done, newest first. Packages stay.
@@ -432,6 +453,7 @@ run_change_php() {
     local platform_checked=0
     local platform_php
     local package_count
+    local old_php_problem=""
 
     machine_name="$(get_project_machine_name "$name")"
 
@@ -452,6 +474,7 @@ run_change_php() {
         return 1
     fi
 
+    acquire_project_lock "$machine_name" || return 1
     load_project_record "$machine_name" "$record" || return 1
 
     PHP_CHANGE_OLD="$RECORD_PHP_VERSION"
@@ -542,6 +565,8 @@ run_change_php() {
 
     if [[ -e "$PHP_CHANGE_NEW_POOL" || -L "$PHP_CHANGE_NEW_POOL" ]]; then
         echo "[BLOCKED] A PHP-FPM pool already exists: $PHP_CHANGE_NEW_POOL"
+        echo "          (for an adopted project often its own original pool for PHP $new;"
+        echo "          point its Nginx site back to that pool by hand)."
         return 1
     fi
 
@@ -552,9 +577,21 @@ run_change_php() {
     fi
 
     if [[ "$(run_project_drush "$RECORD_PROJECT_PATH" "$PHP_CHANGE_OLD" status --field=bootstrap 2>/dev/null)" != *"Successful"* ]]; then
-        echo "[BLOCKED] The site does not work right now (Drush cannot bootstrap it with PHP $PHP_CHANGE_OLD)."
-        echo "          Fix that first: the change could not be checked afterwards."
-        return 1
+        # A site that is broken BECAUSE of its PHP is exactly what this
+        # change fixes; any other broken site is not touched.
+        if ! get_supported_php_versions "$minor" | grep -qxF "$PHP_CHANGE_OLD"; then
+            old_php_problem="Drupal $minor does not support PHP $PHP_CHANGE_OLD"
+        elif ! is_php_cli_installed "$PHP_CHANGE_OLD" || ! is_php_fpm_installed "$PHP_CHANGE_OLD"; then
+            old_php_problem="PHP $PHP_CHANGE_OLD is not installed"
+        else
+            echo "[BLOCKED] The site does not work right now (Drush cannot bootstrap it with PHP $PHP_CHANGE_OLD)."
+            echo "          Fix that first: the change could not be checked afterwards."
+            return 1
+        fi
+
+        echo "[WARNING] The site does not work with PHP $PHP_CHANGE_OLD now: $old_php_problem."
+        echo "          Changing to PHP $new is the fix. Afterwards the site must work"
+        echo "          with PHP $new; otherwise everything is restored as it is now."
     fi
 
     # ---- The new PHP: installed, or available from a package source ----
@@ -656,7 +693,9 @@ run_change_php() {
     echo "Nginx:        $PHP_CHANGE_SITE_FILE"
     echo "              fastcgi_pass $PHP_CHANGE_OLD_PASS -> unix:$PHP_CHANGE_NEW_SOCKET ($count line(s))"
 
-    if [[ "$RECORD_MANAGED_BY" == "adopted" ]]; then
+    if [[ "$RECORD_MANAGED_BY" == "adopted" ]] && is_installer_created_pool "$PHP_CHANGE_OLD_POOL"; then
+        echo "Old pool:     removed after the site works ($PHP_CHANGE_OLD_POOL, created by an earlier --php)"
+    elif [[ "$RECORD_MANAGED_BY" == "adopted" ]]; then
         echo "Old pool:     kept (${PHP_CHANGE_OLD_POOL:-not found}); the installer did not create it"
         echo
         echo "[ADOPTED] The installer did not create this project. Only the fastcgi_pass"
@@ -737,7 +776,18 @@ run_change_php() {
 
     echo "[OK] Copies of the configuration: $PHP_CHANGE_BACKUP_DIR"
 
-    # ---- Change ----
+    local status=0
+
+    # From here on the project changes: Ctrl+C restores it first.
+    trap 'interrupt_php_change' INT TERM
+    perform_php_change || status=$?
+    trap - INT TERM
+
+    return "$status"
+}
+
+# The changing part of --php. Uses the variables of run_change_php.
+perform_php_change() {
     if ! install_new_pool "$machine_name" "$new" ||
        ! wait_for_socket "$PHP_CHANGE_NEW_SOCKET" ||
        ! switch_nginx_site; then
@@ -756,7 +806,7 @@ run_change_php() {
     fi
 
     # ---- Done: old pool, registry ----
-    if [[ "$RECORD_MANAGED_BY" != "adopted" ]]; then
+    if [[ "$RECORD_MANAGED_BY" != "adopted" ]] || is_installer_created_pool "$PHP_CHANGE_OLD_POOL"; then
         remove_old_pool
     elif [[ -n "$PHP_CHANGE_OLD_POOL" ]]; then
         echo "[INFO] The old pool is unchanged: $PHP_CHANGE_OLD_POOL"
@@ -766,6 +816,10 @@ run_change_php() {
     set_project_field "$record" php_fpm_pool "$PHP_CHANGE_NEW_POOL" &&
     set_project_field "$record" php_fpm_socket "$PHP_CHANGE_NEW_SOCKET" ||
         echo "[WARNING] The registry could not be updated: $record"
+
+    if [[ "$RECORD_MANAGED_BY" == "adopted" ]]; then
+        set_project_field "$record" support "$(get_project_support "$current" "$new")" || true
+    fi
 
     report_php_setting_differences "$PHP_CHANGE_OLD" "$new"
 

@@ -225,6 +225,7 @@ install_nginx_site() {
     local php_version="$3"
     local available_path
     local enabled_path
+    local temp_dir
     local temp_file
 
     available_path="$(get_nginx_config_path "$machine_name")"
@@ -236,22 +237,25 @@ install_nginx_site() {
         return 1
     fi
 
-    temp_file="$(mktemp -u)"
+    # A private directory (mode 700): nobody else can create, replace or
+    # link the file between writing it and installing it as root.
+    temp_dir="$(mktemp -d)" || return 1
+    temp_file="$temp_dir/site.conf"
 
     if ! write_nginx_config "$machine_name" "$project_dir" "$php_version" "$temp_file"; then
-        rm -f "$temp_file"
+        rm -rf "$temp_dir"
         return 1
     fi
 
     if ! sudo install -m 0644 -o root -g root "$temp_file" "$available_path" ||
        ! sudo ln -s "$available_path" "$enabled_path"; then
-        rm -f "$temp_file"
+        rm -rf "$temp_dir"
         sudo rm -f -- "$enabled_path" "$available_path"
         echo "[ERROR] Could not install the Nginx site."
         return 1
     fi
 
-    rm -f "$temp_file"
+    rm -rf "$temp_dir"
 
     if ! run_logged "Checking Nginx configuration" sudo nginx -t; then
         sudo rm -f -- "$enabled_path" "$available_path"
