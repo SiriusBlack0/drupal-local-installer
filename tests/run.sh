@@ -52,6 +52,16 @@ echo "======================================"
 echo "     Drupal Installer Test Suite"
 echo "======================================"
 
+# ShellCheck is needed only here (development), never by install.sh.
+if ! command -v shellcheck > /dev/null; then
+    echo
+    echo "[MISSING] ShellCheck is needed to run the tests: it checks the Bash code"
+    echo "          for mistakes before they reach a user. The installer itself"
+    echo "          does not need it."
+    echo "          Install it: sudo apt-get install shellcheck"
+    exit 1
+fi
+
 total="${#SUITES[@]}"
 index=0
 

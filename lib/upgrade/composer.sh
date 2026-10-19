@@ -16,6 +16,11 @@ UPGRADE_UPDATE_PACKAGES=()
 UPGRADE_WITH_ARGS=()
 # drupal.org projects installed despite their drupal/core requirement.
 UPGRADE_LENIENT=()
+# Composer plugins the new release brings that composer.json does not
+# mention in allow-plugins ("name|description"), and the decision for
+# them: true (allowed) or false (installed, plugin part off).
+UPGRADE_NEW_PLUGINS=()
+UPGRADE_PLUGIN_DECISION=""
 
 LENIENT_PLUGIN="mglaman/composer-drupal-lenient"
 
@@ -91,8 +96,39 @@ write_upgrade_requirements() {
     fi
 }
 
-# The upgrade, tried on copies of composer.json and composer.lock.
-# Prints Composer's output and returns its status; changes nothing.
+# Composer plugins in the new lock file ($1) that the allow-plugins
+# setting of its composer.json ($2) does not mention and that the current
+# lock file ($3) does not have yet: Composer stops at them during the
+# install. Prints "DLI-NEW-PLUGIN: name|description" lines.
+list_undecided_plugins() {
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    "php${RECORD_PHP_VERSION}" -r '
+$lock = json_decode((string) @file_get_contents($argv[1]), true) ?: [];
+$json = json_decode((string) @file_get_contents($argv[2]), true) ?: [];
+$old = json_decode((string) @file_get_contents($argv[3]), true) ?: [];
+$installed = [];
+foreach (array_merge($old["packages"] ?? [], $old["packages-dev"] ?? []) as $p) { $installed[$p["name"]] = true; }
+$allow = $json["config"]["allow-plugins"] ?? [];
+if (!is_array($allow)) { exit(0); }
+foreach (array_merge($lock["packages"] ?? [], $lock["packages-dev"] ?? []) as $p) {
+    if (($p["type"] ?? "") !== "composer-plugin" || isset($installed[$p["name"]])) { continue; }
+    $name = $p["name"];
+    $known = false;
+    foreach (array_keys($allow) as $pattern) {
+        $re = "{^" . str_replace("\\*", ".*", preg_quote($pattern)) . "$}i";
+        if (preg_match($re, $name)) { $known = true; break; }
+    }
+    if (!$known) { echo "DLI-NEW-PLUGIN: ", $name, "|", str_replace(["|", "\n"], " ", (string) ($p["description"] ?? "")), "\n"; }
+}
+' "$1" "$2" "$3"
+}
+
+# The upgrade, tried on copies of composer.json and composer.lock: the
+# copy of the lock file is written (--no-install: vendor/ and the real
+# files are not touched; --no-scripts: no project scripts run). Prints
+# Composer's output, then the plugins Composer would stop at; returns
+# Composer's status.
 try_upgrade_with_composer() {
     local status=0
 
@@ -108,8 +144,13 @@ try_upgrade_with_composer() {
     {
         write_upgrade_requirements run_copy_composer &&
         run_copy_composer update "${UPGRADE_UPDATE_PACKAGES[@]}" "${UPGRADE_WITH_ARGS[@]}" \
-            --with-all-dependencies --dry-run "${UPDATE_EXTRA_ARGS[@]}"
+            --with-all-dependencies --no-install --no-scripts "${UPDATE_EXTRA_ARGS[@]}"
     } 2>&1 || status=$?
+
+    if [[ "$status" -eq 0 ]]; then
+        list_undecided_plugins "$RECORD_PROJECT_PATH/${UPGRADE_COMPOSER_COPY%.json}.lock" \
+            "$RECORD_PROJECT_PATH/$UPGRADE_COMPOSER_COPY" "$RECORD_PROJECT_PATH/composer.lock"
+    fi
 
     remove_upgrade_composer_copy
     return "$status"
@@ -163,6 +204,82 @@ choose_blocking_projects_handling() {
             2) mapfile -t UPGRADE_LENIENT <<< "$blockers"; return 0 ;;
             *) echo "Invalid selection." ;;
         esac
+    done
+}
+
+# Composer plugins that the new release brings and composer.json does not
+# allow or refuse yet: Composer runs a plugin's code during its commands,
+# so it wants a decision. The developer makes it. Returns 1 to stop.
+choose_new_plugins_handling() {
+    local to_major="$1"
+    local entry
+    local answer
+
+    echo
+    echo "[PLUGINS] Drupal $to_major brings Composer plugins that composer.json does not"
+    echo "          mention yet. Composer runs a plugin's code during its commands, so"
+    echo "          it stops at them until composer.json allows or refuses them:"
+
+    for entry in "${UPGRADE_NEW_PLUGINS[@]}"; do
+        echo "            - ${entry%%|*}: ${entry#*|}"
+    done
+
+    echo
+    echo "1) Allow them (allow-plugins: true): the packages work as their authors"
+    echo "   intended. Usual for well-known packages such as these."
+    echo "2) Install them with the plugin part switched off (allow-plugins: false):"
+    echo "   their PHP code is installed, but nothing of it runs during Composer"
+    echo "   commands. Choose this if you do not know the package."
+    echo "3) Stop here; nothing is changed."
+    echo "   (You can decide by hand: composer config allow-plugins.NAME true|false)"
+
+    if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
+        echo
+        echo "(Dry run: a real run asks here.)"
+        UPGRADE_PLUGIN_DECISION="ask"
+        return 0
+    fi
+
+    while true; do
+        if ! read -r -p "Select [1-3]: " answer; then
+            echo
+            return 1
+        fi
+
+        case "$answer" in
+            1) UPGRADE_PLUGIN_DECISION="true"; return 0 ;;
+            2) UPGRADE_PLUGIN_DECISION="false"; return 0 ;;
+            3) return 1 ;;
+            *) echo "Invalid selection." ;;
+        esac
+    done
+}
+
+# "symfony/runtime, other/plugin" for the plan.
+describe_new_plugins() {
+    printf '%s\n' "${UPGRADE_NEW_PLUGINS[@]}" | cut -d'|' -f1 | paste -sd',' - | sed 's/,/, /g'
+}
+
+# After a failed "composer update": when Composer stopped at a plugin that
+# composer.json neither allows nor refuses, say so in plain words.
+explain_blocked_plugin_failure() {
+    local plugin
+
+    [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] || return 0
+    plugin="$(tail -n 60 "$LOG_FILE" | grep -oE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+ contains a Composer plugin which is blocked' | tail -n 1 | cut -d' ' -f1)" || true
+    [[ -n "$plugin" ]] || return 0
+
+    echo "[INFO] Composer stopped at the plugin $plugin: composer.json neither allows"
+    echo "       nor refuses it. Decide, then run --upgrade again:"
+    echo "         composer config allow-plugins.$plugin true    (or false)"
+}
+
+# Writes the decision about the new plugins into composer.json.
+write_plugin_decisions() {
+    local entry
+
+    for entry in "${UPGRADE_NEW_PLUGINS[@]}"; do
+        run_real_composer config --no-plugins "allow-plugins.${entry%%|*}" "$UPGRADE_PLUGIN_DECISION" || return 1
     done
 }
 

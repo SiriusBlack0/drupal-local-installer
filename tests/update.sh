@@ -289,10 +289,11 @@ export COMPOSER_VERSIONS='["12.0.1","11.5.0","11.4.2","11.4.0","11.4.0-rc1","11.
 make_project alpha
 UPDATE_CORE_PACKAGE="drupal/core-recommended"
 
-if [[ "$(get_update_targets "$PROJECT_PATH" 8.5 11.3.10)" == "11.3.12|11.4.2" &&
-      "$(get_update_targets "$PROJECT_PATH" 8.5 11.3.12)" == "|11.4.2" &&
-      "$(get_update_targets "$PROJECT_PATH" 8.5 11.4.2)" == "|" ]]; then
-    pass "Update targets: patch, known minor, no major"
+if [[ "$(get_update_targets "$PROJECT_PATH" 8.5 11.3.10)" == "11.3.12|11.4.2|12.0.1" &&
+      "$(get_update_targets "$PROJECT_PATH" 8.5 11.3.12)" == "|11.4.2|12.0.1" &&
+      "$(get_update_targets "$PROJECT_PATH" 8.5 11.4.2)" == "||12.0.1" &&
+      "$(get_update_targets "$PROJECT_PATH" 8.5 10.6.3)" == "||11.4.2" ]]; then
+    pass "Update targets: patch, known minor; major only as the --upgrade target (known minors, stable)"
 else
     fail "targets: $(get_update_targets "$PROJECT_PATH" 8.5 11.3.10)"
 fi
@@ -320,7 +321,9 @@ fi
 
 output="$(AUDIT_CORE=1 run_check_updates)"
 
-if [[ "$output" == *"alpha"*"11.3.10"*"11.3.12"*"11.4.2"*"VULNERABLE - update now"* &&
+if [[ "$output" == *"alpha"*"11.3.10"*"11.3.12"*"11.4.2"*"12.0.1"*"VULNERABLE - update now"* &&
+      "$output" == *"MAJOR: newest release of the next major this installer knows (--upgrade)."* &&
+      "$output" == *"Next major available for: alpha"* &&
       "$output" == *"[ACTION] Installed versions with a security advisory"* &&
       "$output" == *"./install.sh --update alpha"* ]] &&
    ! grep -q "composer update" "$CALLS_FILE"; then
@@ -429,8 +432,9 @@ if output="$(printf '2\nalpha\n' | NEW_ERROR="Update notifications" run_update_p
    [[ "$(read_project_field "$(record_of alpha)" drupal_version)" == "11.4.2" ]] &&
    [[ "$output" == *"[DONE] alpha: Drupal 11.3.10 -> 11.4.2"* &&
       "$output" == *"[WARNING] New errors in the Drupal status report"* &&
-      "$output" == *"- Update notifications"* && "$output" != *"- Cron"* ]]; then
-    pass "Minor update: code, database update, registry version, new status errors"
+      "$output" == *"- Update notifications"* && "$output" != *"- Cron"* &&
+      "$output" == *"git add composer.lock && git commit -m \"Drupal core 11.4.2\""* ]]; then
+    pass "Minor update: code, database update, registry version, new status errors, commit shown (git)"
 else
     fail "update: $output / $(cat "$CALLS_FILE")"
 fi

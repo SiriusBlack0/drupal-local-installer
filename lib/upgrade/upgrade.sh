@@ -78,6 +78,8 @@ run_upgrade_project() {
     # shellcheck disable=SC2034
     UPDATE_KIND="upgrade"
     UPGRADE_LENIENT=()
+    UPGRADE_NEW_PLUGINS=()
+    UPGRADE_PLUGIN_DECISION=""
     UPDATE_EXTRA_ARGS=()
     UPDATE_ACCEPTED_ADVISORIES=""
     # shellcheck disable=SC2034
@@ -146,6 +148,8 @@ run_upgrade_project() {
 
     trap - INT TERM
 
+    mapfile -t UPGRADE_NEW_PLUGINS < <(sed -n 's/^DLI-NEW-PLUGIN: //p' <<< "$dry_output")
+    dry_output="$(grep -v '^DLI-NEW-PLUGIN: ' <<< "$dry_output" || true)"
     log_line "Composer trial for $target:"$'\n'"$dry_output"
 
     if [[ "$dry_status" -ne 0 ]]; then
@@ -163,6 +167,12 @@ run_upgrade_project() {
             echo "  Nothing was changed."
             return 1
         fi
+    fi
+
+    if [[ "${#UPGRADE_NEW_PLUGINS[@]}" -gt 0 ]] && ! choose_new_plugins_handling "$to_major"; then
+        echo
+        echo "Upgrade stopped; nothing was changed."
+        return 1
     fi
 
     echo
@@ -184,6 +194,14 @@ run_upgrade_project() {
 
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
         echo "Advisories:    accepted for this upgrade (see [SECURITY] above)"
+    fi
+
+    if [[ "${#UPGRADE_NEW_PLUGINS[@]}" -gt 0 ]]; then
+        case "$UPGRADE_PLUGIN_DECISION" in
+            true) echo "Plugins:       $(describe_new_plugins) (allowed in composer.json)" ;;
+            false) echo "Plugins:       $(describe_new_plugins) (installed, plugin part switched off)" ;;
+            *) echo "Plugins:       $(describe_new_plugins) (you decide in the real run)" ;;
+        esac
     fi
 
     echo "Upgrade Status: $UPGRADE_STATUS_SUMMARY"
@@ -249,12 +267,16 @@ perform_upgrade() {
 
     if ! run_logged "Writing the Drupal $to_major requirements into composer.json" \
             write_upgrade_requirements run_real_composer ||
+       ! { [[ "${#UPGRADE_NEW_PLUGINS[@]}" -eq 0 ]] ||
+           run_logged "Writing your decision about the new Composer plugins into composer.json" \
+            write_plugin_decisions; } ||
        ! run_logged_retrying_network "Upgrading Drupal core to $UPDATE_TARGET" - \
             run_real_composer update "${UPGRADE_UPDATE_PACKAGES[@]}" "${UPGRADE_WITH_ARGS[@]}" \
             --with-all-dependencies "${UPDATE_EXTRA_ARGS[@]}"; then
         if [[ "${#UPGRADE_LENIENT[@]}" -gt 0 ]]; then
             echo "[INFO] Composer found no solution even with the lenient plugin (see above)."
         fi
+        explain_blocked_plugin_failure
         rollback_update
         return 1
     fi
@@ -310,8 +332,8 @@ perform_upgrade() {
     echo "Check it yourself (the installer only opened the front page):"
     echo "  - log in, open the pages your modules provide, submit a form"
     echo "  - ./drush watchdog:show --severity=Error"
-    echo "  - commit composer.json and composer.lock; export the configuration if you"
-    echo "    keep it in git: ./drush config:export (review, then commit)"
+    echo "  - export the configuration if you keep it in git: ./drush config:export"
+    echo "    (review, then commit)"
 
     if [[ "${#UPGRADE_LENIENT[@]}" -gt 0 ]]; then
         echo "  - $(printf '%s ' "${UPGRADE_LENIENT[@]}")run without a release for Drupal $to_major (lenient):"
@@ -325,4 +347,5 @@ perform_upgrade() {
     fi
 
     echo "Back to Drupal $current: README.md, \"Upgrading to a new major\" (from the backup)."
+    print_git_commit_hint "Drupal core $UPDATE_TARGET (upgrade from $current)" composer.json composer.lock
 }

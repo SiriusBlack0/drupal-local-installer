@@ -325,7 +325,8 @@ Nginx site that no longer serves the project is left in place.
 ```
 
 `--check-updates` shows, for each project, the newest **PATCH** of the
-installed minor, the newest **MINOR** the installer knows, and
+installed minor, the newest **MINOR** the installer knows, the newest
+release of the next **MAJOR** it knows (that one is an `--upgrade`), and
 **SECURITY**: whether the version installed now has a published Drupal
 core security advisory (`composer audit`). `VULNERABLE - update now`
 means a security release exists for it; the projects to update are
@@ -404,8 +405,10 @@ sudo -u postgres dropdb mysite && sudo -u postgres createdb -O "$(cat B/database
 cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
 ```
 
-If the project keeps its configuration in git, run `drush config:export`
-after the update and commit the changes.
+If the project is in git, commit `composer.lock` once the site works:
+the next `--update` or `--upgrade` refuses uncommitted Composer files, so
+two changes never mix (the installer prints the command). If it keeps its
+configuration in git too, run `drush config:export` and commit that.
 
 ## Upgrading to a new major (`--upgrade`)
 
@@ -447,12 +450,26 @@ libraries). It is a Drupal module, so the installer explains it and asks:
 
 If it is already enabled, it is used without asking.
 
+The most common finding in custom code is an `.info.yml` that allows only
+the current major (`core_version_requirement: ^10`): Drupal 11 refuses
+such a module or theme. The installer prints the exact one-line fix
+(`^10 || ^11`, which keeps the site working on Drupal 10 until the
+upgrade); commit it, then run the upgrade.
+
 **Composer trial**: the new requirements (`drupal/core-recommended ^11.x`,
 the other core packages, `drush/drush ^13`) are written into a **copy**
 of composer.json and composer.lock (`composer.dli-upgrade.json`, next to
-the real files, removed again), and `composer update --dry-run` runs on
-that copy. Contrib projects may be updated within the constraints of your
-composer.json. When a drupal.org project has no release for the new major
+the real files, removed again), and `composer update --no-install
+--no-scripts` runs on that copy: only the copy of the lock file is
+written; `vendor/`, the real files and the project's scripts are not
+touched. Contrib projects may be updated within the constraints of your
+composer.json.
+
+When the new release brings a **Composer plugin** that composer.json
+neither allows nor refuses yet (`allow-plugins`; for example
+`symfony/runtime`), Composer would stop in the middle of the install. The
+trial finds such plugins first, and you decide before anything changes:
+allow them, install them with the plugin part switched off, or stop. When a drupal.org project has no release for the new major
 that your composer.json allows, the installer names it and you decide:
 
 1. **stop** – nothing changes. Then allow a newer release in composer.json,
@@ -651,7 +668,8 @@ loaded by the file of the same name:
 variables; nothing runs while they are loaded.
 
 Tests never change the real system: they use mocks, stub commands and
-temporary directories.
+temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
+(`sudo apt-get install shellcheck`); the installer itself does not.
 
 ## Roadmap
 

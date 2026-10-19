@@ -304,7 +304,7 @@ run_update_project() {
         return 1
     fi
 
-    IFS='|' read -r patch minor <<< "$targets"
+    IFS='|' read -r patch minor _ <<< "$targets"
 
     if [[ -z "$patch" && -z "$minor" ]]; then
         echo "[OK] Drupal $current is the newest release of Drupal ${current%%.*}."
@@ -458,8 +458,26 @@ perform_update() {
     echo
     echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
+    print_git_commit_hint "Drupal core $UPDATE_TARGET" composer.lock
     echo "If the project keeps configuration in git, export it now:"
     echo "  drush config:export   (then review and commit the changes)"
+}
+
+# Projects in git: the changed Composer files are not committed by the
+# installer; the next --update or --upgrade refuses them until they are.
+print_git_commit_hint() {
+    local message="$1"
+    shift
+    local changed
+
+    [[ -d "$RECORD_PROJECT_PATH/.git" ]] || return 0
+
+    changed="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain -- "$@" 2>/dev/null)" || return 0
+    [[ -n "$changed" ]] || return 0
+
+    echo "Commit the changed Composer files once the site works (the next --update"
+    echo "or --upgrade waits for that, so changes never mix):"
+    echo "  cd $RECORD_PROJECT_PATH && git add $* && git commit -m \"$message\""
 }
 
 # "Lock file operations: 0 installs, 5 updates, 0 removals" from the

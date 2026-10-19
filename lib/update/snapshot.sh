@@ -70,7 +70,7 @@ make_sites_default_writable() {
 
     if run_as_project_user "$PROJECT_USER" chmod u+w -- "$dir"; then
         UPDATE_SITES_DEFAULT_MODE="$mode"
-        echo "[INFO] web/sites/default is writable during the update (Drupal protects it; mode $mode is restored afterwards)"
+        echo "[INFO] web/sites/default is writable during the ${UPDATE_KIND:-update} (Drupal protects it; mode $mode is restored afterwards)"
     fi
 }
 

@@ -21,10 +21,11 @@ foreach (array_slice($argv, 2) as $p) { if (isset($req[$p])) { echo $p, "\n"; } 
 ' "$project_path/composer.json" "${CORE_COMPANION_PACKAGES[@]}"
 }
 
-# Prints "patch_target|minor_target" (each may be empty) from the
-# versions Composer reports for the core package. Minor targets are
-# limited to the minors in config/compatibility.conf, so a release the
-# installer knows nothing about yet is never offered.
+# Prints "patch_target|minor_target|major_target" (each may be empty)
+# from the versions Composer reports for the core package. Minor and major
+# targets are limited to the minors in config/compatibility.conf, so a
+# release the installer knows nothing about yet is never offered. The
+# major target is the newest release of the next major (--upgrade).
 get_update_targets() {
     local project_path="$1"
     local php_version="$2"
@@ -44,16 +45,18 @@ if (!is_array($d) || !isset($d["versions"])) { exit(1); }
 $cur = $argv[1];
 $known = explode(",", $argv[2]);
 [$maj, $min] = array_map("intval", explode(".", $cur));
-$patch = ""; $minor = "";
+$patch = ""; $minor = ""; $major = "";
 foreach ($d["versions"] as $v) {
     if (!preg_match("/^\d+\.\d+\.\d+$/", $v) || version_compare($v, $cur, "<=")) { continue; }
     [$vmaj, $vmin] = array_map("intval", explode(".", $v));
+    if ($vmaj === $maj + 1 && in_array("$vmaj.$vmin", $known, true) &&
+        ($major === "" || version_compare($v, $major, ">"))) { $major = $v; }
     if ($vmaj !== $maj) { continue; }
     if ($vmin === $min) { if ($patch === "" || version_compare($v, $patch, ">")) { $patch = $v; } }
     elseif ($vmin > $min && in_array("$vmaj.$vmin", $known, true) &&
             ($minor === "" || version_compare($v, $minor, ">"))) { $minor = $v; }
 }
-echo $patch, "|", $minor, "\n";
+echo $patch, "|", $minor, "|", $major, "\n";
 ' "$current" "$known_minors"
 }
 
@@ -148,16 +151,18 @@ run_check_updates() {
     local targets
     local patch
     local minor
+    local major
     local security
     local security_status
     local found=0
     local vulnerable=()
+    local upgradable=()
 
     echo
     echo "Checking for Drupal core updates (this asks Packagist, it may take a while)..."
     echo
 
-    printf '%-20s %-9s %-11s %-9s %s\n' "PROJECT" "CURRENT" "PATCH" "MINOR" "SECURITY (INSTALLED VERSION)"
+    printf '%-20s %-9s %-11s %-9s %-9s %s\n' "PROJECT" "CURRENT" "PATCH" "MINOR" "MAJOR" "SECURITY (INSTALLED VERSION)"
 
     for record in "$(get_registry_directory)"/*.conf; do
         [[ -f "$record" ]] || continue
@@ -202,7 +207,8 @@ run_check_updates() {
             continue
         fi
 
-        IFS='|' read -r patch minor <<< "$targets"
+        IFS='|' read -r patch minor major <<< "$targets"
+        [[ -n "$major" ]] && upgradable+=("$name")
 
         security_status=0
         check_core_security "$path" "$php" || security_status=$?
@@ -216,8 +222,8 @@ run_check_updates() {
             *) security="not checked (composer audit failed)" ;;
         esac
 
-        printf '%-20s %-9s %-11s %-9s %s\n' "$name" "$current" \
-            "${patch:-up to date}" "${minor:--}" "$security"
+        printf '%-20s %-9s %-11s %-9s %-9s %s\n' "$name" "$current" \
+            "${patch:-up to date}" "${minor:--}" "${major:--}" "$security"
     done
 
     if [[ "$found" -eq 0 ]]; then
@@ -227,7 +233,8 @@ run_check_updates() {
 
     echo
     echo "PATCH: newest bug fix and security release of the same minor (recommended)."
-    echo "MINOR: newest minor release this installer knows; major upgrades are not offered."
+    echo "MINOR: newest minor release this installer knows."
+    echo "MAJOR: newest release of the next major this installer knows (--upgrade)."
     echo "SECURITY: whether the version installed now has a published Drupal core"
     echo "          security advisory (checked with \"composer audit\")."
 
@@ -235,6 +242,12 @@ run_check_updates() {
         echo
         echo "[ACTION] Installed versions with a security advisory. Update them:"
         printf '  ./install.sh --update %s\n' "${vulnerable[@]}"
+    fi
+
+    if [[ "${#upgradable[@]}" -gt 0 ]]; then
+        echo
+        echo "Next major available for: ${upgradable[*]}"
+        echo "  It is a bigger step: check first with ./install.sh --upgrade <project> --dry-run"
     fi
 
     echo

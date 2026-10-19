@@ -229,7 +229,43 @@ print_upgrade_status_report() {
 
     echo "            Contrib: newer releases usually fix this; Composer is asked below."
     echo "            Custom code: fix it (drupal-rector fixes many of these automatically)."
+    print_info_yml_fixes "$report" "$to_major"
     echo "            Full report: ./drush upgrade_status:analyze --all (while it is installed)."
+}
+
+# The most common finding in custom code: an .info.yml that allows only
+# the current major. The fix is one line; it is shown exactly (rector does
+# not change .info.yml files).
+print_info_yml_fixes() {
+    local report="$1"
+    local to_major="$2"
+    local line
+    local file
+    local value
+    local web_rel
+    local -a commands=()
+
+    web_rel="${UPDATE_WEB_ROOT#"$RECORD_PROJECT_PATH"}"
+    web_rel="${web_rel#/}"
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^(.+\.info\.yml):[0-9]+\ ERROR:\ Value\ of\ core_version_requirement:\ (.+)\ is\ not\ compatible ]]; then
+            file="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+
+            if [[ ! -f "$RECORD_PROJECT_PATH/$file" && -n "$web_rel" && -f "$RECORD_PROJECT_PATH/$web_rel/$file" ]]; then
+                file="$web_rel/$file"
+            fi
+
+            commands+=("sed -i 's/^core_version_requirement:.*/core_version_requirement: $value || ^$to_major/' $file")
+        fi
+    done <<< "$report"
+
+    [[ "${#commands[@]}" -gt 0 ]] || return 0
+
+    echo "            .info.yml files that allow only the current major: allow Drupal $to_major too"
+    echo "            (in $RECORD_PROJECT_PATH, then commit; the site keeps working on the current major):"
+    printf '              %s\n' "${commands[@]}"
 }
 
 # The whole Upgrade Status step. Returns 1 only when a temporary Upgrade

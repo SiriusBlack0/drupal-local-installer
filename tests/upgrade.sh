@@ -85,6 +85,9 @@ STUB
 # makes it work on that copy of composer.json, as the real one does.
 # BLOCK_CONTRIB=1: drupal/pathauto has no release for Drupal 11, unless
 # the lenient plugin is installed and lists it.
+# NEW_PLUGIN=1: Drupal 11 brings symfony/runtime, a Composer plugin; the
+# install stops at it unless composer.json allows or refuses it
+# (NEW_PLUGIN_HIDDEN=1: the trial lock does not show it).
 cat > "$stub_bin/composer" <<'STUB'
 #!/usr/bin/env bash
 dir=""
@@ -128,6 +131,9 @@ case "${args[0]}" in
         if [[ " ${args[*]} " == *" extra.drupal-lenient.allowed-list "* ]]; then
             echo "${args[-1]}" > "$dir/lenient-list"
         fi
+        if [[ " ${args[*]} " == *" allow-plugins.symfony/runtime "* ]]; then
+            echo "${args[-1]}" > "$dir/runtime-decision"
+        fi
         ;;
     require)
         rest=("${args[@]:1}")
@@ -166,9 +172,20 @@ case "${args[0]}" in
             echo "  - Root composer.json requires symfony/console ~6.4 -> found symfony/console[v6.4.0] but it conflicts."
             exit 2
         fi
-        if [[ " ${args[*]} " == *" --dry-run "* ]]; then
+        # The trial: only the copy of the lock file is written.
+        if [[ " ${args[*]} " == *" --no-install "* ]]; then
+            [[ " ${args[*]} " == *" --no-scripts "* ]] || { echo "trial without --no-scripts"; exit 9; }
             echo "Lock file operations: 3 installs, 41 updates, 1 removal"
+            if [[ "${NEW_PLUGIN:-0}" == "1" && "${NEW_PLUGIN_HIDDEN:-0}" != "1" ]]; then
+                echo '{"packages":[{"name":"symfony/runtime","type":"composer-plugin","description":"Enables decoupling PHP applications from global state"},{"name":"drupal/core-composer-scaffold","type":"composer-plugin"}],"packages-dev":[]}' > "$lock"
+                "$REAL_PHP" -r '$f=$argv[1]; $c=json_decode(file_get_contents($f),true); $c["config"]["allow-plugins"]=["drupal/*"=>true]; file_put_contents($f, json_encode($c));' "$json"
+            fi
             exit 0
+        fi
+        if [[ "${NEW_PLUGIN:-0}" == "1" && ! -f "$dir/runtime-decision" ]]; then
+            echo "  In PluginManager.php line 821:"
+            echo "    symfony/runtime contains a Composer plugin which is blocked by your allow-plugins config. You may add it to the lis"
+            exit 1
         fi
         grep -q '"\^11' "$json" || { echo "core-recommended still requires Drupal 10"; exit 2; }
         sed -i "s/^core=.*/core=$target/" "$lock"
@@ -234,6 +251,10 @@ case "$1" in
             custom)
                 echo "<file name=\"$web/modules/custom/shop/shop.module\"><error line=\"12\" message=\"Call to deprecated function drupal_set_message().\" severity=\"error\"></error></file>"
                 echo "<file name=\"$web/modules/contrib/pathauto/pathauto.module\"><error line=\"3\" message=\"Deprecated hook.\" severity=\"warning\"></error></file>"
+                ;;
+            infoyml)
+                # Like the real report: paths relative to the Drupal root.
+                echo "<file name=\"modules/custom/shop/shop.info.yml\"><error line=\"5\" message=\"Value of core_version_requirement: ^10 is not compatible with the next major version of Drupal core. See https://drupal.org/node/3070687.\" severity=\"error\"></error></file>"
                 ;;
             contrib)
                 echo "<file name=\"$web/modules/contrib/pathauto/pathauto.info.yml\"><error line=\"1\" message=\"Value of core_version_requirement: ^9 || ^10 is not compatible with Drupal 11.\" severity=\"error\"></error></file>"
@@ -351,7 +372,7 @@ if output="$(printf '3\n' | REMOVE_DRY_RUN=1 run_upgrade_project alpha)" &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    composer_unchanged alpha && no_copies_left alpha && [[ "$(version_of alpha)" == "10.6.19" ]] &&
    grep -q "composer \[composer.dli-upgrade.json\] require --no-update drupal/core-recommended:^11.4" "$CALLS_FILE" &&
-   grep -q "composer \[composer.dli-upgrade.json\] update drupal/\* drush/drush --with drupal/core-recommended:11.4.2 .* --with drupal/core-dev:11.4.2 --with-all-dependencies --dry-run" "$CALLS_FILE" &&
+   grep -q "composer \[composer.dli-upgrade.json\] update drupal/\* drush/drush --with drupal/core-recommended:11.4.2 .* --with drupal/core-dev:11.4.2 --with-all-dependencies --no-install --no-scripts" "$CALLS_FILE" &&
    ! grep -q "sudo-asked\|drush state:set" "$CALLS_FILE"; then
     pass "--dry-run: checks, Composer trial on a copy (real composer.json untouched, copy removed), plan"
 else
@@ -487,6 +508,18 @@ else
     fail "upgrade status add failure: $output"
 fi
 
+mkdir -p "$PROJECT_PATH/web/modules/custom/shop"
+printf 'name: Shop\ntype: module\ncore_version_requirement: ^10\n' > "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"
+
+if output="$(printf '1\n' | US_REPORT=infoyml REMOVE_DRY_RUN=1 run_upgrade_project eta)" &&
+   [[ "$output" == *"custom: shop: 1 error(s), 0 warning(s)"* &&
+      "$output" == *".info.yml files that allow only the current major: allow Drupal 11 too"* &&
+      "$output" == *"sed -i 's/^core_version_requirement:.*/core_version_requirement: ^10 || ^11/' web/modules/custom/shop/shop.info.yml"* ]]; then
+    pass "core_version_requirement ^10 in custom code: the exact one-line fix is shown"
+else
+    fail "info.yml fix: $output"
+fi
+
 # Test 5: drupal.org projects without a Drupal 11 release: the developer
 # decides (stop, or the lenient plugin).
 
@@ -578,6 +611,20 @@ else
     fail "order: $(cat "$CALLS_FILE")"
 fi
 
+make_project rho
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add composer.json composer.lock
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m init
+
+if output="$(printf '3\nrho\n' | run_upgrade_project rho)" &&
+   [[ "$output" == *"[DONE] rho: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"Commit the changed Composer files once the site works"* &&
+      "$output" == *"git add composer.json composer.lock && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* ]]; then
+    pass "Project in git: the commit of composer.json and composer.lock is shown"
+else
+    fail "git hint: $output"
+fi
+
 # Test 7: Failures restore code, composer.json and database.
 
 make_project lambda
@@ -656,7 +703,68 @@ else
     fail "custom confirm yes: $output"
 fi
 
-# Test 9: Nothing to upgrade to yet.
+# Test 9: A Composer plugin that composer.json does not mention yet: the
+# developer decides before anything changes.
+
+make_project xi
+
+if output="$(printf '3\n' | NEW_PLUGIN=1 REMOVE_DRY_RUN=1 run_upgrade_project xi)" &&
+   [[ "$output" == *"[PLUGINS] Drupal 11 brings Composer plugins that composer.json does not"* &&
+      "$output" == *"- symfony/runtime: Enables decoupling PHP applications from global state"* &&
+      "$output" != *"- drupal/core-composer-scaffold:"* &&
+      "$output" == *"1) Allow them (allow-plugins: true)"* &&
+      "$output" == *"Plugins:       symfony/runtime (you decide in the real run)"* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]] && composer_unchanged xi && no_copies_left xi; then
+    pass "New Composer plugin: found in the trial (drupal/* already allowed is not asked), explained"
+else
+    fail "plugin dry run: $output"
+fi
+
+if output="$(printf '3\n3\n' | NEW_PLUGIN=1 run_upgrade_project xi)"; then
+    fail "Plugin stop choice went on"
+elif [[ "$output" == *"Upgrade stopped; nothing was changed."* ]] && composer_unchanged xi &&
+     ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "New plugin, choice 3 (stop): nothing changed"
+else
+    fail "plugin stop: $output"
+fi
+
+if output="$(printf '3\n1\nxi\n' | NEW_PLUGIN=1 run_upgrade_project xi)" &&
+   [[ "$output" == *"Plugins:       symfony/runtime (allowed in composer.json)"* &&
+      "$output" == *"[DONE] xi: Drupal 10.6.19 -> 11.4.2"* ]] &&
+   [[ "$(cat "$PROJECT_PATH/runtime-decision")" == "true" ]] &&
+   grep -q "composer config --no-plugins allow-plugins.symfony/runtime true" "$CALLS_FILE"; then
+    pass "New plugin, choice 1: allowed in composer.json, then upgraded"
+else
+    fail "plugin allow: $output / $(cat "$CALLS_FILE")"
+fi
+
+make_project omicron
+
+if output="$(printf '3\n2\nomicron\n' | NEW_PLUGIN=1 run_upgrade_project omicron)" &&
+   [[ "$output" == *"(installed, plugin part switched off)"* && "$output" == *"[DONE] omicron"* ]] &&
+   [[ "$(cat "$PROJECT_PATH/runtime-decision")" == "false" ]]; then
+    pass "New plugin, choice 2: installed with the plugin part switched off"
+else
+    fail "plugin off: $output"
+fi
+
+make_project pi
+LOG_FILE="$work_dir/pi.log"
+: > "$LOG_FILE"
+
+if output="$(printf '3\npi\n' | NEW_PLUGIN=1 NEW_PLUGIN_HIDDEN=1 run_upgrade_project pi)"; then
+    fail "Blocked plugin reported as success"
+elif [[ "$output" == *"[INFO] Composer stopped at the plugin symfony/runtime: composer.json neither allows"* &&
+        "$output" == *"[OK] The project is back to its previous version."* ]] && composer_unchanged pi; then
+    pass "Plugin seen only during the install: explained in plain words, project restored"
+else
+    fail "plugin hidden: $output"
+fi
+
+LOG_FILE=""
+
+# Test 10: Nothing to upgrade to yet.
 
 make_project nu 11.4.2
 
