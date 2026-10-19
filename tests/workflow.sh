@@ -5,6 +5,9 @@ source lib/workflow.sh
 
 step() { :; }
 
+# lib/output.sh: the Ctrl+C handler switches back to the terminal first.
+to_console() { echo "(back to the terminal)"; }
+
 # The real log_line, writing into a temporary log file.
 LOG_FILE="$(mktemp)"
 trap 'rm -f "$LOG_FILE"' EXIT
@@ -283,9 +286,9 @@ interrupt_calls="$(paste -sd' ' "$removals_file")"
 rm -f "$removals_file"
 removals_file=""
 
-if [[ "$status" -eq 130 && "$output" == *"[INTERRUPTED] Stopping the installation."* &&
+if [[ "$status" -eq 130 && "$output" == *"(back to the terminal)"*"[INTERRUPTED] Stopping the installation."* &&
       "$output" == *"[OK] Rollback completed."* && "$interrupt_calls" == "site pool database directory" ]]; then
-    pass "Ctrl+C during the installation: created resources removed, exit code 130"
+    pass "Ctrl+C during the installation: output back on the terminal, created resources removed, exit code 130"
 else
     fail "interrupt: $status / $output / $interrupt_calls"
 fi
