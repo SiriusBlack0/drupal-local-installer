@@ -5,7 +5,7 @@ python3 - <<'PY'
 from pathlib import Path
 import subprocess
 
-source = Path("lib/ui.sh").read_text()
+source = "".join(Path(f"lib/ui/{p}.sh").read_text() for p in ("project", "drupal", "php", "database", "admin", "confirm"))
 start = source.index("# Final configuration summary")
 section = source[start:]
 calls = "\nconfirm_installation\n"

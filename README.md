@@ -550,8 +550,24 @@ the `source` line to `~/.bashrc`. To remove it, delete the file.
 
 ```bash
 bash tests/run.sh                                   # all test suites
-shellcheck -S style -x install.sh lib/*.sh tests/*.sh
+shellcheck -S style -x install.sh lib/*.sh lib/*/*.sh tests/*.sh completion/*.bash
 ```
+
+Code layout: `install.sh` loads the modules in `lib/` in a fixed order
+(checked by `tests/module_structure.sh`). The larger modules are folders,
+loaded by the file of the same name:
+
+| Loader | Folder |
+|---|---|
+| `lib/database.sh` | `lib/database/`: `common.sh`, `mysql.sh`, `postgresql.sh`, `sqlite.sh` |
+| `lib/system.sh` | `lib/system/`: `checks.sh`, `services.sh`, `apt.sh` |
+| `lib/ui.sh` | `lib/ui/` (phase 1 questions): `project.sh`, `drupal.sh`, `php.sh`, `database.sh`, `admin.sh`, `confirm.sh` |
+| `lib/update.sh` | `lib/update/`: `check.sh`, `backup.sh`, `snapshot.sh`, `advisories.sh`, `update.sh` |
+| `lib/php_change.sh` | `lib/php_change/`: `pool.sh`, `launchers.sh`, `checks.sh`, `php_change.sh` |
+
+`lib/composer.sh` runs Composer and Drush of a project (used by
+`--update`, `--php`, `--remove`). Modules only define functions and
+variables; nothing runs while they are loaded.
 
 Tests never change the real system: they use mocks, stub commands and
 temporary directories.

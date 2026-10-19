@@ -5,6 +5,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Modules only define functions; main() decides what runs and when.
+# lib/database.sh, lib/system.sh, lib/ui.sh, lib/update.sh and
+# lib/php_change.sh load the files of the folder with the same name.
 source "$SCRIPT_DIR/lib/output.sh"
 source "$SCRIPT_DIR/lib/drupal.sh"
 source "$SCRIPT_DIR/lib/php.sh"
@@ -22,6 +24,7 @@ source "$SCRIPT_DIR/lib/install_execution.sh"
 source "$SCRIPT_DIR/lib/readiness.sh"
 source "$SCRIPT_DIR/lib/project.sh"
 source "$SCRIPT_DIR/lib/site.sh"
+source "$SCRIPT_DIR/lib/composer.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"

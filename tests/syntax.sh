@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 echo "Checking Bash syntax..."
 
-for file in install.sh lib/*.sh; do
+for file in install.sh lib/*.sh lib/*/*.sh completion/*.bash; do
     if bash -n "$file"; then
         echo "[OK] $file"
     else

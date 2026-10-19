@@ -21,6 +21,7 @@ source lib/project.sh
 source lib/compatibility.sh
 source lib/scan.sh
 source lib/remove.sh
+source lib/composer.sh
 source lib/update.sh
 source lib/php_source.sh
 source lib/php_change.sh

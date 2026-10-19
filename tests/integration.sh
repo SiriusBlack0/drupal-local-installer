@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Extract only the confirm_installation function.
-eval "$(sed -n '/^confirm_installation() {/,/^}/p' lib/ui.sh)"
+eval "$(sed -n '/^confirm_installation() {/,/^}/p' lib/ui/confirm.sh)"
 
 # Mock project configuration.
 export PROJECT_NAME="Test Project"
