@@ -49,7 +49,8 @@ else
     fail "options: completion '$completion_options' vs help '$usage_options'"
 fi
 
-if [[ "$(complete_line './install.sh --up')" == "--update" &&
+if [[ "$(complete_line './install.sh --up')" == "--update --upgrade" &&
+      "$(complete_line './install.sh --upg')" == "--upgrade" &&
       "$(complete_line './install.sh --php-s')" == "--php-source" ]]; then
     pass "A started option is completed"
 else
@@ -61,7 +62,8 @@ fi
 if [[ "$(complete_line './install.sh --update |')" == "alpha beta" &&
       "$(complete_line './install.sh --php a')" == "alpha" &&
       "$(complete_line './install.sh --remove |')" == "alpha beta" &&
-      "$(complete_line './install.sh --unregister b')" == "beta" ]]; then
+      "$(complete_line './install.sh --unregister b')" == "beta" &&
+      "$(complete_line './install.sh --upgrade |')" == "alpha beta" ]]; then
     pass "Registered projects are completed"
 else
     fail "projects: $(complete_line './install.sh --update |')"
@@ -81,10 +83,11 @@ fi
 
 if [[ "$(complete_line './install.sh --update alpha |')" == "--dry-run" &&
       "$(complete_line './install.sh --php alpha 8.4 |')" == "--dry-run" &&
+      "$(complete_line './install.sh --upgrade beta |')" == "--dry-run" &&
       -z "$(complete_line './install.sh --update alpha --dry-run |')" &&
       -z "$(complete_line './install.sh --unregister alpha |')" &&
       -z "$(complete_line './install.sh --list |')" ]]; then
-    pass "--dry-run offered after --update/--php/--remove, only once"
+    pass "--dry-run offered after --update/--upgrade/--php/--remove, only once"
 else
     fail "dry-run: '$(complete_line './install.sh --update alpha |')'"
 fi

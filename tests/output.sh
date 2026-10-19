@@ -103,7 +103,24 @@ if [[ "$status" -eq 7 && "$status2" -eq 8 && "$REMOVE_PROJECT" == "mysite" &&
       "$REMOVE_DRY_RUN" == "1" && "$status3" -eq 1 && "$output3" == *"needs a project name"* ]]; then
     pass "--check-updates and --update NAME [--dry-run] recognised"
 else
-    fail "--check-updates/--update: $status/$status2/$status3 '$REMOVE_PROJECT'"
+    fail "--check-updates/--update: $status/$status2/$status3"
+fi
+
+REMOVE_DRY_RUN=0
+REMOVE_PROJECT=""
+status=0
+parse_options --upgrade mysite --dry-run > /dev/null || status=$?
+status2=0
+output2="$(parse_options --upgrade)" || status2=$?
+status3=0
+output3="$(REMOVE_DRY_RUN=0 parse_options --list --dry-run)" || status3=$?
+
+if [[ "$status" -eq 12 && "$REMOVE_PROJECT" == "mysite" && "$REMOVE_DRY_RUN" == "1" &&
+      "$status2" -eq 1 && "$output2" == *"--upgrade needs a project name"* &&
+      "$status3" -eq 1 && "$output3" == *"--upgrade"* ]]; then
+    pass "--upgrade NAME [--dry-run] recognised; without a name rejected"
+else
+    fail "--upgrade: $status/$status2/$status3 '$REMOVE_PROJECT'"
 fi
 
 REMOVE_DRY_RUN=0

@@ -8,8 +8,8 @@ correct PHP version.
 > **Status:** work in progress. The installer creates a working Drupal
 > site at `http://<project>.localhost`: project files (Drupal + Drush),
 > database, PHP-FPM pool, Nginx site and `drush site:install`, and it
-> removes, registers and updates projects and changes their PHP version.
-> Major upgrades and a Docker mode come next. See [Roadmap](#roadmap).
+> removes, registers, updates and upgrades projects (10 → 11) and changes
+> their PHP version. A Docker mode comes next. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -332,9 +332,9 @@ means a security release exists for it; the projects to update are
 listed at the end under `[ACTION]`.
 
 Only **patch** (11.3.10 → 11.3.12) and **minor** (11.3 → 11.4) releases
-of Drupal core are installed. Contributed modules are not touched, and
-major upgrades (10 → 11) are not automated. A minor release is offered
-only when it is in `config/compatibility.conf`.
+of Drupal core are installed, and contributed modules are not touched.
+Major upgrades (10 → 11) have their own command: `--upgrade` (below). A
+minor release is offered only when it is in `config/compatibility.conf`.
 
 Before anything changes, the installer checks that:
 
@@ -406,6 +406,86 @@ cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
 
 If the project keeps its configuration in git, run `drush config:export`
 after the update and commit the changes.
+
+## Upgrading to a new major (`--upgrade`)
+
+```bash
+./install.sh --upgrade mysite --dry-run   # all checks and the plan
+./install.sh --upgrade mysite
+```
+
+One major at a time: Drupal 10 → 11 (Drupal 11 → 12 once a stable 12.0
+release is in `config/compatibility.conf`; for 10 → 12 run it twice). The
+target is the newest release of the newest Drupal 11 minor the installer
+knows. Drupal 7 is not upgraded: that is a migration, not an upgrade.
+The steps, their minimum versions and the modules that left core are in
+`config/upgrades.conf`.
+
+### Checks first (also in `--dry-run`, nothing changes)
+
+| Check | Blocks when |
+|---|---|
+| Start release | older than the first release the new major accepts updates from (Drupal 10.3 for 11): `--update` to a newer minor first |
+| PHP | the new major does not support the project's PHP: change it first with `--php`, as its own step, so a problem is easy to trace (the installer names a version both releases run on) |
+| Database | the server is older than the new major needs |
+| Modules removed from core | an enabled module or theme that the new major no longer has in core (for Drupal 11: Actions UI, Activity Tracker, Book, Forum, Statistics, Tour) and composer.json does not require its drupal.org project: `composer require drupal/book`, or uninstall it |
+| Upgrade Status | never blocks; errors in **custom** code ask you before the upgrade |
+| Composer trial | Composer finds no way to install the new core (see below) |
+
+**Upgrade Status** ([drupal.org/project/upgrade_status](https://www.drupal.org/project/upgrade_status))
+scans the enabled modules and themes, contrib and custom, for code the new
+major no longer supports (deprecated PHP APIs, `.info.yml`, Twig,
+libraries). It is a Drupal module, so the installer explains it and asks:
+
+1. **for this scan only** – added with Composer (development dependency),
+   enabled, scan, then uninstalled and removed: composer.json,
+   composer.lock and the database are as before;
+2. **keep it** – it stays installed (run `./drush upgrade_status:analyze --all`
+   or *Reports > Upgrade status* any time; remove it with
+   `./drush pm:uninstall upgrade_status && composer remove --dev drupal/upgrade_status`);
+3. **skip** the scan.
+
+If it is already enabled, it is used without asking.
+
+**Composer trial**: the new requirements (`drupal/core-recommended ^11.x`,
+the other core packages, `drush/drush ^13`) are written into a **copy**
+of composer.json and composer.lock (`composer.dli-upgrade.json`, next to
+the real files, removed again), and `composer update --dry-run` runs on
+that copy. Contrib projects may be updated within the constraints of your
+composer.json. When a drupal.org project has no release for the new major
+that your composer.json allows, the installer names it and you decide:
+
+1. **stop** – nothing changes. Then allow a newer release in composer.json,
+   remove the module if it is unused, or apply a patch from its issue queue;
+2. **lenient** – the [mglaman/composer-drupal-lenient](https://github.com/mglaman/composer-drupal-lenient)
+   plugin is added (after the backup) and lists that project, so Composer
+   ignores its `drupal/core` requirement. Its code was not released for the
+   new major and may break pages or the site: test it, and remove it from
+   `extra.drupal-lenient.allowed-list` once a real release exists. The
+   registry notes it (`lenient_packages`).
+
+### The upgrade
+
+Like `--update`: you type the project name; sudo is asked once, before
+Composer; backup (database, composer.json and composer.lock, offline copy
+of the code); maintenance mode; the new requirements are written into
+composer.json; `composer update`; `drush updatedb`; caches; then the same
+checks (Drupal reports the new version, Drush bootstraps, the site answers
+over HTTP) and the new errors of the status report. Any failure – also
+Ctrl+C – restores the code, composer.json, composer.lock and, after
+`updatedb`, the database. The registry gets the new version and
+`upgraded_from`.
+
+Afterwards, check what only a person can: log in, open the pages your
+modules provide, `./drush watchdog:show --severity=Error`, commit
+composer.json and composer.lock and, if you keep configuration in git,
+`./drush config:export`.
+
+Back to the old major later (for example a week after, when something
+turns out broken): restore the backup by hand, with the commands of
+[Updating Drupal core](#updating-drupal-core---check-updates---update)
+(`B` is the `mysite-upgrade-…` backup folder); changes made to the site
+since the upgrade are lost then.
 
 ## Other PHP versions (`--php-source`)
 
@@ -536,7 +616,7 @@ new terminal (in the current one: `source` the file it names). Then:
 | You type | Tab offers |
 |---|---|
 | `./install.sh --` | every option (`--update`, `--php`, `--remove`, ...) |
-| `./install.sh --update ` (also `--php`, `--remove`, `--unregister`) | the registered projects |
+| `./install.sh --update ` (also `--upgrade`, `--php`, `--remove`, `--unregister`) | the registered projects |
 | `./install.sh --php mysite ` | the PHP versions that project's Drupal release supports |
 | `./install.sh --update mysite ` | `--dry-run` |
 
@@ -563,6 +643,7 @@ loaded by the file of the same name:
 | `lib/system.sh` | `lib/system/`: `checks.sh`, `services.sh`, `apt.sh` |
 | `lib/ui.sh` | `lib/ui/` (phase 1 questions): `project.sh`, `drupal.sh`, `php.sh`, `database.sh`, `admin.sh`, `confirm.sh` |
 | `lib/update.sh` | `lib/update/`: `check.sh`, `backup.sh`, `snapshot.sh`, `advisories.sh`, `update.sh` |
+| `lib/upgrade.sh` | `lib/upgrade/`: `checks.sh`, `upgrade_status.sh`, `composer.sh`, `upgrade.sh` |
 | `lib/php_change.sh` | `lib/php_change/`: `pool.sh`, `launchers.sh`, `checks.sh`, `php_change.sh` |
 
 `lib/composer.sh` runs Composer and Drush of a project (used by
@@ -586,5 +667,5 @@ temporary directories.
 - [x] Update Drupal core: patch and minor (`--check-updates`, `--update`)
 - [x] Change the PHP version of a project (`--php`)
 - [x] Optional package source for other PHP versions (`--php-source`)
-- [ ] Major upgrades (with Upgrade Status)
+- [x] Major upgrades with Upgrade Status and a Composer trial (`--upgrade`)
 - [ ] Docker mode

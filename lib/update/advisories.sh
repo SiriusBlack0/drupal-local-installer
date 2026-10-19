@@ -34,8 +34,13 @@ explain_blocking_advisories() {
     echo
     echo "           Usually another target is the better choice (a newer minor"
     echo "           brings fixed versions). You may still install this one: the"
-    echo "           advisories are then accepted for this update only; composer.json"
-    echo "           is not changed and the registry notes what was accepted."
+    if [[ "$UPDATE_KIND" == "upgrade" ]]; then
+        echo "           advisories are then accepted for this upgrade only, and the"
+        echo "           registry notes what was accepted."
+    else
+        echo "           advisories are then accepted for this update only; composer.json"
+        echo "           is not changed and the registry notes what was accepted."
+    fi
 
     if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
         echo "           (Dry run: the plan below shows the update with them accepted.)"

@@ -172,6 +172,10 @@ Options:
   --update NAME
               Update Drupal core of a project (patch or minor release), with
               backup and automatic restore on failure; --dry-run only checks
+  --upgrade NAME
+              Upgrade Drupal core of a project to the next major (10 -> 11),
+              after compatibility checks (Upgrade Status, Composer trial);
+              backup and automatic restore on failure; --dry-run only checks
   --php NAME VERSION
               Change the PHP version of a project, e.g. --php mysite 8.4
               (restored automatically on failure; --dry-run only checks)
@@ -193,7 +197,7 @@ USAGE
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
 # 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
-# 9 --php-source, 10 --php, 11 --install-completion.
+# 9 --php-source, 10 --php, 11 --install-completion, 12 --upgrade.
 REMOVE_PROJECT=""
 PHP_TARGET_VERSION=""
 
@@ -230,6 +234,18 @@ parse_options() {
                 fi
 
                 action="update"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                shift
+                ;;
+            --upgrade)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --upgrade needs a project name, e.g. --upgrade mysite"
+                    return 1
+                fi
+
+                action="upgrade"
                 # Used by install.sh.
                 # shellcheck disable=SC2034
                 REMOVE_PROJECT="$2"
@@ -277,8 +293,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "php" ]]; then
-        echo "[ERROR] --dry-run only works with --remove, --update and --php"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" ]]; then
+        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade and --php"
         return 1
     fi
 
@@ -292,6 +308,7 @@ parse_options() {
         php-source) return 9 ;;
         php) return 10 ;;
         install-completion) return 11 ;;
+        upgrade) return 12 ;;
     esac
 
     return 0

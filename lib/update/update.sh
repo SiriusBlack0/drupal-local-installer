@@ -4,7 +4,7 @@
 # Updating Drupal core (--check-updates, --update NAME)
 #
 # Patch (10.6.16 -> 10.6.18) and minor (10.6 -> 10.7) updates of Drupal
-# core only. Major upgrades are not automated.
+# core only. Major upgrades: lib/upgrade/ (--upgrade NAME).
 #
 # The target version is fixed with "composer update --with", so
 # composer.json is never changed. Before anything changes, the database
@@ -43,6 +43,8 @@ UPDATE_EXTRA_ARGS=()
 UPDATE_ACCEPTED_ADVISORIES=""
 # The target that was not chosen (patch or minor), for advice.
 UPDATE_ALTERNATIVE=""
+# "update" or "upgrade" (--upgrade reuses the backup and the restore).
+UPDATE_KIND="update"
 
 
 set_maintenance_mode() {
@@ -67,7 +69,7 @@ rollback_update() {
     local failed=0
 
     echo
-    echo "Restoring the project as it was before the update..."
+    echo "Restoring the project as it was before the ${UPDATE_KIND}..."
 
     if ! cp -p -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/"; then
         echo "[FAILED] composer.json and composer.lock could not be copied back"
@@ -177,22 +179,12 @@ choose_update_target() {
     done
 }
 
-run_update_project() {
-    local machine_name
-    local record
-    local web_root
-    local current
-    local targets
-    local patch
-    local minor
+# Checks shared by --update and --upgrade (read only): the project is
+# registered, belongs to the developer, is a working Composer project with
+# a stable Drupal 10+ release. Takes the lock. Sets the caller's
+# machine_name, record, web_root and current (and the UPDATE_* basics).
+check_core_change_project() {
     local with_args=()
-    local package
-    local dry_output
-    local errors_before=""
-    local errors_after=""
-    local new_errors
-    local security_status
-    local blocked
 
     machine_name="$(get_project_machine_name "$1")"
 
@@ -281,6 +273,27 @@ run_update_project() {
         echo "          Fix that first: an update could not be checked afterwards."
         return 1
     fi
+}
+
+run_update_project() {
+    local machine_name
+    local record
+    local web_root
+    local current
+    local targets
+    local patch
+    local minor
+    local with_args=()
+    local package
+    local dry_output
+    local errors_before=""
+    local errors_after=""
+    local new_errors
+    local security_status
+    local blocked
+
+    UPDATE_KIND="update"
+    check_core_change_project "$1" || return 1
 
     echo
     echo "Looking for updates of $UPDATE_CORE_PACKAGE $current..."
@@ -295,7 +308,7 @@ run_update_project() {
 
     if [[ -z "$patch" && -z "$minor" ]]; then
         echo "[OK] Drupal $current is the newest release of Drupal ${current%%.*}."
-        echo "     Major upgrades are not automated."
+        echo "     For the next major: ./install.sh --upgrade $machine_name --dry-run"
         return 0
     fi
 

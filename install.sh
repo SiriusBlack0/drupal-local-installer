@@ -5,8 +5,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Modules only define functions; main() decides what runs and when.
-# lib/database.sh, lib/system.sh, lib/ui.sh, lib/update.sh and
-# lib/php_change.sh load the files of the folder with the same name.
+# lib/database.sh, lib/system.sh, lib/ui.sh, lib/update.sh, lib/upgrade.sh
+# and lib/php_change.sh load the files of the folder with the same name.
 source "$SCRIPT_DIR/lib/output.sh"
 source "$SCRIPT_DIR/lib/drupal.sh"
 source "$SCRIPT_DIR/lib/php.sh"
@@ -28,6 +28,7 @@ source "$SCRIPT_DIR/lib/composer.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"
+source "$SCRIPT_DIR/lib/upgrade.sh"
 source "$SCRIPT_DIR/lib/php_source.sh"
 source "$SCRIPT_DIR/lib/php_change.sh"
 source "$SCRIPT_DIR/lib/completion.sh"
@@ -124,6 +125,12 @@ main() {
             ;;
         11)
             run_command run_install_completion
+            ;;
+        12)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "$(get_project_machine_name "$REMOVE_PROJECT")-upgrade"
+            run_command run_upgrade_project "$REMOVE_PROJECT"
             ;;
         *) exit 1 ;;
     esac

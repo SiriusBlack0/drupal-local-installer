@@ -96,7 +96,7 @@ create_update_backup() {
     local old_umask
     local ok=1
 
-    UPDATE_BACKUP_DIR="$(get_backup_base_dir)/${machine_name}-update-$(date +%Y%m%d-%H%M%S)"
+    UPDATE_BACKUP_DIR="$(get_backup_base_dir)/${machine_name}-${UPDATE_KIND}-$(date +%Y%m%d-%H%M%S)"
 
     if ! run_as_project_user "$PROJECT_USER" install -d -m 0700 "$UPDATE_BACKUP_DIR"; then
         echo "[ERROR] Could not create the backup directory: $UPDATE_BACKUP_DIR"

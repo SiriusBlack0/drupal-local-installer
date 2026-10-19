@@ -31,6 +31,7 @@ modules = [
     "lib/scan.sh",
     "lib/remove.sh",
     "lib/update.sh",
+    "lib/upgrade.sh",
     "lib/php_source.sh",
     "lib/php_change.sh",
     "lib/completion.sh",
@@ -55,6 +56,7 @@ loaders = {
     "system": ["checks", "services", "apt"],
     "ui": ["project", "drupal", "php", "database", "admin", "confirm"],
     "update": ["check", "backup", "snapshot", "advisories", "update"],
+    "upgrade": ["checks", "upgrade_status", "composer", "upgrade"],
     "php_change": ["pool", "launchers", "checks", "php_change"],
 }
 

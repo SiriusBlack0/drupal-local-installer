@@ -1,7 +1,7 @@
 # Bash completion (Tab) for drupal-local-installer: ./install.sh
 #
 # Installed for the current user by: ./install.sh --install-completion
-# Completes the options, the registered projects (--update, --php,
+# Completes the options, the registered projects (--update, --upgrade, --php,
 # --remove, --unregister), the PHP versions the project's Drupal release
 # supports (--php NAME <Tab>) and --dry-run.
 
@@ -53,7 +53,7 @@ _drupal_local_installer() {
     local name=""
     local word
     local i
-    local options="--list --scan --check-updates --update --php --php-source --remove --unregister --install-completion --verbose --step --help"
+    local options="--list --scan --check-updates --update --upgrade --php --php-source --remove --unregister --install-completion --verbose --step --help"
 
     COMPREPLY=()
 
@@ -71,7 +71,7 @@ _drupal_local_installer() {
 
     for (( i = 1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            --update|--remove|--unregister|--php)
+            --update|--upgrade|--remove|--unregister|--php)
                 action="${COMP_WORDS[i]}"
                 action_index="$i"
                 name="${COMP_WORDS[i + 1]:-}"
@@ -84,7 +84,7 @@ _drupal_local_installer() {
     done
 
     case "$prev" in
-        --update|--remove|--unregister|--php)
+        --update|--upgrade|--remove|--unregister|--php)
             mapfile -t COMPREPLY < <(compgen -W "$(_dli_projects)" -- "$cur")
             return 0
             ;;
@@ -96,7 +96,7 @@ _drupal_local_installer() {
     fi
 
     case "$action" in
-        --update|--remove|--php)
+        --update|--upgrade|--remove|--php)
             for word in "${COMP_WORDS[@]}"; do
                 [[ "$word" == "--dry-run" ]] && return 0
             done
