@@ -51,6 +51,16 @@ log_line() {
     fi
 }
 
+# Shows what comes through stdin and copies it into the log, for steps
+# that print only short status lines (no secrets).
+copy_to_log() {
+    if [[ -n "$LOG_FILE" ]]; then
+        tee -a "$LOG_FILE"
+    else
+        cat
+    fi
+}
+
 # Starts the next numbered step: "[2/4] Installing required packages".
 step() {
     local title="$1"

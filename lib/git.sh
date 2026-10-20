@@ -123,15 +123,49 @@ check_staged_secrets() {
         return 1
     fi
 
-    # The password goes to git through stdin, never in a command line.
-    if [[ -n "${DATABASE_PASSWORD:-}" ]] &&
-       printf '%s\n' "$DATABASE_PASSWORD" |
-            project_git "$project_path" "$run_user" grep --cached -q -F -f - 2>/dev/null; then
-        echo "[WARNING] A staged file contains the database password."
-        return 1
+    check_staged_password "$project_path" "$run_user"
+}
+
+# Shorter passwords are not searched for: they appear in ordinary text
+# (a password "1" is in almost every file).
+GIT_PASSWORD_SEARCH_MIN=8
+
+# The database password in a staged file: the files are listed (never
+# the password) and the user decides. Without an answer: no commit.
+check_staged_password() {
+    local project_path="$1"
+    local run_user="$2"
+    local files
+    local count
+    local answer
+
+    [[ -n "${DATABASE_PASSWORD:-}" ]] || return 0
+
+    if [[ "${#DATABASE_PASSWORD}" -lt "$GIT_PASSWORD_SEARCH_MIN" ]]; then
+        echo "[INFO] The database password is shorter than $GIT_PASSWORD_SEARCH_MIN characters, so it is"
+        echo "       not searched for in the files (it would match ordinary text)."
+        echo "       It is only in settings.local.php, which git ignores."
+        return 0
     fi
 
-    return 0
+    # The password goes to git through stdin, never in a command line.
+    files="$(printf '%s\n' "$DATABASE_PASSWORD" |
+        project_git "$project_path" "$run_user" grep --cached -l -F -f - 2>/dev/null)" || files=""
+
+    [[ -n "$files" ]] || return 0
+
+    count="$(grep -c . <<< "$files")"
+    echo "[WARNING] The database password appears in $count staged file(s):"
+    head -n 10 <<< "$files" | sed 's/^/            /'
+    [[ "$count" -gt 10 ]] && echo "            ... ($((count - 10)) more)"
+    echo "          It may be a coincidence (a common word), or a real copy of it."
+
+    if ! read -r -p "Commit these files anyway? [y/N]: " answer; then
+        echo
+        answer=""
+    fi
+
+    [[ "$answer" == "y" || "$answer" == "Y" ]]
 }
 
 print_git_identity_help() {

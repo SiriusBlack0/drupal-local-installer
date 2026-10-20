@@ -241,4 +241,18 @@ else
     fail "step mode: $output"
 fi
 
+# Test 9: copy_to_log shows the lines and copies them into the log.
+
+LOG_FILE="$work_dir/copy.log"
+: > "$LOG_FILE"
+shown="$(printf '[OK] one\n[OK] two\n' | copy_to_log)"
+no_log="$(LOG_FILE="" copy_to_log <<< "[OK] three")"
+
+if [[ "$shown" == $'[OK] one\n[OK] two' && "$(cat "$LOG_FILE")" == "$shown" &&
+      "$no_log" == "[OK] three" ]]; then
+    pass "copy_to_log: shown and logged; without a log only shown"
+else
+    fail "copy_to_log: $shown / $(cat "$LOG_FILE") / $no_log"
+fi
+
 echo "[SUCCESS] Output tests passed."

@@ -10,8 +10,9 @@ to_console() { echo "(back to the terminal)"; }
 
 # The real log_line, writing into a temporary log file.
 LOG_FILE="$(mktemp)"
-trap 'rm -f "$LOG_FILE"' EXIT
+trap 'rm -f "$LOG_FILE" "${git_args_file:-}"' EXIT
 log_line() { printf '%s\n' "$*" >> "$LOG_FILE"; }
+copy_to_log() { tee -a "$LOG_FILE"; }
 
 DATABASE_ENGINE="mariadb"
 DATABASE_NAME="drupal_db"
@@ -86,7 +87,10 @@ create_start_script() {
 
 run_final_checks() { calls+="checks "; checks_args="$*"; return 0; }
 write_project_record() { calls+="record "; return "${record_result:-0}"; }
-setup_project_git() { calls+="git "; git_args="$*"; echo "git step"; return "${git_result:-0}"; }
+# Runs in a pipeline (its output is copied to the log): the arguments
+# go through a file.
+git_args_file="$(mktemp)"
+setup_project_git() { printf '%s\n' "$*" > "$git_args_file"; echo "[OK] git step done"; return "${git_result:-0}"; }
 
 # Removals are also written to $removals_file when it is set (for runs
 # in a subshell, whose $calls is lost).
@@ -253,34 +257,38 @@ else
     fail "registry failure: $output"
 fi
 
-# Test 6a: The git repository comes last, after the registry; a git
-# failure is only a warning.
+# Test 6a: The git repository comes last, after the registry; its
+# output is also in the log; a git failure is only a warning.
 
 reset_results
 GIT_SETUP="yes"
+: > "$git_args_file"
 
-if output="$(run_installation_workflow; echo "calls=$calls")" &&
-   [[ "$output" == *"calls=plan execute readiness directory database pool site composer verify drupal start_script checks record git "* ]]; then
+if output="$(run_installation_workflow)" &&
+   [[ "$output" == *"[OK] git step done"* ]] &&
+   [[ "$(cat "$git_args_file")" == "/tmp/test-drupal devuser Initial commit: Drupal 11.4.8 project test_drupal" ]] &&
+   grep -qF "[OK] git step done" "$LOG_FILE"; then
     reset_results
     GIT_SETUP="yes"
-    run_installation_workflow > /dev/null
-    if [[ "$git_args" == "/tmp/test-drupal devuser Initial commit: Drupal 11.4.8 project test_drupal" ]]; then
-        reset_results
-        GIT_SETUP="yes"
-        git_result=1
-        if run_installation_workflow > /dev/null; then
-            pass "Git step last, with the project path, user and commit message; a failure only warns"
-        else
-            fail "git failure stopped the workflow"
-        fi
+    git_result=1
+    if run_installation_workflow > /dev/null; then
+        pass "Git step with the project path, user and commit message; output in the log; a failure only warns"
     else
-        fail "git args: $git_args"
+        fail "git failure stopped the workflow"
     fi
 else
-    fail "git step: $output"
+    fail "git step: $output / $(cat "$git_args_file")"
 fi
 
 reset_results
+: > "$git_args_file"
+run_installation_workflow > /dev/null
+
+if [[ ! -s "$git_args_file" ]]; then
+    pass "No git step when the user said no"
+else
+    fail "git step without consent"
+fi
 
 # Test 6b: A failed rollback step is reported with the path to remove.
 

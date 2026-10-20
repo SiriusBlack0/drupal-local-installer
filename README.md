@@ -190,9 +190,13 @@ if it is missing, and after the final checks:
 - `.git/info/exclude` (this computer only, never shared): `./start`,
   `./drush`, `./composer` and `.drupal-local-installer/`, which point to
   this computer's PHP and services;
-- `git add -A`, then a check that nothing secret is staged
-  (`settings.local.php`, the database password, database settings in
-  `settings.php`). If something is, nothing is staged or committed;
+- `git add -A`, then a check that nothing secret is staged:
+  `settings.local.php` or database settings in `settings.php` stop the
+  commit. If the database password appears in a staged file, the files
+  are listed (never the password) and you decide whether to commit
+  (default no). A password shorter than 8 characters is not searched
+  for, since it would match ordinary text (`1` is in almost every file);
+- the output of this step is also in the log;
 - the initial commit, when git knows your name and email. Otherwise the
   files stay staged and the commands to set them and commit are shown.
 

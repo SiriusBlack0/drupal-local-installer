@@ -232,7 +232,8 @@ perform_installation_workflow() {
 
         # Only warnings: the project works without git.
         setup_project_git "$PROJECT_PATH" "$PROJECT_USER" \
-            "Initial commit: Drupal $DRUPAL_VERSION project $PROJECT_MACHINE_NAME" || true
+            "Initial commit: Drupal $DRUPAL_VERSION project $PROJECT_MACHINE_NAME" |
+            copy_to_log || true
     fi
 
     return 0

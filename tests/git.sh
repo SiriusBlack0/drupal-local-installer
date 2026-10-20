@@ -213,16 +213,44 @@ fi
 project="$(new_project leaked_password)"
 echo "password: $DB_SECRET" > "$project/web/modules/custom/mymodule/notes.txt"
 
-if output="$(setup_project_git "$project" "$current_user" "Initial commit: test")"; then
-    fail "Password in a staged file accepted"
-elif [[ "$output" == *"A staged file contains the database password."* &&
+if output="$(setup_project_git "$project" "$current_user" "Initial commit: test" < /dev/null)"; then
+    fail "Password in a staged file accepted without an answer"
+elif [[ "$output" == *"The database password appears in 1 staged file(s):"* &&
+        "$output" == *"web/modules/custom/mymodule/notes.txt"* &&
         "$output" == *"Nothing was committed."* &&
         "$output" != *"$DB_SECRET"* ]] &&
      ! git -C "$project" rev-parse -q --verify HEAD > /dev/null &&
      [[ -z "$(git -C "$project" diff --cached --name-only)" ]]; then
-    pass "Password in a staged file: unstaged, not committed, not printed"
+    pass "Password in a staged file: files listed (not the password); no answer = no commit"
 else
     fail "leaked password: $output"
+fi
+
+rm -rf "$project/.git"
+
+if output="$(setup_project_git "$project" "$current_user" "Initial commit: test" <<< "n")" ||
+   git -C "$project" rev-parse -q --verify HEAD > /dev/null; then
+    fail "Password in a staged file committed after 'n'"
+else
+    rm -rf "$project/.git"
+    if setup_project_git "$project" "$current_user" "Initial commit: test" <<< "y" > /dev/null &&
+       git -C "$project" ls-files --error-unmatch web/modules/custom/mymodule/notes.txt > /dev/null 2>&1; then
+        pass "Password in a staged file: the user decides (n = no commit, y = commit)"
+    else
+        fail "commit anyway after 'y'"
+    fi
+fi
+
+# A short password matches ordinary text: not searched for, only noted.
+
+project="$(new_project short_password)"
+
+if output="$(DATABASE_PASSWORD="1" setup_project_git "$project" "$current_user" "Initial commit: test" < /dev/null)" &&
+   [[ "$output" == *"shorter than 8 characters, so it is"* ]] &&
+   [[ "$(tracked "$project")" == "$expected_files" ]]; then
+    pass "Short password (e.g. '1'): noted, not searched for; the commit is made"
+else
+    fail "short password: $output"
 fi
 
 project="$(new_project database_in_settings)"
