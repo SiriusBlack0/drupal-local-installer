@@ -94,7 +94,7 @@ new_project() {
 }
 
 tracked() {
-    git -C "$1" ls-files | sort | tr '\n' ' '
+    git -C "$1" ls-files | LC_ALL=C sort | tr '\n' ' '
 }
 
 expected_files=".gitignore composer.json composer.lock config/sync/system.site.yml web/.htaccess web/index.php web/modules/custom/mymodule/mymodule.info.yml web/sites/default/default.settings.php web/sites/default/settings.php "
@@ -141,7 +141,7 @@ project="$(new_project without_identity)"
 
 if output="$(setup_project_git "$project" "$current_user" "Initial commit: test")" &&
    ! git -C "$project" rev-parse -q --verify HEAD > /dev/null &&
-   [[ "$(git -C "$project" diff --cached --name-only | sort | tr '\n' ' ')" == "$expected_files" ]] &&
+   [[ "$(git -C "$project" diff --cached --name-only | LC_ALL=C sort | tr '\n' ' ')" == "$expected_files" ]] &&
    [[ "$output" == *"git does not know your name and email"* ]] &&
    [[ "$output" == *"git config --global user.email"* ]] &&
    [[ "$output" == *"cd $project && git commit -m \"Initial commit: test\""* ]]; then
