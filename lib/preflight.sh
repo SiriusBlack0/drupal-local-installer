@@ -71,6 +71,19 @@ plan_required_packages() {
         add_install_package "curl"
     fi
 
+    # git only when the project gets a repository (phase 1 question).
+    if [[ "${GIT_SETUP:-no}" == "yes" ]]; then
+        echo
+        echo "Checking git..."
+
+        if command -v git > /dev/null 2>&1; then
+            echo "[OK] git is installed."
+        else
+            echo "[MISSING] git"
+            add_install_package "git"
+        fi
+    fi
+
     echo
     echo "Checking Nginx..."
 

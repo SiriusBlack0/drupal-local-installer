@@ -26,6 +26,7 @@ source "$SCRIPT_DIR/lib/readiness.sh"
 source "$SCRIPT_DIR/lib/project.sh"
 source "$SCRIPT_DIR/lib/site.sh"
 source "$SCRIPT_DIR/lib/composer.sh"
+source "$SCRIPT_DIR/lib/git.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"
@@ -153,6 +154,8 @@ main() {
     # Detailed command output goes to a private log file.
     init_log "$PROJECT_MACHINE_NAME"
     STEP_TOTAL=8
+    # One more step for the git repository.
+    [[ "${GIT_SETUP:-no}" == "yes" ]] && STEP_TOTAL=9
 
     # Ask for the sudo password once, right after the confirmation.
     # sudo remembers it per terminal for the rest of the run.
@@ -190,6 +193,7 @@ print_project_summary() {
     echo "======================================"
     echo
     echo "Path:     $PROJECT_PATH"
+    echo "Secrets:  web/sites/default/settings.local.php (database, hash salt; not in git)"
     echo "Site:     http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")"
     echo "Admin:    http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")/user/login"
     echo "User:     $ADMIN_USER"

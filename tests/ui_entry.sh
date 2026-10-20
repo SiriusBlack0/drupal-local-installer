@@ -33,6 +33,7 @@ prompt_database_name() { log_call db_name; }
 prompt_database_user() { log_call db_user; }
 prompt_database_password() { log_call db_password; }
 configure_admin_account() { log_call admin; }
+prompt_git_setup() { log_call git; }
 confirm_installation() { log_call confirm; }
 
 # Test 2: Full question order for a server database.
@@ -42,7 +43,7 @@ DATABASE_ENGINE="mariadb"
 DATABASE_STATUS="installed"
 run_configuration_ui > /dev/null
 
-expected="project_name drupal_version php_requirements php_resolve php_version db_detect db_select db_name db_user db_password admin confirm "
+expected="project_name drupal_version php_requirements php_resolve php_version db_detect db_select db_name db_user db_password admin git confirm "
 
 if [[ "$call_log" == "$expected" ]]; then
     echo "[PASS] Configuration order for MariaDB"
@@ -57,7 +58,7 @@ call_log=""
 DATABASE_ENGINE="sqlite"
 run_configuration_ui > /dev/null
 
-expected="project_name drupal_version php_requirements php_resolve php_version db_detect db_select sqlite_config admin confirm "
+expected="project_name drupal_version php_requirements php_resolve php_version db_detect db_select sqlite_config admin git confirm "
 
 if [[ "$call_log" == "$expected" ]]; then
     echo "[PASS] Configuration order for SQLite"
@@ -100,7 +101,7 @@ call_log=""
 DATABASE_ENGINE="sqlite"
 run_configuration_ui <<< "1" > /dev/null
 
-expected="project_name drupal_version php_requirements php_resolve drupal_version php_requirements php_resolve php_version db_detect db_select sqlite_config admin confirm "
+expected="project_name drupal_version php_requirements php_resolve drupal_version php_requirements php_resolve php_version db_detect db_select sqlite_config admin git confirm "
 
 if [[ "$call_log" == "$expected" ]]; then
     echo "[PASS] Blocked release returns to Drupal version selection"

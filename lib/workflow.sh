@@ -227,5 +227,13 @@ perform_installation_workflow() {
         echo "          so it will not appear in ./install.sh --list."
     fi
 
+    if [[ "${GIT_SETUP:-no}" == "yes" ]]; then
+        step "Git repository"
+
+        # Only warnings: the project works without git.
+        setup_project_git "$PROJECT_PATH" "$PROJECT_USER" \
+            "Initial commit: Drupal $DRUPAL_VERSION project $PROJECT_MACHINE_NAME" || true
+    fi
+
     return 0
 }

@@ -13,5 +13,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/ui/php.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/ui/database.sh"
 # shellcheck source=lib/ui/admin.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ui/admin.sh"
+# shellcheck source=lib/ui/git.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ui/git.sh"
 # shellcheck source=lib/ui/confirm.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ui/confirm.sh"

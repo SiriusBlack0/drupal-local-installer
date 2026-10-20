@@ -29,6 +29,7 @@ modules = [
     "lib/project.sh",
     "lib/site.sh",
     "lib/composer.sh",
+    "lib/git.sh",
     "lib/scan.sh",
     "lib/remove.sh",
     "lib/update.sh",
@@ -55,7 +56,7 @@ assert positions == sorted(positions), "Incorrect module loading order"
 loaders = {
     "database": ["common", "mysql", "postgresql", "sqlite"],
     "system": ["checks", "services", "apt"],
-    "ui": ["project", "drupal", "php", "database", "admin", "confirm"],
+    "ui": ["project", "drupal", "php", "database", "admin", "git", "confirm"],
     "update": ["check", "backup", "snapshot", "advisories", "update"],
     "upgrade": ["checks", "upgrade_status", "composer", "upgrade"],
     "php_change": ["pool", "launchers", "checks", "php_change"],

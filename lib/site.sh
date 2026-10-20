@@ -5,7 +5,8 @@
 #
 # Secrets never appear in a command line, where any local user could
 # read them with "ps", and never in the log:
-# - the database password is written into settings.php through stdin;
+# - the database password is written into settings.local.php through
+#   stdin;
 # - the administrator password is passed to Drush through stdin.
 # ==================================================
 
@@ -30,31 +31,41 @@ get_drupal_database_driver() {
     esac
 }
 
-# Prints the settings.php block for the project.
-# Arguments: machine_name engine database user password sqlite_path
-generate_drupal_settings() {
-    local machine_name="$1"
-    local engine="$2"
-    local database_name="$3"
-    local database_user="$4"
-    local database_password="$5"
-    local sqlite_path="$6"
-    local driver
-    local domain_pattern
+# A random hash salt, like the one Drupal's installer writes (URL-safe
+# base64 of 55 random bytes).
+generate_hash_salt() {
+    openssl rand -base64 55 | tr -d '\n=' | tr '+/' '-_'
+}
 
-    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]] ||
-       ! driver="$(get_drupal_database_driver "$engine")"; then
-        echo "[ERROR] Invalid project name or database engine." >&2
+# Prints settings.local.php: the database credentials and the hash
+# salt. It is the only file with secrets; git ignores it.
+# Arguments: engine database user password sqlite_path hash_salt
+generate_drupal_local_settings() {
+    local engine="$1"
+    local database_name="$2"
+    local database_user="$3"
+    local database_password="$4"
+    local sqlite_path="$5"
+    local hash_salt="$6"
+    local driver
+
+    if ! driver="$(get_drupal_database_driver "$engine")"; then
+        echo "[ERROR] Invalid database engine." >&2
         return 1
     fi
 
-    domain_pattern="^${machine_name}\\.localhost\$"
+    if [[ ! "$hash_salt" =~ ^[A-Za-z0-9_-]{40,}$ ]]; then
+        echo "[ERROR] Invalid hash salt." >&2
+        return 1
+    fi
 
     printf '%s\n' \
+        '<?php' \
         '' \
-        '// ------------------------------------------------------------' \
-        '// Added by drupal-local-installer.' \
-        '// ------------------------------------------------------------' \
+        '// Written by drupal-local-installer. Secrets of this site: the' \
+        '// database credentials and the hash salt. Never commit this file' \
+        '// (.gitignore leaves it out); settings.php includes it.' \
+        '' \
         "\$databases['default']['default'] = ["
 
     case "$driver" in
@@ -99,22 +110,60 @@ generate_drupal_settings() {
         "  'autoload' => 'core/modules/${driver}/src/Driver/Database/${driver}/'," \
         '];' \
         '' \
+        "\$settings['hash_salt'] = '$hash_salt';"
+}
+
+# Prints the block appended to settings.php. No secrets: settings.php
+# can be committed to git.
+generate_drupal_settings() {
+    local machine_name="$1"
+    local domain_pattern
+
+    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
+        echo "[ERROR] Invalid project name." >&2
+        return 1
+    fi
+
+    domain_pattern="^${machine_name}\\.localhost\$"
+
+    # Text between single quotes is PHP code, written literally.
+    # shellcheck disable=SC2016
+    printf '%s\n' \
+        '' \
+        '// ------------------------------------------------------------' \
+        '// Added by drupal-local-installer.' \
+        '// ------------------------------------------------------------' \
+        '' \
         '// Only answer for this project'"'"'s own address.' \
         "\$settings['trusted_host_patterns'] = ['$(escape_php_string "$domain_pattern")'];" \
         '' \
         '// Configuration export lives outside the web root.' \
-        "\$settings['config_sync_directory'] = '../config/sync';"
+        "\$settings['config_sync_directory'] = '../config/sync';" \
+        '' \
+        '// Database credentials and the hash salt: settings.local.php (not' \
+        '// in git). Keep secrets there, never in this file.' \
+        'if (file_exists($app_root . '"'"'/'"'"' . $site_path . '"'"'/settings.local.php'"'"')) {' \
+        '  include $app_root . '"'"'/'"'"' . $site_path . '"'"'/settings.local.php'"'"';' \
+        '}'
 }
 
 # Creates web/sites/default/settings.php from Drupal's own template
-# and appends the project settings. The database password travels
-# through stdin, never through a command line.
+# plus the project block, and settings.local.php with the secrets
+# (mode 600, written through stdin: never in a command line).
+#
+# With the database, the hash salt and the config directory all set
+# before site:install, Drupal's installer skips its settings form and
+# leaves settings.php alone; otherwise it would write the database
+# password into settings.php.
 write_drupal_settings() {
     local project_path="$1"
     local run_user="$2"
     local settings_dir="$project_path/web/sites/default"
     local settings_file="$settings_dir/settings.php"
+    local local_file="$settings_dir/settings.local.php"
     local settings
+    local local_settings
+    local hash_salt
 
     if [[ ! -f "$settings_dir/default.settings.php" ]]; then
         echo "[ERROR] Drupal settings template not found: $settings_dir/default.settings.php"
@@ -126,23 +175,57 @@ write_drupal_settings() {
         return 1
     fi
 
-    settings="$(generate_drupal_settings \
-        "$PROJECT_MACHINE_NAME" \
+    if [[ -e "$local_file" || -L "$local_file" ]]; then
+        echo "[ERROR] settings.local.php already exists: $local_file"
+        return 1
+    fi
+
+    if ! hash_salt="$(generate_hash_salt)" || [[ -z "$hash_salt" ]]; then
+        echo "[ERROR] Could not generate a hash salt (openssl)."
+        return 1
+    fi
+
+    settings="$(generate_drupal_settings "$PROJECT_MACHINE_NAME")" || return 1
+    local_settings="$(generate_drupal_local_settings \
         "$DATABASE_ENGINE" \
         "${DATABASE_NAME:-}" \
         "${DATABASE_USER:-}" \
         "${DATABASE_PASSWORD:-}" \
-        "${SQLITE_DATABASE_PATH:-}")" || return 1
+        "${SQLITE_DATABASE_PATH:-}" \
+        "$hash_salt")" || return 1
+
+    # The empty file is made private first, then filled.
+    if ! run_as_project_user "$run_user" touch "$local_file" ||
+       ! run_as_project_user "$run_user" chmod 600 "$local_file" ||
+       ! printf '%s\n' "$local_settings" |
+            run_as_project_user "$run_user" tee "$local_file" > /dev/null; then
+        echo "[ERROR] Could not write $local_file"
+        return 1
+    fi
 
     if ! run_as_project_user "$run_user" \
             cp "$settings_dir/default.settings.php" "$settings_file" ||
        ! printf '%s\n' "$settings" |
-            run_as_project_user "$run_user" tee -a "$settings_file" > /dev/null; then
+            run_as_project_user "$run_user" tee -a "$settings_file" > /dev/null ||
+       ! run_as_project_user "$run_user" mkdir -p "$project_path/config/sync"; then
         echo "[ERROR] Could not write $settings_file"
         return 1
     fi
 
-    echo "[OK] settings.php written (database, trusted host, config directory)"
+    echo "[OK] settings.php written (trusted host, config directory)"
+    echo "[OK] settings.local.php written (database, hash salt; private, not for git)"
+}
+
+# settings.php must stay free of secrets: Drupal's installer could
+# still write the database settings into it.
+check_settings_without_secrets() {
+    local settings_file="$1/web/sites/default/settings.php"
+
+    if grep -qE "^[[:space:]]*\\\$databases\\[|^[[:space:]]*\\\$settings\\['hash_salt'\\][[:space:]]*=[[:space:]]*'[^']" "$settings_file" 2>/dev/null; then
+        return 1
+    fi
+
+    return 0
 }
 
 # Drupal itself generates a temporary administrator password here; it
@@ -323,6 +406,14 @@ run_final_checks() {
         echo "[OK] settings.php cannot be changed by other users ($mode)"
     else
         echo "[WARNING] settings.php is writable by other users: $settings_file"
+        warnings=$((warnings + 1))
+    fi
+
+    if check_settings_without_secrets "$project_path"; then
+        echo "[OK] settings.php has no secrets (they are in settings.local.php)"
+    else
+        echo "[WARNING] settings.php contains database settings or the hash salt:"
+        echo "          do not commit it to git as it is."
         warnings=$((warnings + 1))
     fi
 

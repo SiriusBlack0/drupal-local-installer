@@ -171,4 +171,31 @@ echo "[PASS] Database driver extension planned for each engine"
     check "curl not planned when installed" "" "${INSTALL_PACKAGES[*]}"
 ) || exit 1
 
+# Test 12: git is planned only when the project gets a repository.
+
+(
+    is_composer_installed() { return 0; }
+    is_nginx_installed() { return 0; }
+    is_php_fpm_installed() { return 0; }
+    is_php_cli_installed() { return 0; }
+    PHP_VERSION="8.5"
+
+    empty_bin="$(mktemp -d)"
+    trap 'rm -rf "$empty_bin"' EXIT
+    ln -s "$(type -P true)" "$empty_bin/curl"
+
+    INSTALL_PACKAGES=()
+    GIT_SETUP="yes" PATH="$empty_bin" plan_required_packages > /dev/null
+    check "git planned when missing and wanted" "git" "${INSTALL_PACKAGES[*]}"
+
+    INSTALL_PACKAGES=()
+    GIT_SETUP="no" PATH="$empty_bin" plan_required_packages > /dev/null
+    check "git not planned without a repository" "" "${INSTALL_PACKAGES[*]}"
+
+    INSTALL_PACKAGES=()
+    ln -s "$(type -P true)" "$empty_bin/git"
+    GIT_SETUP="yes" PATH="$empty_bin" plan_required_packages > /dev/null
+    check "git not planned when installed" "" "${INSTALL_PACKAGES[*]}"
+) || exit 1
+
 echo "[SUCCESS] Preflight tests passed."

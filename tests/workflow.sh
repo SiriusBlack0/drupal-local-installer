@@ -86,6 +86,7 @@ create_start_script() {
 
 run_final_checks() { calls+="checks "; checks_args="$*"; return 0; }
 write_project_record() { calls+="record "; return "${record_result:-0}"; }
+setup_project_git() { calls+="git "; git_args="$*"; echo "git step"; return "${git_result:-0}"; }
 
 # Removals are also written to $removals_file when it is set (for runs
 # in a subshell, whose $calls is lost).
@@ -100,7 +101,8 @@ reset_results() {
     calls=""
     unset execute_result readiness_result directory_result database_result \
         pool_result site_result composer_result verify_result drupal_result \
-        remove_pool_result record_result composer_interrupt
+        remove_pool_result record_result composer_interrupt git_result
+    GIT_SETUP="no"
 }
 
 pass() { echo "[PASS] $1"; }
@@ -250,6 +252,35 @@ if output="$(run_installation_workflow)" &&
 else
     fail "registry failure: $output"
 fi
+
+# Test 6a: The git repository comes last, after the registry; a git
+# failure is only a warning.
+
+reset_results
+GIT_SETUP="yes"
+
+if output="$(run_installation_workflow; echo "calls=$calls")" &&
+   [[ "$output" == *"calls=plan execute readiness directory database pool site composer verify drupal start_script checks record git "* ]]; then
+    reset_results
+    GIT_SETUP="yes"
+    run_installation_workflow > /dev/null
+    if [[ "$git_args" == "/tmp/test-drupal devuser Initial commit: Drupal 11.4.8 project test_drupal" ]]; then
+        reset_results
+        GIT_SETUP="yes"
+        git_result=1
+        if run_installation_workflow > /dev/null; then
+            pass "Git step last, with the project path, user and commit message; a failure only warns"
+        else
+            fail "git failure stopped the workflow"
+        fi
+    else
+        fail "git args: $git_args"
+    fi
+else
+    fail "git step: $output"
+fi
+
+reset_results
 
 # Test 6b: A failed rollback step is reported with the path to remove.
 

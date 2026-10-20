@@ -32,6 +32,12 @@ confirm_installation() {
             echo "Admin:    $ADMIN_USER (your password)"
         fi
 
+        if [[ "${GIT_SETUP:-no}" == "yes" ]]; then
+            echo "Git:      git init + initial commit"
+        else
+            echo "Git:      no repository"
+        fi
+
         echo
         echo "======================================"
         echo
@@ -91,5 +97,6 @@ run_configuration_ui() {
 
     configure_database_credentials
     configure_admin_account
+    prompt_git_setup
     confirm_installation
 }

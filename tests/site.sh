@@ -106,69 +106,111 @@ template_line='$databases = [];'
 installed_headers='HTTP/1.1 200 OK\r\nX-Generator: Drupal 11 (https://www.drupal.org)\r\n'
 installer_headers='HTTP/1.1 302 Found\r\nLocation: http://firsttest.localhost/core/install.php\r\n'
 
-# Test 1: settings for every engine.
+# Test 1: settings for every engine. The secrets go to settings.local.php,
+# settings.php gets only the host, the config directory and the include.
 
-mysql_settings="$(generate_drupal_settings firsttest mariadb firsttest firsttest_user "$DB_SECRET" "")"
-pg_settings="$(generate_drupal_settings firsttest postgresql firsttest firsttest_user "$DB_SECRET" "")"
-sqlite_settings="$(generate_drupal_settings firsttest sqlite "" "" "" /var/www/firsttest/private/database.sqlite)"
+SALT="$(generate_hash_salt)"
+mysql_settings="$(generate_drupal_local_settings mariadb firsttest firsttest_user "$DB_SECRET" "" "$SALT")"
+pg_settings="$(generate_drupal_local_settings postgresql firsttest firsttest_user "$DB_SECRET" "" "$SALT")"
+sqlite_settings="$(generate_drupal_local_settings sqlite "" "" "" /var/www/firsttest/private/database.sqlite "$SALT")"
+main_settings="$(generate_drupal_settings firsttest)"
 
-if [[ "$mysql_settings" == *"'driver' => 'mysql'"* &&
+if [[ "$mysql_settings" == "<?php"* &&
+      "$mysql_settings" == *"'driver' => 'mysql'"* &&
       "$mysql_settings" == *"'namespace' => 'Drupal\\\\mysql\\\\Driver\\\\Database\\\\mysql'"* &&
+      "$mysql_settings" == *"\$settings['hash_salt'] = '$SALT';"* &&
       "$pg_settings" == *"'driver' => 'pgsql'"* && "$pg_settings" == *"'port' => '5432'"* &&
       "$sqlite_settings" == *"'database' => '/var/www/firsttest/private/database.sqlite'"* &&
       "$sqlite_settings" != *"'username'"* &&
-      "$mysql_settings" == *"trusted_host_patterns'] = ['^firsttest\\\\.localhost\$']"* &&
-      "$mysql_settings" == *"config_sync_directory'] = '../config/sync'"* ]]; then
-    pass "settings.php block for MariaDB/MySQL, PostgreSQL and SQLite"
+      "$main_settings" == *"trusted_host_patterns'] = ['^firsttest\\\\.localhost\$']"* &&
+      "$main_settings" == *"config_sync_directory'] = '../config/sync'"* &&
+      "$main_settings" == *"include \$app_root . '/' . \$site_path . '/settings.local.php';"* &&
+      "$main_settings" != *"databases"* && "$main_settings" != *"hash_salt'] ="* ]]; then
+    pass "settings.local.php for MariaDB/MySQL, PostgreSQL and SQLite; settings.php block without secrets"
 else
-    fail "settings content: $mysql_settings"
+    fail "settings content: $mysql_settings / $main_settings"
 fi
 
-# Test 2: the generated PHP is valid and keeps every value exactly.
+if [[ "$SALT" =~ ^[A-Za-z0-9_-]{70,}$ && "$SALT" != "$(generate_hash_salt)" ]]; then
+    pass "Hash salt: random, URL-safe, as long as Drupal's"
+else
+    fail "hash salt: $SALT"
+fi
+
+# Test 2: the generated PHP is valid, keeps every value exactly, and
+# settings.php reads settings.local.php.
 
 if ! command -v php > /dev/null; then
     echo "[SKIP] PHP not installed"
 else
     tricky="a'b\\c%d"
-    php_file="$work_dir/check.php"
+    site_dir="$work_dir/php_check/sites/default"
+    mkdir -p "$site_dir"
+    generate_drupal_local_settings mysql firsttest firsttest_user "$tricky" "" "$SALT" > "$site_dir/settings.local.php"
     {
         echo '<?php'
-        generate_drupal_settings firsttest mysql firsttest firsttest_user "$tricky" ""
         # shellcheck disable=SC2016  # PHP code, not shell.
-        echo 'echo $databases["default"]["default"]["password"], "|", $settings["trusted_host_patterns"][0];'
-    } > "$php_file"
+        echo '$app_root = __DIR__ . "/../.."; $site_path = "sites/default";'
+        generate_drupal_settings firsttest
+        # shellcheck disable=SC2016  # PHP code, not shell.
+        echo 'echo $databases["default"]["default"]["password"], "|", $settings["trusted_host_patterns"][0], "|", $settings["hash_salt"];'
+    } > "$site_dir/settings.php"
 
-    if [[ "$(php "$php_file")" == "${tricky}|^firsttest\\.localhost\$" ]] &&
+    if [[ "$(php "$site_dir/settings.php")" == "${tricky}|^firsttest\\.localhost\$|$SALT" ]] &&
        php -r 'exit(preg_match("{^firsttest\\.localhost$}i", "firsttest.localhost") ? 0 : 1);'; then
-        pass "Generated PHP is valid; quotes and backslashes survive"
+        pass "Generated PHP is valid; settings.php includes settings.local.php; quotes and backslashes survive"
     else
-        fail "PHP round trip: $(php "$php_file" 2>&1)"
+        fail "PHP round trip: $(php "$site_dir/settings.php" 2>&1)"
     fi
 fi
 
 # Test 3: invalid input is rejected.
 
-if generate_drupal_settings "my-site" mariadb a b c "" > /dev/null 2>&1 ||
-   generate_drupal_settings firsttest oracle a b c "" > /dev/null 2>&1 ||
-   generate_drupal_settings firsttest mariadb "bad name" b c "" > /dev/null 2>&1 ||
-   generate_drupal_settings firsttest mariadb a b "" "" > /dev/null 2>&1 ||
-   generate_drupal_settings firsttest sqlite "" "" "" "relative/db.sqlite" > /dev/null 2>&1; then
+if generate_drupal_settings "my-site" > /dev/null 2>&1 ||
+   generate_drupal_local_settings oracle a b c "" "$SALT" > /dev/null 2>&1 ||
+   generate_drupal_local_settings mariadb "bad name" b c "" "$SALT" > /dev/null 2>&1 ||
+   generate_drupal_local_settings mariadb a b "" "" "$SALT" > /dev/null 2>&1 ||
+   generate_drupal_local_settings sqlite "" "" "" "relative/db.sqlite" "$SALT" > /dev/null 2>&1 ||
+   generate_drupal_local_settings mariadb a b c "" "short'salt" > /dev/null 2>&1; then
     fail "Invalid settings input accepted"
 else
-    pass "Invalid name, engine, database, empty password and relative SQLite path rejected"
+    pass "Invalid name, engine, database, empty password, relative SQLite path and bad salt rejected"
 fi
 
-# Test 4: settings.php is Drupal's template plus our block.
+# Test 4: settings.php is Drupal's template plus our block;
+# settings.local.php is private and holds the secrets.
 
 set_mariadb_project
 project="$(new_project site_a)"
+settings_file="$project/web/sites/default/settings.php"
+local_file="$project/web/sites/default/settings.local.php"
 
 if write_drupal_settings "$project" "$current_user" > /dev/null &&
-   head -3 "$project/web/sites/default/settings.php" | grep -qxF "$template_line" &&
-   grep -qF "'password' => '$DB_SECRET'" "$project/web/sites/default/settings.php"; then
-    pass "settings.php = default.settings.php + project block"
+   head -3 "$settings_file" | grep -qxF "$template_line" &&
+   ! grep -qF "$DB_SECRET" "$settings_file" &&
+   grep -qF "'password' => '$DB_SECRET'" "$local_file" &&
+   grep -qE "^\\\$settings\\['hash_salt'\\] = '[A-Za-z0-9_-]{70,}';\$" "$local_file" &&
+   [[ "$(stat -c '%a' "$local_file")" == "600" && -d "$project/config/sync" ]] &&
+   check_settings_without_secrets "$project"; then
+    pass "settings.php = template + block (no secrets); settings.local.php private (600); config/sync created"
 else
-    fail "settings.php content"
+    fail "settings files: $(cat "$local_file" 2>&1)"
+fi
+
+# Drupal's installer would write the database into settings.php: caught.
+printf "\$databases['default']['default'] = [];\n" >> "$settings_file"
+with_db="$(check_settings_without_secrets "$project" && echo clean || echo found)"
+sed -i '$d' "$settings_file"
+printf "\$settings['hash_salt'] = 'abc';\n" >> "$settings_file"
+with_salt="$(check_settings_without_secrets "$project" && echo clean || echo found)"
+sed -i '$d' "$settings_file"
+printf "\$settings['hash_salt'] = '';\n\$databases = [];\n" >> "$settings_file"
+template_only="$(check_settings_without_secrets "$project" && echo clean || echo found)"
+
+if [[ "$with_db" == found && "$with_salt" == found && "$template_only" == clean ]]; then
+    pass "Database settings or a hash salt in settings.php are detected; the template's empty ones are not"
+else
+    fail "secret check: $with_db $with_salt $template_only"
 fi
 
 if write_drupal_settings "$project" "$current_user" > /dev/null; then
@@ -177,7 +219,17 @@ else
     pass "Existing settings.php left untouched"
 fi
 
-rm -f "$project/web/sites/default/default.settings.php" "$project/web/sites/default/settings.php"
+rm -f "$settings_file"
+
+if output="$(write_drupal_settings "$project" "$current_user")"; then
+    fail "Existing settings.local.php overwritten"
+elif [[ "$output" == *"settings.local.php already exists"* ]]; then
+    pass "Existing settings.local.php left untouched"
+else
+    fail "existing settings.local.php: $output"
+fi
+
+rm -f "$project/web/sites/default/default.settings.php" "$local_file"
 
 if output="$(write_drupal_settings "$project" "$current_user")"; then
     fail "Missing template accepted"
@@ -281,6 +333,7 @@ else
           "$output" == *"[OK] Files directory is writable"* &&
           "$output" == *"[OK] settings.php cannot be changed by other users (444)"* &&
           "$output" == *"[OK] Drupal status report: no errors"* &&
+          "$output" == *"[OK] settings.php has no secrets"* &&
           "$output" != *"WARNING"* ]]; then
         pass "Final checks: database, files, settings.php, status report"
     else

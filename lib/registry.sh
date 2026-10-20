@@ -7,7 +7,8 @@
 # One file per project, readable only by the owner. The record holds
 # everything needed to manage the project later (remove, update), but
 # never a password: the database is managed through sudo, and the
-# database password is only in the project's own settings.php.
+# database password is only in the project's own settings.local.php
+# (settings.php in projects made before it, and in adopted ones).
 REGISTRY_FORMAT=1
 
 # Filled by lib/scan.sh for adopted projects; empty for new projects.

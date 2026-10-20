@@ -68,6 +68,8 @@ from the official drupal.org requirement pages.
 ```
 /var/www/<project>/                  owner: you, group: www-data, mode 2750
 ├── composer.json, vendor/, web/     Drupal (drupal/recommended-project)
+├── config/sync/                     configuration export (drush config:export)
+├── .gitignore, .git/                when you chose a git repository
 ├── start                            starts the services this project needs
 ├── drush                            runs Drush with the project PHP
 ├── composer                         runs Composer with the project PHP
@@ -157,15 +159,47 @@ Lost it? `./drush user:login` prints a one-time login link (Drush knows
 the project URL from the `./drush` launcher).
 
 `web/sites/default/settings.php` is Drupal's own template plus a block
-at the end with the database connection, `trusted_host_patterns` (only
-`<project>.localhost` is accepted) and `config_sync_directory`
-(`config/sync`, outside the web root).
+at the end with `trusted_host_patterns` (only `<project>.localhost` is
+accepted), `config_sync_directory` (`config/sync`, outside the web root)
+and an include of `settings.local.php`. It has no secrets, so it can be
+committed.
+
+`web/sites/default/settings.local.php` (mode 600) holds the secrets: the
+database connection and the hash salt. Git ignores it. Because both are
+set before `site:install`, Drupal's installer leaves `settings.php`
+alone; the final checks confirm that `settings.php` has no secrets.
 
 No password ever appears in a command line (where other users could see
 it with `ps`) or in the log: the database password goes into
-`settings.php` through stdin, the administrator password is passed to
-Drush through stdin. `site:install` itself prints a temporary password
+`settings.local.php` through stdin, the administrator password is passed
+to Drush through stdin. `site:install` itself prints a temporary password
 in the log; it is replaced immediately and no longer works.
+
+### Git repository
+
+One of the questions: *Create a git repository with an initial commit?*
+(default yes; the summary shows the answer). With yes, git is installed
+if it is missing, and after the final checks:
+
+- `git init` on branch `main`;
+- `.gitignore`: what Composer downloads (`vendor/`, `web/core/`, contrib
+  modules, themes, profiles, `web/libraries/`, `recipes/`,
+  `drush/Commands/contrib/`), uploaded files (`web/sites/*/files/`),
+  `private/` (SQLite database) and `settings.local.php`. An existing
+  `.gitignore` keeps its lines; only missing ones are added;
+- `.git/info/exclude` (this computer only, never shared): `./start`,
+  `./drush`, `./composer` and `.drupal-local-installer/`, which point to
+  this computer's PHP and services;
+- `git add -A`, then a check that nothing secret is staged
+  (`settings.local.php`, the database password, database settings in
+  `settings.php`). If something is, nothing is staged or committed;
+- the initial commit, when git knows your name and email. Otherwise the
+  files stay staged and the commands to set them and commit are shown.
+
+What goes into git: `composer.json`, `composer.lock`, `settings.php`,
+`config/`, your custom modules and themes, and the files Drupal's
+scaffold writes (`web/index.php`, `web/.htaccess`, ...). Git is
+optional: a failure in this step is only a warning, the site works.
 
 ## Web server
 
@@ -688,7 +722,7 @@ loaded by the file of the same name:
 |---|---|
 | `lib/database.sh` | `lib/database/`: `common.sh`, `mysql.sh`, `postgresql.sh`, `sqlite.sh` |
 | `lib/system.sh` | `lib/system/`: `checks.sh`, `services.sh`, `apt.sh` |
-| `lib/ui.sh` | `lib/ui/` (phase 1 questions): `project.sh`, `drupal.sh`, `php.sh`, `database.sh`, `admin.sh`, `confirm.sh` |
+| `lib/ui.sh` | `lib/ui/` (phase 1 questions): `project.sh`, `drupal.sh`, `php.sh`, `database.sh`, `admin.sh`, `git.sh`, `confirm.sh` |
 | `lib/update.sh` | `lib/update/`: `check.sh`, `backup.sh`, `snapshot.sh`, `advisories.sh`, `update.sh` |
 | `lib/upgrade.sh` | `lib/upgrade/`: `checks.sh`, `upgrade_status.sh`, `composer.sh`, `upgrade.sh` |
 | `lib/php_change.sh` | `lib/php_change/`: `pool.sh`, `launchers.sh`, `checks.sh`, `php_change.sh` |
@@ -716,4 +750,5 @@ temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
 - [x] Change the PHP version of a project (`--php`)
 - [x] Optional package source for other PHP versions (`--php-source`)
 - [x] Major upgrades with Upgrade Status and a Composer trial (`--upgrade`)
+- [x] New projects git ready (`settings.local.php`, `.gitignore`, initial commit)
 - [ ] Docker mode
