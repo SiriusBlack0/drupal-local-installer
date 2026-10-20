@@ -255,6 +255,23 @@ choose_new_plugins_handling() {
     done
 }
 
+# The drupal.org projects (not core) whose release the trial changes,
+# "  webform 6.2.9 -> 6.3.1" lines for the plan (at most 10).
+describe_contrib_changes() {
+    local changes
+    local count
+
+    changes="$(sed -nE 's/^ *- Upgrading drupal\/([a-z0-9_]+) \(([^ ]+) => ([^ )]+)\).*/\1 \2 -> \3/p' <<< "$1" |
+        grep -vE '^core(-[a-z-]+)? ' | sort -u)" || true
+    [[ -n "$changes" ]] || return 0
+    count="$(grep -c . <<< "$changes")"
+
+    echo "Contrib:       new releases for Drupal ${UPDATE_TARGET%%.*} ($count):"
+    head -n 10 <<< "$changes" | sed 's/^/                 /'
+    [[ "$count" -gt 10 ]] && echo "                 ... ($((count - 10)) more in the log)"
+    return 0
+}
+
 # "symfony/runtime, other/plugin" for the plan.
 describe_new_plugins() {
     printf '%s\n' "${UPGRADE_NEW_PLUGINS[@]}" | cut -d'|' -f1 | paste -sd',' - | sed 's/,/, /g'

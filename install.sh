@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # lib/database.sh, lib/system.sh, lib/ui.sh, lib/update.sh, lib/upgrade.sh
 # and lib/php_change.sh load the files of the folder with the same name.
 source "$SCRIPT_DIR/lib/output.sh"
+source "$SCRIPT_DIR/lib/checklist.sh"
 source "$SCRIPT_DIR/lib/drupal.sh"
 source "$SCRIPT_DIR/lib/php.sh"
 source "$SCRIPT_DIR/lib/php_fpm.sh"

@@ -607,6 +607,11 @@ run_unregister_project() {
     local machine_name
     local record
 
+    if [[ -z "${1:-}" ]]; then
+        run_unregister_projects_batch
+        return
+    fi
+
     machine_name="$(get_project_machine_name "$1")"
     record="$(get_project_record_path "$machine_name")" || return 1
 
@@ -617,4 +622,62 @@ run_unregister_project() {
 
     rm -f -- "$record"
     echo "[OK] '$machine_name' removed from the registry. Nothing else was changed."
+}
+
+# --unregister without a name: choose several projects from a list. Only
+# the registry entries go; files, database and web server stay.
+run_unregister_projects_batch() {
+    local record
+    local name
+    local managed
+    local answer
+    local index
+    local removed=0
+    local -a record_files=()
+    local -a labels=()
+
+    for record in "$(get_registry_directory)"/*.conf; do
+        [[ -f "$record" ]] || continue
+        name="$(read_project_field "$record" machine_name)"
+        managed="$(read_project_field "$record" managed_by)"
+        [[ "$managed" == "adopted" ]] || managed="installer"
+
+        record_files+=("$record")
+        labels+=("$(printf '%-20s %-9s %s' "$name" "$managed" "$(read_project_field "$record" project_path)")")
+    done
+
+    if [[ "${#record_files[@]}" -eq 0 ]]; then
+        echo "No projects registered."
+        return 0
+    fi
+
+    if ! choose_from_checklist "Remove which projects from the registry? (only the entry: files, database and web server stay)" "${labels[@]}" ||
+       [[ "${#CHECKLIST_SELECTED[@]}" -eq 0 ]]; then
+        echo "Nothing was changed."
+        return 0
+    fi
+
+    echo
+    echo "These leave the registry (nothing else changes):"
+
+    for index in "${CHECKLIST_SELECTED[@]}"; do
+        echo "  - ${labels[index]}"
+        [[ "${labels[index]}" == *" installer "* ]] &&
+            echo "    (made by the installer: --remove would delete it; --unregister only forgets it)"
+    done
+
+    if ! read -r -p "Remove ${#CHECKLIST_SELECTED[@]} entr(y/ies) from the registry? [y/N]: " answer ||
+       [[ ! "$answer" =~ ^[Yy]$ ]]; then
+        echo "Nothing was changed."
+        return 0
+    fi
+
+    for index in "${CHECKLIST_SELECTED[@]}"; do
+        if rm -f -- "${record_files[index]}"; then
+            removed=$((removed + 1))
+        fi
+    done
+
+    echo "[OK] $removed project(s) removed from the registry. Nothing else was changed."
+    echo "     Register them again any time with: ./install.sh --scan"
 }

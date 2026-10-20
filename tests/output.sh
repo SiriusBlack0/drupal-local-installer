@@ -84,8 +84,13 @@ status2=0
 REMOVE_PROJECT=""
 parse_options --unregister oldsite > /dev/null || status2=$?
 
-if [[ "$status" -eq 5 && "$status2" -eq 6 && "$REMOVE_PROJECT" == "oldsite" ]]; then
-    pass "--scan and --unregister NAME recognised"
+status3=0
+saved_name="$REMOVE_PROJECT"
+parse_options --unregister > /dev/null || status3=$?
+
+if [[ "$status" -eq 5 && "$status2" -eq 6 && "$saved_name" == "oldsite" &&
+      "$status3" -eq 6 && -z "$REMOVE_PROJECT" ]]; then
+    pass "--scan, --unregister NAME and --unregister (choose from a list) recognised"
 else
     fail "--scan/--unregister: $status/$status2 '$REMOVE_PROJECT'"
 fi

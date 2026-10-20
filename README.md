@@ -291,8 +291,22 @@ leaves everything else as it is.
 ./install.sh --scan
 ```
 
-looks in `/var/www` for Drupal projects that are not registered and asks,
-one by one, whether to register them. Detection only reads files:
+looks in `/var/www` for Drupal projects that are not registered, shows
+what it found, and lets you choose which to register from a list:
+
+```
+    [ ] All
+  > [x] crmmanager           Drupal 10.6.18  /var/www/crmManager
+    [ ] eventmanager         Drupal 10.6.16  /var/www/eventManager
+        Continue (1 selected)
+        Exit, change nothing
+```
+
+Up/Down move, Space selects (on *All*: all or none; `a` does the same),
+Enter on *Continue* registers the selected ones, *Exit* or `q` changes
+nothing. Without a terminal (for example in a pipe) the same choice is
+typed as numbers: `1 3`, `2-4`, `a` for all, Enter to leave.
+Detection only reads files:
 
 - Drupal version and web root (`web/`, `docroot/`, `html/`, `public/` or
   the project root; Drupal 7 too),
@@ -310,6 +324,12 @@ Such projects are registered as **adopted**. The installer never changes
 their configuration. Their support level is recorded and shown in
 `--list`: `supported`, `php_missing (…)`, or `unsupported (Drupal 7 is end
 of life)` – a later Docker/DDEV mode is planned for those.
+
+`--unregister NAME` forgets one project; `--unregister` without a name
+shows the same kind of list with all registered projects, and after a
+`y` removes the chosen entries from the registry. Only the entries go:
+files, database and web server stay, and `--scan` registers the projects
+again.
 
 Removing an adopted project (`--remove`) works like for any other project,
 with three extra rules: shared resources are never touched, the database
@@ -405,10 +425,15 @@ sudo -u postgres dropdb mysite && sudo -u postgres createdb -O "$(cat B/database
 cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
 ```
 
-If the project is in git, commit `composer.lock` once the site works:
-the next `--update` or `--upgrade` refuses uncommitted Composer files, so
-two changes never mix (the installer prints the command). If it keeps its
-configuration in git too, run `drush config:export` and commit that.
+Errors in the Drupal log are compared too: only errors logged **during**
+the update are reported, not older ones.
+
+If the project is in git, the installer lists what changed (composer
+files, and the files the core scaffold writes, such as `web/index.php` and
+`web/.htaccess`) and prints the commit; commit once the site works: the
+next `--update` or `--upgrade` refuses uncommitted Composer files, so two
+changes never mix. If it keeps its configuration in git too, run
+`drush config:export` and commit that.
 
 ## Upgrading to a new major (`--upgrade`)
 
@@ -454,7 +479,9 @@ The most common finding in custom code is an `.info.yml` that allows only
 the current major (`core_version_requirement: ^10`): Drupal 11 refuses
 such a module or theme. The installer prints the exact one-line fix
 (`^10 || ^11`, which keeps the site working on Drupal 10 until the
-upgrade); commit it, then run the upgrade.
+upgrade); commit it, then run the upgrade. Twig deprecations such as
+the `spaceless` filter are shown as warnings: they still work with Twig 3,
+which Drupal 11 uses, and break only with Twig 4.
 
 **Composer trial**: the new requirements (`drupal/core-recommended ^11.x`,
 the other core packages, `drush/drush ^13`) are written into a **copy**
@@ -488,15 +515,18 @@ Composer; backup (database, composer.json and composer.lock, offline copy
 of the code); maintenance mode; the new requirements are written into
 composer.json; `composer update`; `drush updatedb`; caches; then the same
 checks (Drupal reports the new version, Drush bootstraps, the site answers
-over HTTP) and the new errors of the status report. Any failure – also
+over HTTP), the new errors of the status report and of the Drupal log.
+The plan lists the contrib projects that get a new release (for example
+`webform 6.2.9 -> 6.3.1`). Any failure – also
 Ctrl+C – restores the code, composer.json, composer.lock and, after
 `updatedb`, the database. The registry gets the new version and
 `upgraded_from`.
 
 Afterwards, check what only a person can: log in, open the pages your
-modules provide, `./drush watchdog:show --severity=Error`, commit
-composer.json and composer.lock and, if you keep configuration in git,
-`./drush config:export`.
+modules provide, submit a form. Then commit what changed (the installer
+lists it; a new `recipes/` folder is written by Composer like `vendor/`,
+so it usually belongs in `.gitignore`) and, if you keep configuration in
+git, `./drush config:export`.
 
 Back to the old major later (for example a week after, when something
 turns out broken): restore the backup by hand, with the commands of

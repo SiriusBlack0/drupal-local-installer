@@ -433,7 +433,7 @@ if output="$(printf '2\nalpha\n' | NEW_ERROR="Update notifications" run_update_p
    [[ "$output" == *"[DONE] alpha: Drupal 11.3.10 -> 11.4.2"* &&
       "$output" == *"[WARNING] New errors in the Drupal status report"* &&
       "$output" == *"- Update notifications"* && "$output" != *"- Cron"* &&
-      "$output" == *"git add composer.lock && git commit -m \"Drupal core 11.4.2\""* ]]; then
+      "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2\""* ]]; then
     pass "Minor update: code, database update, registry version, new status errors, commit shown (git)"
 else
     fail "update: $output / $(cat "$CALLS_FILE")"

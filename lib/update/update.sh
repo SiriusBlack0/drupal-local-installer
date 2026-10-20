@@ -287,6 +287,7 @@ run_update_project() {
     local package
     local dry_output
     local errors_before=""
+    local log_before=""
     local errors_after=""
     local new_errors
     local security_status
@@ -379,6 +380,7 @@ run_update_project() {
     fi
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
+    log_before="$(get_last_log_error_id)"
 
     if ! confirm_update "$machine_name"; then
         echo "Name does not match. Update cancelled; nothing was changed."
@@ -445,6 +447,8 @@ perform_update() {
         echo "[OK] No new errors in the Drupal status report"
     fi
 
+    report_new_log_errors "$log_before"
+
     update_record_version "$record" "$UPDATE_TARGET" || true
 
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
@@ -458,26 +462,93 @@ perform_update() {
     echo
     echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
-    print_git_commit_hint "Drupal core $UPDATE_TARGET" composer.lock
+    print_git_commit_hint "Drupal core $UPDATE_TARGET"
     echo "If the project keeps configuration in git, export it now:"
     echo "  drush config:export   (then review and commit the changes)"
 }
 
-# Projects in git: the changed Composer files are not committed by the
-# installer; the next --update or --upgrade refuses them until they are.
+# Projects in git: nothing is committed by the installer. Shows what
+# changed (composer files, scaffold files such as web/index.php, new
+# folders) and the commit; the next --update or --upgrade refuses
+# uncommitted composer files.
 print_git_commit_hint() {
     local message="$1"
-    shift
     local changed
+    local count
 
     [[ -d "$RECORD_PROJECT_PATH/.git" ]] || return 0
 
-    changed="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain -- "$@" 2>/dev/null)" || return 0
+    changed="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain 2>/dev/null)" || return 0
     [[ -n "$changed" ]] || return 0
+    count="$(grep -c . <<< "$changed")"
 
-    echo "Commit the changed Composer files once the site works (the next --update"
-    echo "or --upgrade waits for that, so changes never mix):"
-    echo "  cd $RECORD_PROJECT_PATH && git add $* && git commit -m \"$message\""
+    echo
+    echo "Changed in git ($count; composer files, and the files Drupal's scaffold"
+    echo "writes such as web/index.php and web/.htaccess):"
+    head -n 15 <<< "$changed" | sed 's/^/  /'
+    [[ "$count" -gt 15 ]] && echo "  ... ($((count - 15)) more: git status)"
+
+    if grep -qxF '?? recipes/' <<< "$changed"; then
+        echo "recipes/ is written by Composer (like vendor/): if .gitignore leaves out"
+        echo "vendor/, add it there too:  echo '/recipes/' >> $RECORD_PROJECT_PATH/.gitignore"
+    fi
+
+    echo "Review it, then commit once the site works (the next --update or"
+    echo "--upgrade waits for that, so changes never mix):"
+    echo "  cd $RECORD_PROJECT_PATH && git add -A && git commit -m \"$message\""
+}
+
+# The highest id of an error in the Drupal log (empty without dblog), so
+# that errors logged during the update can be told apart from old ones.
+get_last_log_error_id() {
+    local json
+
+    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+        watchdog:show --severity=Error --count=1 --format=json 2>/dev/null)" || return 0
+    [[ -n "$json" ]] || return 0
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true);
+if (!is_array($d)) { exit(0); }
+$max = 0;
+foreach ($d as $k => $row) { $max = max($max, (int) ($row["wid"] ?? $k)); }
+echo $max, "\n";
+' 2>/dev/null || true
+}
+
+# Errors Drupal logged after id $1 (first 5): only what the update brought,
+# not the old ones.
+report_new_log_errors() {
+    local since="$1"
+    local json
+    local found
+
+    [[ -n "$since" ]] || return 0
+
+    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+        watchdog:show --severity=Error --count=50 --format=json 2>/dev/null)" || return 0
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    found="$(printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true) ?: [];
+$n = 0;
+foreach ($d as $k => $row) {
+    if ((int) ($row["wid"] ?? $k) <= (int) $argv[1]) { continue; }
+    if ($n++ >= 5) { break; }
+    echo strip_tags((string) ($row["type"] ?? "")), ": ", mb_substr(preg_replace("/\s+/", " ", strip_tags((string) ($row["message"] ?? ""))), 0, 160), "\n";
+}
+' "$since" 2>/dev/null)" || return 0
+
+    if [[ -n "$found" ]]; then
+        echo "[WARNING] Drupal logged new errors during the ${UPDATE_KIND}:"
+        printf '%s\n' "$found" | sed 's/^/            - /'
+        echo "          Details: drush watchdog:show --severity=Error"
+    else
+        echo "[OK] No new errors in the Drupal log (older ones are not counted)"
+    fi
 }
 
 # "Lock file operations: 0 installs, 5 updates, 0 removals" from the

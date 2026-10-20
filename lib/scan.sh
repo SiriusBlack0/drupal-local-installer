@@ -330,16 +330,18 @@ print_detected_project() {
 run_scan_projects() {
     local base_dir
     local project_dir
-    local answer
     local found=0
     local registered=0
     local record
+    local index
+    local -a snapshots=()
+    local -a labels=()
 
     base_dir="$(get_projects_base_dir)" || return 1
 
     echo
     echo "Looking for Drupal projects in $base_dir that are not registered..."
-    echo "(Only reading: nothing is changed unless you answer y.)"
+    echo "(Only reading: nothing is changed until you choose what to register.)"
 
     for project_dir in "$base_dir"/*; do
         [[ -d "$project_dir" && ! -L "$project_dir" ]] || continue
@@ -351,29 +353,38 @@ run_scan_projects() {
 
         print_detected_project
 
-        PROJECT_MACHINE_NAME="${REGISTRY_VALUES[machine_name]}"
-        record="$(get_project_record_path "$PROJECT_MACHINE_NAME")" || continue
+        record="$(get_project_record_path "${REGISTRY_VALUES[machine_name]}")" || continue
 
         if [[ -e "$record" ]]; then
-            echo "    [SKIPPED] The name '$PROJECT_MACHINE_NAME' is already used in the registry."
+            echo "    [SKIPPED] The name '${REGISTRY_VALUES[machine_name]}' is already used in the registry."
             continue
         fi
 
-        if ! read -r -p "    Register it? [y/N]: " answer; then
-            echo
-            break
-        fi
-
-        case "$answer" in
-            y|Y)
-                if write_project_record > /dev/null; then
-                    echo "    [OK] Registered as '$PROJECT_MACHINE_NAME' (adopted)"
-                    registered=$((registered + 1))
-                fi
-                ;;
-            *) echo "    Not registered." ;;
-        esac
+        # The detected values, kept for writing the record after the choice.
+        snapshots+=("$(declare -p REGISTRY_VALUES)")
+        labels+=("$(printf '%-20s Drupal %-9s %s' "${REGISTRY_VALUES[machine_name]}" \
+            "${REGISTRY_VALUES[drupal_version]}" "${REGISTRY_VALUES[project_path]}")")
     done
+
+    REGISTRY_VALUES=()
+
+    if [[ "${#labels[@]}" -gt 0 ]] &&
+       choose_from_checklist "Register which projects? (adopted: their configuration is never changed)" "${labels[@]}"; then
+        for index in "${CHECKLIST_SELECTED[@]}"; do
+            # Our own "declare -p" output, made global again.
+            eval "${snapshots[index]/declare -A/declare -gA}"
+            PROJECT_MACHINE_NAME="${REGISTRY_VALUES[machine_name]}"
+
+            if write_project_record > /dev/null; then
+                echo "  [OK] Registered as '$PROJECT_MACHINE_NAME' (adopted)"
+                registered=$((registered + 1))
+            else
+                echo "  [FAILED] '$PROJECT_MACHINE_NAME' could not be registered"
+            fi
+        done
+    elif [[ "${#labels[@]}" -gt 0 ]]; then
+        echo "  Nothing registered."
+    fi
 
     REGISTRY_VALUES=()
 

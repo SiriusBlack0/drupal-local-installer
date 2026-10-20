@@ -176,6 +176,10 @@ case "${args[0]}" in
         if [[ " ${args[*]} " == *" --no-install "* ]]; then
             [[ " ${args[*]} " == *" --no-scripts "* ]] || { echo "trial without --no-scripts"; exit 9; }
             echo "Lock file operations: 3 installs, 41 updates, 1 removal"
+            echo "  - Upgrading drupal/core (10.6.19 => $target)"
+            echo "  - Upgrading drupal/core-recommended (10.6.19 => $target)"
+            echo "  - Upgrading drupal/pathauto (1.12.0 => 1.13.0)"
+            echo "  - Upgrading symfony/console (v6.4.0 => v7.3.4)"
             if [[ "${NEW_PLUGIN:-0}" == "1" && "${NEW_PLUGIN_HIDDEN:-0}" != "1" ]]; then
                 echo '{"packages":[{"name":"symfony/runtime","type":"composer-plugin","description":"Enables decoupling PHP applications from global state"},{"name":"drupal/core-composer-scaffold","type":"composer-plugin"}],"packages-dev":[]}' > "$lock"
                 "$REAL_PHP" -r '$f=$argv[1]; $c=json_decode(file_get_contents($f),true); $c["config"]["allow-plugins"]=["drupal/*"=>true]; file_put_contents($f, json_encode($c));' "$json"
@@ -252,6 +256,9 @@ case "$1" in
                 echo "<file name=\"$web/modules/custom/shop/shop.module\"><error line=\"12\" message=\"Call to deprecated function drupal_set_message().\" severity=\"error\"></error></file>"
                 echo "<file name=\"$web/modules/contrib/pathauto/pathauto.module\"><error line=\"3\" message=\"Deprecated hook.\" severity=\"warning\"></error></file>"
                 ;;
+            twig)
+                echo "<file name=\"$web/themes/custom/shop_theme/templates/select.html.twig\"><error line=\"13\" message=\"Since twig/twig 3.12: Twig Filter &quot;spaceless&quot; is deprecated. See https://drupal.org/node/3071078.\" severity=\"error\"></error></file>"
+                ;;
             infoyml)
                 # Like the real report: paths relative to the Drupal root.
                 echo "<file name=\"modules/custom/shop/shop.info.yml\"><error line=\"5\" message=\"Value of core_version_requirement: ^10 is not compatible with the next major version of Drupal core. See https://drupal.org/node/3070687.\" severity=\"error\"></error></file>"
@@ -267,6 +274,14 @@ case "$1" in
         ;;
     core:requirements)
         echo '[{"title":"Cron"}]'
+        ;;
+    watchdog:show)
+        # WATCHDOG_NEW=1: Drupal 11 logs a new error; entry 5 is old.
+        if [[ "${WATCHDOG_NEW:-0}" == "1" ]] && grep -q "'11\." "$web/core/lib/Drupal.php"; then
+            echo '{"6":{"wid":"6","type":"php","message":"Error: Call to undefined function old_api() in shop_page()"},"5":{"wid":"5","type":"smtp","message":"old SMTP error"}}'
+        else
+            echo '{"5":{"wid":"5","type":"smtp","message":"old SMTP error"}}'
+        fi
         ;;
 esac
 exit 0
@@ -369,6 +384,8 @@ if output="$(printf '3\n' | REMOVE_DRY_RUN=1 run_upgrade_project alpha)" &&
       "$output" == *"Drupal core:   10.6.19 -> 11.4.2 (major upgrade)"* &&
       "$output" == *"composer.json: drupal/core-recommended ^11.4, drupal/core-composer-scaffold ^11.4, drupal/core-project-message ^11.4, drush/drush ^13, drupal/core-dev ^11.4"* &&
       "$output" == *"Packages:      41 updated, 3 new, 1 removed"* &&
+      "$output" == *"Contrib:       new releases for Drupal 11 (1):"* &&
+      "$output" == *"pathauto 1.12.0 -> 1.13.0"* && "$output" != *"core 10.6.19 -> 11.4.2"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    composer_unchanged alpha && no_copies_left alpha && [[ "$(version_of alpha)" == "10.6.19" ]] &&
    grep -q "composer \[composer.dli-upgrade.json\] require --no-update drupal/core-recommended:^11.4" "$CALLS_FILE" &&
@@ -520,6 +537,18 @@ else
     fail "info.yml fix: $output"
 fi
 
+make_project tau
+
+if output="$(printf '1\ntau\n' | US_REPORT=twig run_upgrade_project tau)" &&
+   [[ "$output" == *"[WARNING] Upgrade Status: 0 error(s), 1 warning(s) for Drupal 11:"* &&
+      "$output" == *"Twig deprecations (warnings): they still work with Twig 3"* &&
+      "$output" == *"[DONE] tau: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"[OK] No new errors in the Drupal log (older ones are not counted)"* ]]; then
+    pass "Twig deprecations in custom code: warnings, no question; upgraded"
+else
+    fail "twig warnings: $output"
+fi
+
 # Test 5: drupal.org projects without a Drupal 11 release: the developer
 # decides (stop, or the lenient plugin).
 
@@ -613,14 +642,21 @@ fi
 
 make_project rho
 git -C "$PROJECT_PATH" init -q
-git -C "$PROJECT_PATH" add composer.json composer.lock
+git -C "$PROJECT_PATH" add -A
 git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m init
+mkdir -p "$PROJECT_PATH/recipes/core_recipe"
+touch "$PROJECT_PATH/recipes/core_recipe/recipe.yml"
 
-if output="$(printf '3\nrho\n' | run_upgrade_project rho)" &&
+if output="$(printf '3\nrho\n' | WATCHDOG_NEW=1 run_upgrade_project rho)" &&
    [[ "$output" == *"[DONE] rho: Drupal 10.6.19 -> 11.4.2"* &&
-      "$output" == *"Commit the changed Composer files once the site works"* &&
-      "$output" == *"git add composer.json composer.lock && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* ]]; then
-    pass "Project in git: the commit of composer.json and composer.lock is shown"
+      "$output" == *"Changed in git ("* &&
+      "$output" == *" M composer.json"* && "$output" == *" M web/core/lib/Drupal.php"* &&
+      "$output" == *"recipes/ is written by Composer (like vendor/)"* &&
+      "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* &&
+      "$output" == *"[WARNING] Drupal logged new errors during the upgrade:"* &&
+      "$output" == *"php: Error: Call to undefined function old_api() in shop_page()"* &&
+      "$output" != *"old SMTP error"* ]]; then
+    pass "Project in git: every changed file and the commit shown; recipes/ explained; only new log errors"
 else
     fail "git hint: $output"
 fi

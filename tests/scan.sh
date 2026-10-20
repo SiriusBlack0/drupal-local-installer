@@ -16,6 +16,7 @@ source lib/nginx.sh
 source lib/registry.sh
 source lib/project.sh
 source lib/compatibility.sh
+source lib/checklist.sh
 source lib/scan.sh
 source lib/remove.sh
 
@@ -130,7 +131,7 @@ records="$XDG_DATA_HOME/drupal-local-installer/projects"
 
 # Test 1: Detection reads Drupal version, web root, URL, PHP, pool, database.
 
-output="$(printf 'y\ny\nn\n' | run_scan_projects)"
+output="$(printf '1 2\n' | run_scan_projects)"
 
 if [[ "$output" == *"ElBarberTon"*"Drupal:   10.2.5  [unsupported (Drupal 10.2 is end of life)]"* ]] &&
    [[ "$output" == *"URL:      http://ElBarberTon.localhost"* ]] &&
@@ -140,6 +141,8 @@ if [[ "$output" == *"ElBarberTon"*"Drupal:   10.2.5  [unsupported (Drupal 10.2 i
    [[ "$output" == *"Database: unknown"* ]] &&
    [[ "$output" == *"modern"*"[php_missing (PHP 9.9 is not installed)]"* ]] &&
    [[ "$output" != *"notdrupal"* && "$output" != *"  ours  ("* ]] &&
+   [[ "$output" == *"Register which projects?"* && "$output" == *"   1) elbarberton"* &&
+      "$output" == *"   3) modern"* ]] &&
    [[ "$output" == *"Found 3 unregistered project(s), registered 2."* ]]; then
     pass "Projects detected: version, web root, URL, PHP, pool; others skipped"
 else
@@ -184,9 +187,10 @@ fi
 
 # Test 3: A second scan only offers what is still unregistered.
 
-output="$(printf 'n\n' | run_scan_projects)"
+output="$(printf '\n' | run_scan_projects)"
 
 if [[ "$output" == *"modern"* && "$output" != *"ElBarberTon  ("* &&
+      "$output" == *"Nothing registered."* &&
       "$output" == *"Found 1 unregistered project(s), registered 0."* ]]; then
     pass "Registered projects are not offered again"
 else
@@ -244,8 +248,8 @@ fi
 
 # Test 7: Changed adopted records are refused.
 
-printf 'n\n' | run_scan_projects > /dev/null
-printf 'y\n' | run_scan_projects > /dev/null
+printf 'q\n' | run_scan_projects > /dev/null
+printf '1\n' | run_scan_projects > /dev/null
 r="$records/modern.conf"
 
 for bad in "project_path=/etc" "project_path=$www/../etc" "php_fpm_pool=$PHP_ETC_DIR/8.3/fpm/pool.d/www.conf" \
@@ -305,7 +309,7 @@ make_modern_project nopool 11.4.10 '{"db-driver":"mysql","db-name":"nopool","db-
 make_site nopool.conf "$www/nopool/web" nopool.localhost /var/run/somewhere.sock
 
 rm -f "$records/ours.conf"
-output="$(printf 'y\ny\ny\ny\n' | run_scan_projects)"
+output="$(printf 'a\n' | run_scan_projects)"
 
 if grep -qxF "php_version=8.3" "$records/crmmanager.conf" &&
    grep -qxF "php_fpm_pool=$PHP_ETC_DIR/8.3/fpm/pool.d/crmManager.conf" "$records/crmmanager.conf" &&
@@ -349,6 +353,37 @@ if [[ "$(find_pool_for_listen /run/php-fpm-crmManager.sock)" == "$PHP_ETC_DIR/8.
     pass "/var/run and /run are the same path for the pool lookup"
 else
     fail "run path normalisation"
+fi
+
+# Test 11: --unregister without a name: several entries chosen from a
+# list, confirmed with y; only the registry entries go.
+
+names=()
+for record in "$records"/*.conf; do names+=("$(basename "$record" .conf)"); done
+
+if [[ "${#names[@]}" -ge 3 ]] &&
+   output="$(printf '1 3\nn\n' | run_unregister_project "")" &&
+   [[ "$output" == *"Remove which projects from the registry?"* && "$output" == *"Nothing was changed."* &&
+      -f "$records/${names[0]}.conf" && -f "$records/${names[2]}.conf" ]]; then
+    pass "--unregister without a name: list shown; 'n' at the confirmation changes nothing"
+else
+    fail "batch unregister n: ${names[*]} / $output"
+fi
+
+if output="$(printf '1 3\ny\n' | run_unregister_project "")" &&
+   [[ "$output" == *"[OK] 2 project(s) removed from the registry. Nothing else was changed."* ]] &&
+   [[ ! -e "$records/${names[0]}.conf" && ! -e "$records/${names[2]}.conf" && -f "$records/${names[1]}.conf" ]] &&
+   [[ -d "$www/crmManager" ]]; then
+    pass "--unregister batch: the chosen entries removed, the others kept, files untouched"
+else
+    fail "batch unregister: $output"
+fi
+
+if output="$(printf '\n' | run_unregister_project "")" && [[ "$output" == *"Nothing was changed."* ]] &&
+   [[ -f "$records/${names[1]}.conf" ]]; then
+    pass "--unregister batch: Enter without a choice leaves"
+else
+    fail "batch unregister exit: $output"
 fi
 
 echo "[SUCCESS] Project scan tests passed."

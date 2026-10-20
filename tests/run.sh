@@ -46,6 +46,7 @@ SUITES=(
     "PHP Source Tests|bash tests/php_source.sh"
     "PHP Change Tests|bash tests/php_change.sh"
     "Tab Completion Tests|bash tests/completion.sh"
+    "Checklist Tests|bash tests/checklist.sh"
 )
 
 echo "======================================"

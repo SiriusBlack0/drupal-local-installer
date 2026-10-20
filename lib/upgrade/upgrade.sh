@@ -73,6 +73,7 @@ run_upgrade_project() {
     local blocked
     local blockers
     local errors_before=""
+    local log_before=""
 
     # Read in lib/update/ (restore, backup and advisories messages).
     # shellcheck disable=SC2034
@@ -190,6 +191,7 @@ run_upgrade_project() {
         echo "               Composer can check this only once the plugin is installed)"
     else
         echo "Packages:      $(describe_lock_operations "$dry_output")"
+        describe_contrib_changes "$dry_output"
     fi
 
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
@@ -225,6 +227,7 @@ run_upgrade_project() {
     fi
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
+    log_before="$(get_last_log_error_id)"
 
     if ! confirm_upgrade "$machine_name"; then
         echo "Name does not match. Upgrade cancelled; nothing was changed."
@@ -310,6 +313,8 @@ perform_upgrade() {
         echo "[OK] No new errors in the Drupal status report"
     fi
 
+    report_new_log_errors "$log_before"
+
     update_record_version "$record" "$UPDATE_TARGET" || true
     set_project_field "$record" upgraded_from "$(date +%F) $current" || true
 
@@ -331,7 +336,6 @@ perform_upgrade() {
     echo
     echo "Check it yourself (the installer only opened the front page):"
     echo "  - log in, open the pages your modules provide, submit a form"
-    echo "  - ./drush watchdog:show --severity=Error"
     echo "  - export the configuration if you keep it in git: ./drush config:export"
     echo "    (review, then commit)"
 
@@ -347,5 +351,5 @@ perform_upgrade() {
     fi
 
     echo "Back to Drupal $current: README.md, \"Upgrading to a new major\" (from the backup)."
-    print_git_commit_hint "Drupal core $UPDATE_TARGET (upgrade from $current)" composer.json composer.lock
+    print_git_commit_hint "Drupal core $UPDATE_TARGET (upgrade from $current)"
 }

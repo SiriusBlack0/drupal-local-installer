@@ -164,9 +164,11 @@ Options:
               Remove a registered project (asks for a backup and for the
               name as confirmation; --dry-run only shows what would go)
   --scan      Find Drupal projects in /var/www that are not registered and
-              register them (adopted: their configuration is never changed)
-  --unregister NAME
+              register the ones you choose from a list (adopted: their
+              configuration is never changed)
+  --unregister [NAME]
               Remove a project from the registry only; nothing else changes
+              (without NAME: choose several from a list)
   --check-updates
               Show available Drupal core updates for registered projects
   --update NAME
@@ -252,16 +254,15 @@ parse_options() {
                 shift
                 ;;
             --unregister)
-                if [[ -z "${2:-}" || "$2" == --* ]]; then
-                    echo "[ERROR] --unregister needs a project name"
-                    return 1
-                fi
-
                 action="unregister"
-                # Used by install.sh.
+                # Used by install.sh. Without a name: choose from a list.
                 # shellcheck disable=SC2034
-                REMOVE_PROJECT="$2"
-                shift
+                REMOVE_PROJECT=""
+
+                if [[ -n "${2:-}" && "$2" != --* ]]; then
+                    REMOVE_PROJECT="$2"
+                    shift
+                fi
                 ;;
             --remove)
                 if [[ -z "${2:-}" || "$2" == --* ]]; then

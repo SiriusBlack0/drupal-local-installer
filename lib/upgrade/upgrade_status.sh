@@ -172,6 +172,9 @@ foreach (preg_split("/<file\s/", $xml) as $i => $chunk) {
         preg_match_all("/(\w+)=\"([^\"]*)\"/", $attrs, $kv, PREG_SET_ORDER);
         foreach ($kv as $x) { $a[$x[1]] = html_entity_decode($x[2], ENT_QUOTES | ENT_XML1); }
         $sev = strtolower($a["severity"] ?? "error") === "warning" ? 1 : 0;
+        // Twig deprecations ("Since twig/twig 3.12: ...") still work with
+        // Twig 3, which the next major uses too: a warning, not an error.
+        if (preg_match("#^Since twig/twig 3\\.#", $a["message"] ?? "")) { $sev = 1; }
         $key = "$type|$name";
         $projects[$key] = $projects[$key] ?? [0, 0];
         $projects[$key][$sev]++;
@@ -230,6 +233,12 @@ print_upgrade_status_report() {
     echo "            Contrib: newer releases usually fix this; Composer is asked below."
     echo "            Custom code: fix it (drupal-rector fixes many of these automatically)."
     print_info_yml_fixes "$report" "$to_major"
+
+    if grep -q 'WARNING: Since twig/twig 3\.' <<< "$report"; then
+        echo "            Twig deprecations (warnings): they still work with Twig 3, which Drupal"
+        echo "            $to_major uses; fix them at leisure (they break only with Twig 4)."
+    fi
+
     echo "            Full report: ./drush upgrade_status:analyze --all (while it is installed)."
 }
 
