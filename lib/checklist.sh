@@ -111,6 +111,8 @@ checklist_draw() {
             [[ "${CHECKLIST_MARKS[row - 1]}" -eq 1 ]] && mark="x"
             printf '\r\033[K  %s [%s] %s\n' "$pointer" "$mark" "${items[row - 1]}"
         elif [[ "$row" -eq $((CHECKLIST_COUNT + 1)) ]]; then
+            # An empty line between the items and the actions.
+            printf '\r\033[K\n'
             printf '\r\033[K  %s     Continue (%s selected)\n' "$pointer" "$(checklist_selected_count)"
         else
             printf '\r\033[K  %s     Exit, change nothing\n' "$pointer"
@@ -147,11 +149,14 @@ checklist_read_key() {
 
 checklist_interactive() {
     local -a items=("$@")
-    local rows=$((CHECKLIST_COUNT + 3))
+    # Items, All, Continue, Exit and the empty line before Continue.
+    local rows=$((CHECKLIST_COUNT + 4))
     local key
     local status
 
     echo "  (Up/Down move, Space selects, a = all, Enter on Continue confirms, q = exit)"
+    echo
+    echo
     printf '\033[?25l'
     # The cursor comes back even after Ctrl+C.
     trap 'printf "\033[?25h"; trap - INT; kill -INT $$' INT
@@ -185,9 +190,11 @@ checklist_typed() {
     local from
     local to
 
+    echo
     for (( i = 0; i < CHECKLIST_COUNT; i++ )); do
         printf '  %2d) %s\n' "$((i + 1))" "${items[i]}"
     done
+    echo
 
     while true; do
         if ! read -r -p "  Numbers to select (e.g. 1 3 5 or 2-4), a = all, Enter = exit: " answer; then
@@ -247,7 +254,7 @@ choose_from_checklist() {
     echo "$title"
 
     if [[ -t 0 && -t 1 && "${TERM:-dumb}" != "dumb" ]] &&
-       [[ "$((CHECKLIST_COUNT + 6))" -le "$(tput lines 2>/dev/null || echo 24)" ]]; then
+       [[ "$((CHECKLIST_COUNT + 9))" -le "$(tput lines 2>/dev/null || echo 24)" ]]; then
         checklist_interactive "$@"
     else
         checklist_typed "$@"

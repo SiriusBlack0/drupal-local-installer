@@ -666,12 +666,14 @@ run_unregister_projects_batch() {
             echo "    (made by the installer: --remove would delete it; --unregister only forgets it)"
     done
 
+    echo
     if ! read -r -p "Remove ${#CHECKLIST_SELECTED[@]} entr(y/ies) from the registry? [y/N]: " answer ||
        [[ ! "$answer" =~ ^[Yy]$ ]]; then
         echo "Nothing was changed."
         return 0
     fi
 
+    echo
     for index in "${CHECKLIST_SELECTED[@]}"; do
         if rm -f -- "${record_files[index]}"; then
             removed=$((removed + 1))
@@ -680,4 +682,5 @@ run_unregister_projects_batch() {
 
     echo "[OK] $removed project(s) removed from the registry. Nothing else was changed."
     echo "     Register them again any time with: ./install.sh --scan"
+    echo
 }

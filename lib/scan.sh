@@ -370,6 +370,7 @@ run_scan_projects() {
 
     if [[ "${#labels[@]}" -gt 0 ]] &&
        choose_from_checklist "Register which projects? (adopted: their configuration is never changed)" "${labels[@]}"; then
+        echo
         for index in "${CHECKLIST_SELECTED[@]}"; do
             # Our own "declare -p" output, made global again.
             eval "${snapshots[index]/declare -A/declare -gA}"
@@ -396,4 +397,6 @@ run_scan_projects() {
         echo "Adopted projects are listed with ./install.sh --list. The installer"
         echo "never changes their configuration."
     fi
+
+    echo
 }
