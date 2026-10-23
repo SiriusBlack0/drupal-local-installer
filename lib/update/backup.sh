@@ -98,6 +98,13 @@ create_update_backup() {
 
     UPDATE_BACKUP_DIR="$(get_backup_base_dir)/${machine_name}-${UPDATE_KIND}-$(date +%Y%m%d-%H%M%S)"
 
+    # Never into an existing backup (two runs in the same second; a
+    # --restore of a backup made a moment before): the next second.
+    while [[ -e "$UPDATE_BACKUP_DIR" ]]; do
+        sleep 1
+        UPDATE_BACKUP_DIR="$(get_backup_base_dir)/${machine_name}-${UPDATE_KIND}-$(date +%Y%m%d-%H%M%S)"
+    done
+
     if ! run_as_project_user "$PROJECT_USER" install -d -m 0700 "$UPDATE_BACKUP_DIR"; then
         echo "[ERROR] Could not create the backup directory: $UPDATE_BACKUP_DIR"
         return 1
@@ -111,7 +118,10 @@ create_update_backup() {
         echo "OK"
         printf 'Backing up composer.json and composer.lock ... '
 
-        if cp --preserve=timestamps -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/"; then
+        # The scaffold files of now: --restore removes the ones a newer
+        # release adds later (web/autoload_runtime.php after Drupal 11).
+        if cp --preserve=timestamps -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/" &&
+           get_scaffold_files "$(get_web_root_relative)" > "$UPDATE_BACKUP_DIR/scaffold-files.list"; then
             echo "OK"
         else
             echo "FAILED"

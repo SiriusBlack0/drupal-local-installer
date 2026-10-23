@@ -2,8 +2,9 @@
 #
 # Installed for the current user by: ./install.sh --install-completion
 # Completes the options, the registered projects (--update, --upgrade, --php,
-# --remove, --unregister), the PHP versions the project's Drupal release
-# supports (--php NAME <Tab>) and --dry-run.
+# --restore, --remove, --unregister), the PHP versions the project's Drupal
+# release supports (--php NAME <Tab>), the backups of a project
+# (--restore NAME <Tab>) and --dry-run.
 
 # The installer folder; filled in when the file is installed.
 _dli_installer_dir="__DLI_DIR__"
@@ -44,6 +45,17 @@ _dli_php_versions() {
         "$_dli_installer_dir/config/compatibility.conf" 2>/dev/null
 }
 
+# Backup folders of a project that --restore takes.
+_dli_backups() {
+    local dir
+
+    [[ "$1" =~ ^[a-z0-9_]+$ ]] || return 0
+
+    for dir in "$HOME/drupal-local-installer-backups/$1"-{update,upgrade,restore}-*; do
+        [[ -f "$dir/composer.lock" ]] && printf '%s\n' "$dir"
+    done
+}
+
 _drupal_local_installer() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD - 1]:-}"
@@ -53,7 +65,7 @@ _drupal_local_installer() {
     local name=""
     local word
     local i
-    local options="--list --scan --check-updates --update --upgrade --php --php-source --remove --unregister --install-completion --verbose --step --help"
+    local options="--list --scan --check-updates --update --upgrade --restore --php --php-source --remove --unregister --install-completion --verbose --step --help"
 
     COMPREPLY=()
 
@@ -71,7 +83,7 @@ _drupal_local_installer() {
 
     for (( i = 1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            --update|--upgrade|--remove|--unregister|--php)
+            --update|--upgrade|--restore|--remove|--unregister|--php)
                 action="${COMP_WORDS[i]}"
                 action_index="$i"
                 name="${COMP_WORDS[i + 1]:-}"
@@ -84,7 +96,7 @@ _drupal_local_installer() {
     done
 
     case "$prev" in
-        --update|--upgrade|--remove|--unregister|--php)
+        --update|--upgrade|--restore|--remove|--unregister|--php)
             mapfile -t COMPREPLY < <(compgen -W "$(_dli_projects)" -- "$cur")
             return 0
             ;;
@@ -95,8 +107,14 @@ _drupal_local_installer() {
         return 0
     fi
 
+    # --restore NAME <Tab>: the project's backups, and --dry-run.
+    if [[ "$action" == "--restore" && $(( COMP_CWORD - action_index )) -eq 2 && "$cur" != -* ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "$(_dli_backups "$name") --dry-run" -- "$cur")
+        return 0
+    fi
+
     case "$action" in
-        --update|--upgrade|--remove|--php)
+        --update|--upgrade|--restore|--remove|--php)
             for word in "${COMP_WORDS[@]}"; do
                 [[ "$word" == "--dry-run" ]] && return 0
             done

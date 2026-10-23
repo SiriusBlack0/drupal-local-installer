@@ -312,6 +312,9 @@ perform_upgrade() {
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
         set_project_field "$record" accepted_advisories "$(date +%F) $UPDATE_TARGET: $UPDATE_ACCEPTED_ADVISORIES" || true
         echo "[NOTE] Installed with accepted security advisories; the registry notes them."
+    else
+        # Advisories accepted for an older version no longer apply.
+        remove_project_field "$record" accepted_advisories || true
     fi
 
     remove_code_snapshot

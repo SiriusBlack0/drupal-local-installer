@@ -43,6 +43,7 @@ SUITES=(
     "Project Scan Tests|bash tests/scan.sh"
     "Drupal Core Update Tests|bash tests/update.sh"
     "Drupal Major Upgrade Tests|bash tests/upgrade.sh"
+    "Backup Restore Tests|bash tests/restore.sh"
     "PHP Source Tests|bash tests/php_source.sh"
     "PHP Change Tests|bash tests/php_change.sh"
     "Tab Completion Tests|bash tests/completion.sh"

@@ -430,6 +430,22 @@ run_final_checks() {
         echo "[SKIPPED] Drupal status report could not be read."
     fi
 
+    # Composer 2.9+ refuses "composer require" in a project whose locked
+    # packages have security advisories, until they are updated.
+    local security_status=0
+    has_core_security_advisory "$project_path" "$php_version" || security_status=$?
+
+    case "$security_status" in
+        0)
+            echo "[WARNING] Drupal core ${DRUPAL_VERSION:-} has published security advisories."
+            echo "          Composer refuses to add modules (composer require) until core is"
+            echo "          updated: ./install.sh --update $(basename "$project_path")"
+            warnings=$((warnings + 1))
+            ;;
+        1) echo "[OK] No known security advisory for Drupal core" ;;
+        *) echo "[SKIPPED] Security advisories could not be checked (composer audit; network?)." ;;
+    esac
+
     if [[ "$warnings" -gt 0 ]]; then
         echo "[INFO] $warnings check(s) need attention; the site itself is installed."
     fi

@@ -316,6 +316,10 @@ else
     fail "installer redirect: $output"
 fi
 
+# composer audit (lib/update/check.sh): 1 = no advisory, 0 = advisory,
+# 2 = could not check.
+has_core_security_advisory() { return "${SECURITY_STATUS:-1}"; }
+
 # Test 8: Final checks only report; they never fail the installation.
 
 if ! command -v php > /dev/null; then
@@ -334,6 +338,7 @@ else
           "$output" == *"[OK] settings.php cannot be changed by other users (444)"* &&
           "$output" == *"[OK] Drupal status report: no errors"* &&
           "$output" == *"[OK] settings.php has no secrets"* &&
+          "$output" == *"[OK] No known security advisory for Drupal core"* &&
           "$output" != *"WARNING"* ]]; then
         pass "Final checks: database, files, settings.php, status report"
     else
@@ -354,6 +359,17 @@ else
         pass "Problems are reported as warnings, not failures"
     else
         fail "final check warnings: $output"
+    fi
+
+    if output="$(SECURITY_STATUS=0 DRUPAL_VERSION=10.5.9 run_final_checks "$project" "$current_user" "$php_version")" &&
+       [[ "$output" == *"[WARNING] Drupal core 10.5.9 has published security advisories."* &&
+          "$output" == *"Composer refuses to add modules (composer require) until core is"* &&
+          "$output" == *"updated: ./install.sh --update site_f"* ]] &&
+       output="$(SECURITY_STATUS=2 run_final_checks "$project" "$current_user" "$php_version")" &&
+       [[ "$output" == *"[SKIPPED] Security advisories could not be checked"* ]]; then
+        pass "Security advisories of the installed core: warned, with what it means and the fix"
+    else
+        fail "security check: $output"
     fi
 
     if output="$(DRUSH_REQUIREMENTS='not json' run_final_checks "$project" "$current_user" "$php_version")" &&

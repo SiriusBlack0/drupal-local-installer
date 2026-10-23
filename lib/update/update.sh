@@ -76,7 +76,8 @@ rollback_update() {
         failed=1
     elif restore_code_snapshot; then
         echo "[OK] Code restored (from the offline copy)"
-    elif run_logged "Restoring the previous code (composer install)" \
+    elif { [[ "$UPDATE_KIND" == "update" ]] || remove_project_vendor; } &&
+         run_logged "Restoring the previous code (composer install)" \
             run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
         echo "[OK] Code restored"
     else
@@ -100,7 +101,8 @@ rollback_update() {
     set_maintenance_mode 0 || true
     run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" cache:rebuild > /dev/null 2>&1 || true
 
-    if [[ "$failed" -eq 0 && "$(get_drupal_version_in "$UPDATE_WEB_ROOT" 2>/dev/null)" != "$UPDATE_PREVIOUS_VERSION" ]]; then
+    if [[ "$failed" -eq 0 && -n "$UPDATE_PREVIOUS_VERSION" &&
+          "$(get_drupal_version_in "$UPDATE_WEB_ROOT" 2>/dev/null)" != "$UPDATE_PREVIOUS_VERSION" ]]; then
         echo "[FAILED] Drupal does not report version $UPDATE_PREVIOUS_VERSION again."
         failed=1
     fi
@@ -451,6 +453,9 @@ perform_update() {
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
         set_project_field "$record" accepted_advisories "$(date +%F) $UPDATE_TARGET: $UPDATE_ACCEPTED_ADVISORIES" || true
         echo "[NOTE] Installed with accepted security advisories; the registry notes them."
+    else
+        # Advisories accepted for an older version no longer apply.
+        remove_project_field "$record" accepted_advisories || true
     fi
 
     remove_code_snapshot

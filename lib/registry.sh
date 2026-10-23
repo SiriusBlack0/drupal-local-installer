@@ -373,6 +373,26 @@ set_project_field() {
     fi
 }
 
+# Removes a field from the record (nothing to do when it is not there).
+remove_project_field() {
+    local record_path="$1"
+    local field="$2"
+    local temp_file
+
+    [[ -f "$record_path" && "$field" =~ ^[a-z_]+$ ]] || return 1
+    grep -q "^$field=" "$record_path" || return 0
+
+    temp_file="$(dirname "$record_path")/.$(basename "$record_path").tmp"
+
+    if ! awk -v key="$field" 'index($0, key "=") != 1 { print }' "$record_path" |
+            run_as_project_user "$PROJECT_USER" tee "$temp_file" > /dev/null ||
+       ! run_as_project_user "$PROJECT_USER" chmod 0600 "$temp_file" ||
+       ! run_as_project_user "$PROJECT_USER" mv -f "$temp_file" "$record_path"; then
+        rm -f "$temp_file" 2>/dev/null
+        return 1
+    fi
+}
+
 list_registered_projects() {
     local registry_dir
     local record

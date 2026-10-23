@@ -235,6 +235,13 @@ select_drupal_major_minor_patch() {
 
             DRUPAL_VERSION="${DRUPAL_PATCHES[$((PATCH_CHOICE - 1))]}"
 
+            if [ "$PATCH_CHOICE" -gt 1 ]; then
+                echo
+                echo "[NOTE] $DRUPAL_VERSION is not the newest $DRUPAL_MINOR release (${DRUPAL_PATCHES[0]}): older"
+                echo "       releases may have published security advisories. The final checks"
+                echo "       tell you; Composer then refuses to add modules until you update."
+            fi
+
             break
 
 

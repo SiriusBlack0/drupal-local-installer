@@ -92,6 +92,28 @@ else
     fail "dry-run: '$(complete_line './install.sh --update alpha |')'"
 fi
 
+# Test 4b: --restore: projects, then the project's backups and --dry-run.
+# The backups live in a temporary home folder.
+
+real_home="$HOME"
+export HOME="$work_dir/home"
+mkdir -p "$HOME/drupal-local-installer-backups/alpha-upgrade-20261023-221500" \
+         "$HOME/drupal-local-installer-backups/alpha-php-20261020-100000" \
+         "$HOME/drupal-local-installer-backups/beta-update-20261022-090000"
+touch "$HOME/drupal-local-installer-backups/alpha-upgrade-20261023-221500/composer.lock" \
+      "$HOME/drupal-local-installer-backups/alpha-php-20261020-100000/composer.lock" \
+      "$HOME/drupal-local-installer-backups/beta-update-20261022-090000/composer.lock"
+
+if [[ "$(complete_line './install.sh --restore |')" == "alpha beta" &&
+      "$(complete_line './install.sh --restore alpha |')" == "$HOME/drupal-local-installer-backups/alpha-upgrade-20261023-221500 --dry-run" &&
+      "$(complete_line "./install.sh --restore alpha $HOME/drupal-local-installer-backups/alpha-upgrade-20261023-221500 |")" == "--dry-run" ]]; then
+    pass "--restore: projects, then that project's backups (not --php ones) and --dry-run"
+else
+    fail "restore completion: '$(complete_line './install.sh --restore alpha |')'"
+fi
+
+export HOME="$real_home"
+
 # Test 5: Another program called install.sh keeps file name completion.
 
 mkdir -p "$work_dir/other"

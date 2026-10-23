@@ -89,6 +89,12 @@ for label, user_input, expected in cases:
             and "Latest (" not in result.stdout
         )
 
+    if label == "Older patch (second in the list)":
+        passed = passed and "[NOTE] 11.4.8 is not the newest 11.4 release (11.4.9): older" in result.stdout
+
+    if label == "Major/minor/patch":
+        passed = passed and "[NOTE]" not in result.stdout
+
     if label == "Patch number past the list":
         passed = passed and "Invalid selection. Try again." in result.stdout
 

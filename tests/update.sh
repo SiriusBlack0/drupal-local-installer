@@ -178,6 +178,8 @@ case "${args[0]}" in
         if [[ -d "$dir/web/modules/contrib" ]]; then
             mkdir -p "$dir/web/modules/contrib/new_module"
             echo "<?php // new" > "$dir/web/index.php"
+            # A scaffold file that only the new release has.
+            echo "<?php // runtime" > "$dir/web/autoload_runtime.php"
         fi
         if [[ -f "$dir/web/sites/default/default.settings.php" ]]; then
             if (( (8#$(stat -c %a "$dir/web/sites/default") & 8#200) == 0 )); then
@@ -609,11 +611,12 @@ elif [[ "$output" == *"Copying the current code (for an offline restore) ... OK"
         "$output" == *"[OK] The project is back to its previous version."* ]] &&
      [[ "$(version_of omega)" == "11.3.10" && "$(cat "$PROJECT_PATH/web/index.php")" == "<?php // old" ]] &&
      [[ -d "$PROJECT_PATH/web/modules/contrib/old_module" && ! -e "$PROJECT_PATH/web/modules/contrib/new_module" ]] &&
+     [[ ! -e "$PROJECT_PATH/web/autoload_runtime.php" ]] &&
      [[ -f "$PROJECT_PATH/vendor/autoload.php" && ! -e "$PROJECT_PATH/.drupal-local-installer/update-snapshot" ]] &&
      [[ "$(cat "$PROJECT_PATH/web/sites/default/default.settings.php")" == "<?php // old defaults" ]] &&
      [[ "$(stat -c '%a' "$PROJECT_PATH/web/sites/default")" == "555" ]] &&
      ! grep -q "composer install" "$CALLS_FILE"; then
-    pass "Offline restore (stale read-only copy replaced): code, modules, scaffold files back offline; copy removed"
+    pass "Offline restore (stale read-only copy replaced): code, modules, scaffold files back offline (new ones removed); copy removed"
 else
     fail "offline restore: $output / $(cat "$CALLS_FILE")"
 fi
@@ -790,6 +793,15 @@ if output="$(printf '1\naccept\nrho\n' | BLOCK_ADVISORIES=1 run_update_project r
     pass "Advisories accepted: update installed for this run only, noted in the registry"
 else
     fail "advisories accepted: $output / $(cat "$CALLS_FILE")"
+fi
+
+if output="$(printf 'rho\n' | run_update_project rho)" &&
+   [[ "$(version_of rho)" == "11.4.2" ]] &&
+   ! grep -q "^accepted_advisories=" "$(record_of rho)" &&
+   grep -q "^drupal_version=11.4.2$" "$(record_of rho)"; then
+    pass "A later update without advisories removes the old note from the registry"
+else
+    fail "accepted advisories cleared: $output / $(cat "$(record_of rho)")"
 fi
 
 make_project sigma

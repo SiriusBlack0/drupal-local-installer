@@ -34,7 +34,9 @@ get_scaffold_files() {
         find "$web_rel" "$web_rel/sites" -maxdepth 1 -type f 2>/dev/null
         find "$web_rel/sites/default" -maxdepth 1 -type f -name 'default.*' 2>/dev/null
         for file in .editorconfig .gitattributes; do
-            [[ -f "$file" ]] && printf '%s\n' "$file"
+            if [[ -f "$file" ]]; then
+                printf '%s\n' "$file"
+            fi
         done
     ) | sed 's|^\./||' | sort -u
 }
@@ -119,6 +121,7 @@ create_code_snapshot() {
     if remove_snapshot_folder "$project/.drupal-local-installer/update-snapshot" &&
        run_as_project_user "$PROJECT_USER" mkdir -p -- "$project/.drupal-local-installer/update-snapshot/code" &&
        printf '%s\n' "${dirs[@]}" | run_as_project_user "$PROJECT_USER" tee "$project/.drupal-local-installer/update-snapshot/dirs.list" > /dev/null &&
+       printf '%s\n' "${files[@]}" | run_as_project_user "$PROJECT_USER" tee "$project/.drupal-local-installer/update-snapshot/files.list" > /dev/null &&
        copy_tree "$project" "$project/.drupal-local-installer/update-snapshot/code" "${dirs[@]}" "${files[@]}"; then
         UPDATE_SNAPSHOT_DIR="$project/.drupal-local-installer/update-snapshot"
         echo "OK"
@@ -139,7 +142,59 @@ restore_code_snapshot() {
         run_as_project_user "$PROJECT_USER" rm -rf -- "${RECORD_PROJECT_PATH:?}/$dir" || return 1
     done < "$UPDATE_SNAPSHOT_DIR/dirs.list"
 
-    copy_tree "$UPDATE_SNAPSHOT_DIR/code" "$RECORD_PROJECT_PATH" .
+    copy_tree "$UPDATE_SNAPSHOT_DIR/code" "$RECORD_PROJECT_PATH" . || return 1
+
+    # Scaffold files that only the new release wrote (for Drupal 10 -> 11:
+    # web/autoload_runtime.php, web/.gitignore) go again.
+    if [[ -f "$UPDATE_SNAPSHOT_DIR/files.list" ]]; then
+        remove_new_scaffold_files "$UPDATE_SNAPSHOT_DIR/files.list" > /dev/null
+    fi
+}
+
+# The relative path of the web root ("web"), "." for a project without one.
+get_web_root_relative() {
+    local web_rel="${UPDATE_WEB_ROOT#"$RECORD_PROJECT_PATH"}"
+
+    web_rel="${web_rel#/}"
+    printf '%s\n' "${web_rel:-.}"
+}
+
+# Scaffold files that exist now but are not in the list given (files of
+# an older state): "web/autoload_runtime.php" per line.
+get_new_scaffold_files() {
+    local old_list="$1"
+
+    get_scaffold_files "$(get_web_root_relative)" | grep -vxF -f "$old_list" || true
+}
+
+# Removes those files; prints each one removed.
+remove_new_scaffold_files() {
+    local old_list="$1"
+    local file
+
+    while IFS= read -r file; do
+        [[ -n "$file" && "$file" != /* && "$file" != *..* && -f "$RECORD_PROJECT_PATH/$file" && ! -L "$RECORD_PROJECT_PATH/$file" ]] || continue
+        run_as_project_user "$PROJECT_USER" rm -f -- "$RECORD_PROJECT_PATH/$file" && printf '%s\n' "$file"
+    done < <(get_new_scaffold_files "$old_list")
+}
+
+# vendor/ as Composer left it; removed before "composer install" goes
+# back to an older lock file: a Composer plugin of the newer release in
+# vendor/ (such as symfony/runtime) stops "composer install" otherwise.
+# Only the standard vendor/ folder of the project, never a link.
+remove_project_vendor() {
+    local vendor="$RECORD_PROJECT_PATH/vendor"
+    local configured
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    configured="$("php${RECORD_PHP_VERSION}" -r '
+$c = json_decode(file_get_contents($argv[1]), true) ?: [];
+echo $c["config"]["vendor-dir"] ?? "vendor";
+' "$RECORD_PROJECT_PATH/composer.json" 2>/dev/null)" || configured="vendor"
+
+    [[ "$configured" == "vendor" && -d "$vendor" && ! -L "$vendor" ]] || return 0
+    run_as_project_user "$PROJECT_USER" rm -rf -- "${RECORD_PROJECT_PATH:?}/vendor"
 }
 
 # Removes a snapshot folder, also when it holds read-only folders.

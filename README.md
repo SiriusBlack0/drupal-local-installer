@@ -159,6 +159,12 @@ Administrator password, chosen during the questions:
 Lost it? `./drush user:login` prints a one-time login link (Drush knows
 the project URL from the `./drush` launcher).
 
+An older patch release than the newest of its minor can be chosen; the
+installer notes that it may have published security advisories. The
+final checks ask `composer audit`: when Drupal core has advisories, they
+say so, and that Composer (2.9+) then refuses to add modules
+(`composer require`) until core is updated with `--update`.
+
 `web/sites/default/settings.php` is Drupal's own template plus a block
 at the end with `trusted_host_patterns` (only `<project>.localhost` is
 accepted), `config_sync_directory` (`config/sync`, outside the web root)
@@ -460,9 +466,9 @@ ask for your password.
 
 ### Restoring a backup by hand
 
-When the automatic restore fails, or later (for example a week after an
-upgrade, when something turns out broken). Everything changed on the site
-since the backup is lost. Do the steps **in this order**, and restore
+Use [`--restore`](#restoring-a-backup---restore); these are the same
+steps by hand, for when the installer itself cannot run. Everything
+changed on the site since the backup is lost. Do the steps **in this order**, and restore
 the database **only when the code is back**: old database with new code
 (or the other way round) breaks the site.
 
@@ -622,9 +628,54 @@ so it usually belongs in `.gitignore`) and, if you keep configuration in
 git, `./drush config:export`.
 
 Back to the old major later (for example a week after, when something
-turns out broken): [restore the backup by hand](#restoring-a-backup-by-hand),
-in the order shown there (`B` is the `mysite-upgrade-…` backup folder);
-changes made to the site since the upgrade are lost then.
+turns out broken): [`--restore`](#restoring-a-backup---restore) with the
+`mysite-upgrade-…` backup; changes made to the site since the upgrade are
+lost then.
+
+## Restoring a backup (`--restore`)
+
+```bash
+./install.sh --restore mysite --dry-run   # choose a backup, see the plan
+./install.sh --restore mysite             # choose from the list
+./install.sh --restore mysite ~/drupal-local-installer-backups/mysite-upgrade-20261023-221500
+```
+
+Goes back to a backup of `--update`, `--upgrade` or an earlier
+`--restore` (each is the state **before** that run): composer.json,
+composer.lock, the code and the database. A failed update is restored
+automatically; `--restore` is for later, when the update worked but
+something turns out broken. Everything changed on the site since the
+backup is lost, so the plan says since when, and you type the project
+name to confirm. The site does not have to work for it (Drush is not
+needed to start).
+
+In this order:
+
+1. a backup of the **current** state (`mysite-restore-…`): the restore can
+   be undone with `--restore` and that folder (the last line shows the
+   command);
+2. maintenance mode, then the code: the backup's composer files, a fresh
+   `vendor/` (a Composer plugin of a newer release, such as
+   `symfony/runtime`, would stop `composer install` otherwise),
+   `composer install` with `web/sites/default` writable for a moment;
+3. a check that Drupal reports the backup's version. Only then
+4. the database (sudo; it may ask for the password again, because
+   Composer forgets it);
+5. caches, maintenance mode off, the usual checks (Drush, HTTP).
+
+If the code cannot be installed, or Drupal reports another version, the
+database is never touched. If any step fails, the state of before comes
+back automatically (code from an offline copy, and the database).
+
+Files that only the newer release's scaffold wrote (for Drupal 11 back
+to 10: `web/autoload_runtime.php`, `web/.gitignore`) are listed, and you
+decide whether they go (default: kept; a file you added yourself at that
+place would be listed too). Backups record their scaffold files for this;
+for older backups `git status` shows them as new.
+
+The registry gets the backup's version and `restored_from`; notes of the
+newer state (`upgraded_from`, `accepted_advisories`, `lenient_packages`)
+go.
 
 ## Other PHP versions (`--php-source`)
 
@@ -808,5 +859,6 @@ temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
 - [x] Change the PHP version of a project (`--php`)
 - [x] Optional package source for other PHP versions (`--php-source`)
 - [x] Major upgrades with Upgrade Status and a Composer trial (`--upgrade`)
+- [x] Restore a backup of an update or upgrade (`--restore`)
 - [x] New projects git ready (`settings.local.php`, `.gitignore`, initial commit)
 - [ ] Docker mode

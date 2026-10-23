@@ -129,6 +129,27 @@ else
 fi
 
 REMOVE_DRY_RUN=0
+REMOVE_PROJECT=""
+RESTORE_BACKUP_ARGUMENT=""
+status=0
+parse_options --restore mysite --dry-run > /dev/null || status=$?
+first="$status|$REMOVE_PROJECT|$RESTORE_BACKUP_ARGUMENT|$REMOVE_DRY_RUN"
+REMOVE_DRY_RUN=0
+status=0
+parse_options --restore mysite /home/me/backups/mysite-upgrade-20261023-221500 > /dev/null || status=$?
+second="$status|$REMOVE_PROJECT|$RESTORE_BACKUP_ARGUMENT|$REMOVE_DRY_RUN"
+status3=0
+output3="$(parse_options --restore)" || status3=$?
+
+if [[ "$first" == "13|mysite||1" &&
+      "$second" == "13|mysite|/home/me/backups/mysite-upgrade-20261023-221500|0" &&
+      "$status3" -eq 1 && "$output3" == *"--restore needs a project name"* ]]; then
+    pass "--restore NAME [BACKUP] [--dry-run] recognised; without a name rejected"
+else
+    fail "--restore: $first / $second / $status3"
+fi
+
+REMOVE_DRY_RUN=0
 status=0
 REMOVE_PROJECT="" PHP_TARGET_VERSION=""
 parse_options --php mysite 8.4 --dry-run > /dev/null || status=$?

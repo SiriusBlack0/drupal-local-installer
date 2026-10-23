@@ -31,6 +31,7 @@ source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
 source "$SCRIPT_DIR/lib/update.sh"
 source "$SCRIPT_DIR/lib/upgrade.sh"
+source "$SCRIPT_DIR/lib/restore.sh"
 source "$SCRIPT_DIR/lib/php_source.sh"
 source "$SCRIPT_DIR/lib/php_change.sh"
 source "$SCRIPT_DIR/lib/completion.sh"
@@ -133,6 +134,12 @@ main() {
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-upgrade"
             run_command run_upgrade_project "$REMOVE_PROJECT"
+            ;;
+        13)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "$(get_project_machine_name "$REMOVE_PROJECT")-restore"
+            run_command run_restore_project "$REMOVE_PROJECT"
             ;;
         *) exit 1 ;;
     esac

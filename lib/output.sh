@@ -188,6 +188,10 @@ Options:
               Upgrade Drupal core of a project to the next major (10 -> 11),
               after compatibility checks (Upgrade Status, Composer trial);
               backup and automatic restore on failure; --dry-run only checks
+  --restore NAME [BACKUP]
+              Go back to a backup of --update, --upgrade or --restore (code
+              and database); without BACKUP: choose from a list; the current
+              state is backed up first; --dry-run only shows the plan
   --php NAME VERSION
               Change the PHP version of a project, e.g. --php mysite 8.4
               (restored automatically on failure; --dry-run only checks)
@@ -209,7 +213,8 @@ USAGE
 # Returns 2 after --help (stop, success) and 1 for an unknown option.
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
 # 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
-# 9 --php-source, 10 --php, 11 --install-completion, 12 --upgrade.
+# 9 --php-source, 10 --php, 11 --install-completion, 12 --upgrade,
+# 13 --restore.
 REMOVE_PROJECT=""
 PHP_TARGET_VERSION=""
 
@@ -263,6 +268,26 @@ parse_options() {
                 REMOVE_PROJECT="$2"
                 shift
                 ;;
+            --restore)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --restore needs a project name, e.g. --restore mysite"
+                    return 1
+                fi
+
+                action="restore"
+                # Used by install.sh and lib/restore.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                # shellcheck disable=SC2034
+                RESTORE_BACKUP_ARGUMENT=""
+                shift
+
+                if [[ -n "${2:-}" && "$2" != --* ]]; then
+                    # shellcheck disable=SC2034
+                    RESTORE_BACKUP_ARGUMENT="$2"
+                    shift
+                fi
+                ;;
             --unregister)
                 action="unregister"
                 # Used by install.sh. Without a name: choose from a list.
@@ -304,8 +329,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" ]]; then
-        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade and --php"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" && "$action" != "restore" ]]; then
+        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade, --restore and --php"
         return 1
     fi
 
@@ -320,6 +345,7 @@ parse_options() {
         php) return 10 ;;
         install-completion) return 11 ;;
         upgrade) return 12 ;;
+        restore) return 13 ;;
     esac
 
     return 0

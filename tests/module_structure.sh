@@ -34,6 +34,7 @@ modules = [
     "lib/remove.sh",
     "lib/update.sh",
     "lib/upgrade.sh",
+    "lib/restore.sh",
     "lib/php_source.sh",
     "lib/php_change.sh",
     "lib/completion.sh",
