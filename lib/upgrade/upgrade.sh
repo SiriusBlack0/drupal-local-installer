@@ -253,9 +253,6 @@ run_upgrade_project() {
 
 # The changing part of --upgrade. Uses the variables of run_upgrade_project.
 perform_upgrade() {
-    local errors_after
-    local new_errors
-
     UPDATE_DATABASE_CHANGED=0
     make_sites_default_writable
     create_code_snapshot
@@ -303,17 +300,7 @@ perform_upgrade() {
         return 1
     fi
 
-    errors_after="$(get_project_requirement_errors)" || errors_after=""
-    new_errors="$(comm -13 <(printf '%s\n' "$errors_before" | sort -u) <(printf '%s\n' "$errors_after" | sort -u) | grep . || true)"
-
-    if [[ -n "$new_errors" ]]; then
-        echo "[WARNING] New errors in the Drupal status report:"
-        printf '%s\n' "$new_errors" | sed 's/^/            - /'
-    else
-        echo "[OK] No new errors in the Drupal status report"
-    fi
-
-    report_new_log_errors "$log_before"
+    report_update_results "$errors_before" "$log_before"
 
     update_record_version "$record" "$UPDATE_TARGET" || true
     set_project_field "$record" upgraded_from "$(date +%F) $current" || true
@@ -330,8 +317,7 @@ perform_upgrade() {
     remove_code_snapshot
     restore_sites_default_mode
 
-    echo
-    echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"
+    print_update_done "$machine_name" "$current"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
     echo
     echo "Check it yourself (the installer only opened the front page):"

@@ -202,12 +202,14 @@ select_drupal_major_minor_patch() {
         echo
 
 
-        echo "1) Latest (${DRUPAL_PATCHES[0]})"
-
-
+        # Newest first; each version once, the newest marked.
         for i in "${!DRUPAL_PATCHES[@]}"; do
 
-            echo "$((i + 2))) ${DRUPAL_PATCHES[$i]}"
+            if [ "$i" -eq 0 ]; then
+                echo "$((i + 1))) ${DRUPAL_PATCHES[$i]} (latest)"
+            else
+                echo "$((i + 1))) ${DRUPAL_PATCHES[$i]}"
+            fi
 
         done
 
@@ -226,20 +228,12 @@ select_drupal_major_minor_patch() {
         fi
 
 
-        if [ "$PATCH_CHOICE" -eq 1 ]; then
+        if (( PATCH_CHOICE >= 1 &&
+
+                PATCH_CHOICE <= ${#DRUPAL_PATCHES[@]} )); then
 
 
-            DRUPAL_VERSION="${DRUPAL_PATCHES[0]}"
-
-            break
-
-
-        elif (( PATCH_CHOICE >= 2 &&
-
-                PATCH_CHOICE <= ${#DRUPAL_PATCHES[@]} + 1 )); then
-
-
-            DRUPAL_VERSION="${DRUPAL_PATCHES[$((PATCH_CHOICE - 2))]}"
+            DRUPAL_VERSION="${DRUPAL_PATCHES[$((PATCH_CHOICE - 1))]}"
 
             break
 

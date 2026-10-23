@@ -45,6 +45,8 @@ drupal_version_exists() {
 cases = [
     ("Latest stable", "1\n", "11.4.9"),
     ("Major/minor/patch", "2\n1\n1\n1\n", "11.4.9"),
+    ("Older patch (second in the list)", "2\n1\n1\n2\n", "11.4.8"),
+    ("Patch number past the list", "2\n1\n1\n3\n1\n", "11.4.9"),
     ("Exact version", "3\n11.0.11\n", "11.0.11"),
     ("Invalid menu", "9\n1\n", "11.4.9"),
     ("Invalid exact format", "3\nbanana\n11.0.11\n", "11.0.11"),
@@ -77,6 +79,18 @@ for label, user_input, expected in cases:
         result.returncode == 0
         and f"RESULT:{expected}\n" in result.stdout
     )
+
+    # The patch list shows each version once: "1) 11.4.9 (latest)".
+    if label.startswith(("Major/minor/patch", "Older patch", "Patch number")):
+        passed = (
+            passed
+            and "1) 11.4.9 (latest)\n" in result.stdout
+            and "2) 11.4.8\n" in result.stdout
+            and "Latest (" not in result.stdout
+        )
+
+    if label == "Patch number past the list":
+        passed = passed and "Invalid selection. Try again." in result.stdout
 
     print(f"[{'PASS' if passed else 'FAIL'}] {label}")
 

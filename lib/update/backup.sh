@@ -111,7 +111,7 @@ create_update_backup() {
         echo "OK"
         printf 'Backing up composer.json and composer.lock ... '
 
-        if cp -p -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/"; then
+        if cp --preserve=timestamps -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/"; then
             echo "OK"
         else
             echo "FAILED"

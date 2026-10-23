@@ -71,7 +71,7 @@ rollback_update() {
     echo
     echo "Restoring the project as it was before the ${UPDATE_KIND}..."
 
-    if ! cp -p -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/"; then
+    if ! cp --preserve=timestamps -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/"; then
         echo "[FAILED] composer.json and composer.lock could not be copied back"
         failed=1
     elif restore_code_snapshot; then
@@ -117,9 +117,11 @@ rollback_update() {
     [[ -n "$UPDATE_SNAPSHOT_DIR" ]] && echo "Offline copy of the old code (kept): $UPDATE_SNAPSHOT_DIR/code"
     echo "[ERROR] Automatic restore did not complete. Restore by hand from:"
     echo "        $UPDATE_BACKUP_DIR"
-    echo "  cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock $RECORD_PROJECT_PATH/"
-    echo "  cd $RECORD_PROJECT_PATH && composer install"
-    echo "  (database: see README.md, \"Updating Drupal core\")"
+    echo "  cd $RECORD_PROJECT_PATH && chmod u+w $UPDATE_WEB_ROOT/sites/default"
+    echo "  cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock ."
+    echo "  rm -rf vendor && ./composer install && chmod 555 $UPDATE_WEB_ROOT/sites/default"
+    echo "  The database only after Drupal reports $UPDATE_PREVIOUS_VERSION again:"
+    echo "  README.md, \"Restoring a backup by hand\"."
     return 1
 }
 
@@ -288,8 +290,6 @@ run_update_project() {
     local dry_output
     local errors_before=""
     local log_before=""
-    local errors_after=""
-    local new_errors
     local security_status
     local blocked
 
@@ -359,7 +359,14 @@ run_update_project() {
     check_core_security "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" || security_status=$?
 
     case "$security_status" in
-        0) echo "              Security: $current has a published security advisory; this update is needed." ;;
+        0)
+            if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
+                echo "              Security: $current has a published security advisory. $UPDATE_TARGET fixes"
+                echo "              part of it, but still has advisories (see [SECURITY] above)."
+            else
+                echo "              Security: $current has a published security advisory; this update is needed."
+            fi
+            ;;
         1) echo "              Security: no known advisory for $current." ;;
         *) echo "              Security: could not be checked (composer audit failed; network?)." ;;
     esac
@@ -437,17 +444,7 @@ perform_update() {
         return 1
     fi
 
-    errors_after="$(get_project_requirement_errors)" || errors_after=""
-    new_errors="$(comm -13 <(printf '%s\n' "$errors_before" | sort -u) <(printf '%s\n' "$errors_after" | sort -u) | grep . || true)"
-
-    if [[ -n "$new_errors" ]]; then
-        echo "[WARNING] New errors in the Drupal status report:"
-        printf '%s\n' "$new_errors" | sed 's/^/            - /'
-    else
-        echo "[OK] No new errors in the Drupal status report"
-    fi
-
-    report_new_log_errors "$log_before"
+    report_update_results "$errors_before" "$log_before"
 
     update_record_version "$record" "$UPDATE_TARGET" || true
 
@@ -459,8 +456,7 @@ perform_update() {
     remove_code_snapshot
     restore_sites_default_mode
 
-    echo
-    echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"
+    print_update_done "$machine_name" "$current"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
     print_git_commit_hint "Drupal core $UPDATE_TARGET"
     echo "If the project keeps configuration in git, export it now:"
@@ -520,6 +516,95 @@ echo $max, "\n";
 
 # Errors Drupal logged after id $1 (first 5): only what the update brought,
 # not the old ones.
+# What went wrong after a successful update or upgrade; the site works,
+# but these need attention. Filled by report_update_results.
+UPDATE_PROBLEMS=()
+
+# Enabled modules and themes whose .info.yml does not allow the installed
+# Drupal core: "type|name|path" per line. Their pages usually fail.
+get_incompatible_extensions() {
+    # Single quotes: PHP code for Drush, not shell code.
+    # shellcheck disable=SC2016
+    run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" php:eval '
+$lists = ["module" => \Drupal::service("extension.list.module"), "theme" => \Drupal::service("extension.list.theme")];
+$installed = [
+  "module" => array_keys(\Drupal::moduleHandler()->getModuleList()),
+  "theme" => array_keys(\Drupal::service("theme_handler")->listInfo()),
+];
+foreach ($lists as $type => $list) {
+  foreach ($installed[$type] as $name) {
+    $info = $list->getExtensionInfo($name);
+    if (!empty($info["core_incompatible"])) { echo $type, "|", $name, "|", $list->getPath($name), "\n"; }
+  }
+}
+' 2>/dev/null
+}
+
+# After the update: new errors of the status report and of the Drupal
+# log, and modules or themes that no longer fit the new core.
+report_update_results() {
+    local errors_before="$1"
+    local log_before="$2"
+    local errors_after
+    local new_errors
+    local incompatible
+    local type
+    local name
+    local path
+
+    UPDATE_PROBLEMS=()
+
+    errors_after="$(get_project_requirement_errors)" || errors_after=""
+    new_errors="$(comm -13 <(printf '%s\n' "$errors_before" | sort -u) <(printf '%s\n' "$errors_after" | sort -u) | grep . || true)"
+
+    if [[ -n "$new_errors" ]]; then
+        echo "[WARNING] New errors in the Drupal status report:"
+        printf '%s\n' "$new_errors" | sed 's/^/            - /'
+        UPDATE_PROBLEMS+=("new errors in the status report: $(paste -sd ',' - <<< "$new_errors" | sed 's/,/, /g')")
+    else
+        echo "[OK] No new errors in the Drupal status report"
+    fi
+
+    incompatible="$(get_incompatible_extensions | grep '^[a-z]*|' || true)"
+
+    if [[ -n "$incompatible" ]]; then
+        echo "[WARNING] Enabled, but not compatible with Drupal $UPDATE_TARGET (their pages will"
+        echo "          likely fail with an error 500):"
+
+        while IFS='|' read -r type name path; do
+            echo "            - $type $name ($path)"
+            UPDATE_PROBLEMS+=("$type $name is not compatible with Drupal $UPDATE_TARGET")
+        done <<< "$incompatible"
+
+        if [[ "$UPDATE_KIND" == "upgrade" ]]; then
+            echo "          Upgrade Status listed what to change in custom code (see above, or the"
+            echo "          log). Fix the code, then: ./drush cache:rebuild"
+        else
+            echo "          Fix core_version_requirement in their .info.yml (custom code) or update"
+            echo "          them with Composer (contrib), then: ./drush cache:rebuild"
+        fi
+    fi
+
+    report_new_log_errors "$log_before"
+}
+
+# The last line: [DONE], or [DONE WITH PROBLEMS] and what they are.
+print_update_done() {
+    local machine_name="$1"
+    local current="$2"
+
+    echo
+
+    if [[ "${#UPDATE_PROBLEMS[@]}" -eq 0 ]]; then
+        echo "[DONE] $machine_name: Drupal $current -> $UPDATE_TARGET"
+        return 0
+    fi
+
+    echo "[DONE WITH PROBLEMS] $machine_name: Drupal $current -> $UPDATE_TARGET"
+    printf '  - %s\n' "${UPDATE_PROBLEMS[@]}"
+    echo "The $UPDATE_KIND is installed, but check these before you work on the site."
+}
+
 report_new_log_errors() {
     local since="$1"
     local json
@@ -543,6 +628,7 @@ foreach ($d as $k => $row) {
 ' "$since" 2>/dev/null)" || return 0
 
     if [[ -n "$found" ]]; then
+        UPDATE_PROBLEMS+=("new errors in the Drupal log")
         echo "[WARNING] Drupal logged new errors during the ${UPDATE_KIND}:"
         printf '%s\n' "$found" | sed 's/^/            - /'
         echo "          Details: drush watchdog:show --severity=Error"

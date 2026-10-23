@@ -198,4 +198,41 @@ echo "[PASS] Database driver extension planned for each engine"
     check "git not planned when installed" "" "${INSTALL_PACKAGES[*]}"
 ) || exit 1
 
+# Test 13: sudo: nothing is asked when "sudo -n true" works (NOPASSWD,
+# or a remembered password); otherwise "sudo -v" asks once. sudo-rs
+# (Ubuntu 26.04) asks on "sudo -v" even with NOPASSWD.
+
+(
+    sudo_bin="$(mktemp -d)"
+    trap 'rm -rf "$sudo_bin"' EXIT
+    cat > "$sudo_bin/sudo" <<'STUB'
+#!/usr/bin/env bash
+echo "sudo $*" >> "$SUDO_CALLS"
+case "$1" in
+    -n) [[ "${SUDO_NOPASSWD:-0}" == "1" ]] && exit 0; echo "sudo: a password is required" >&2; exit 1 ;;
+    -v) exit "${SUDO_V_RESULT:-0}" ;;
+esac
+STUB
+    chmod +x "$sudo_bin/sudo"
+    export SUDO_CALLS="$sudo_bin/calls"
+
+    : > "$SUDO_CALLS"
+    output="$(SUDO_NOPASSWD=1 PATH="$sudo_bin:$PATH" require_sudo)"
+    check "NOPASSWD: no question, no sudo -v" "|sudo -n true" "$output|$(paste -sd ' ' "$SUDO_CALLS")"
+
+    : > "$SUDO_CALLS"
+    output="$(PATH="$sudo_bin:$PATH" require_sudo)"
+    if [[ "$output" == *"You will be asked for your Linux user password once."* &&
+          "$output" == *"Administrator privileges confirmed."* &&
+          "$output" != *"a password is required"* ]]; then
+        check "password: sudo -v after sudo -n" "sudo -n true sudo -v" "$(paste -sd ' ' "$SUDO_CALLS")"
+    else
+        check "password prompt text" "asked" "$output"
+    fi
+
+    status=0
+    output="$(SUDO_V_RESULT=1 PATH="$sudo_bin:$PATH" require_sudo)" || status=$?
+    check "wrong password: refused" "1|yes" "$status|$([[ "$output" == *"Administrator authentication failed."* ]] && echo yes)"
+) || exit 1
+
 echo "[SUCCESS] Preflight tests passed."

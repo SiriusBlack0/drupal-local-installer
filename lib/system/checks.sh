@@ -3,7 +3,14 @@
 # Administrator rights, the user running the installer, and what is
 # installed (Composer, Nginx, PHP and its extensions).
 
+# sudo is checked without a question first: with NOPASSWD, or while
+# sudo still remembers the password, nothing is asked. "sudo -v" alone
+# always asks under sudo-rs (Ubuntu 26.04), even with NOPASSWD.
 require_sudo() {
+    if sudo -n true 2>/dev/null; then
+        return 0
+    fi
+
     echo
     echo "Administrator privileges are required"
     echo "for system, database and web server operations."

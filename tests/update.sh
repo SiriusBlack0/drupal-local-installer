@@ -430,11 +430,12 @@ fi
 if output="$(printf '2\nalpha\n' | NEW_ERROR="Update notifications" run_update_project alpha)" &&
    [[ "$(version_of alpha)" == "11.4.2" ]] &&
    [[ "$(read_project_field "$(record_of alpha)" drupal_version)" == "11.4.2" ]] &&
-   [[ "$output" == *"[DONE] alpha: Drupal 11.3.10 -> 11.4.2"* &&
+   [[ "$output" == *"[DONE WITH PROBLEMS] alpha: Drupal 11.3.10 -> 11.4.2"* &&
+      "$output" == *"  - new errors in the status report: Update notifications"* &&
       "$output" == *"[WARNING] New errors in the Drupal status report"* &&
       "$output" == *"- Update notifications"* && "$output" != *"- Cron"* &&
       "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2\""* ]]; then
-    pass "Minor update: code, database update, registry version, new status errors, commit shown (git)"
+    pass "Minor update: code, database update, registry version, new status errors (DONE WITH PROBLEMS), commit shown (git)"
 else
     fail "update: $output / $(cat "$CALLS_FILE")"
 fi
@@ -442,7 +443,9 @@ fi
 backup="$(find "$work_dir/backups" -maxdepth 1 -name 'alpha-update-*' -type d | head -n 1)"
 
 if [[ -n "$backup" && "$(stat -c '%a' "$backup")" == "700" &&
-      "$(stat -c '%a' "$backup/database.sql.gz")" == "600" ]] &&
+      "$(stat -c '%a' "$backup/database.sql.gz")" == "600" &&
+      "$(stat -c '%a' "$backup/composer.json")" == "600" &&
+      "$(stat -c '%a' "$backup/composer.lock")" == "600" ]] &&
    zcat "$backup/database.sql.gz" | grep -q "CREATE TABLE node" &&
    grep -qx "core=11.3.10" "$backup/composer.lock" &&
    grep -q -- "dump --single-transaction --routines --triggers --databases --add-drop-database -- alpha" "$CALLS_FILE"; then
@@ -466,13 +469,16 @@ fi
 # Test 7: Failures restore code and database.
 
 make_project beta
+chmod 664 "$PROJECT_PATH/composer.json" "$PROJECT_PATH/composer.lock"
 
 if output="$(printf '1\nbeta\n' | UPDATE_FAILS=1 run_update_project beta)"; then
     fail "Failed Composer update reported as success"
 elif [[ "$(version_of beta)" == "11.3.10" && "$output" == *"[OK] The project is back to its previous version."* ]] &&
+     [[ "$(stat -c '%a' "$PROJECT_PATH/composer.json")" == "664" &&
+        "$(stat -c '%a' "$PROJECT_PATH/composer.lock")" == "664" ]] &&
      grep -qx "core=11.3.10" "$PROJECT_PATH/composer.lock" &&
      ! grep -q "mysql restore" "$CALLS_FILE" && grep -q "drush state:set system.maintenance_mode 0" "$CALLS_FILE"; then
-    pass "Composer failure: code restored, database untouched, maintenance off"
+    pass "Composer failure: code restored (composer files keep their mode), database untouched, maintenance off"
 else
     fail "composer failure: $output / $(cat "$CALLS_FILE")"
 fi
@@ -549,6 +555,23 @@ elif [[ "$output" == *"[OK] Database restored"* ]] &&
     pass "PostgreSQL: dump, then drop, recreate with owner and restore"
 else
     fail "postgresql: $output / $(cat "$CALLS_FILE")"
+fi
+
+# A restore that fails: the commands by hand, in the safe order (code
+# first, with a writable web/sites/default and a fresh vendor/; the
+# database only after the old version is back).
+
+make_project chi
+
+if output="$(printf '1\nchi\n' | UPDATE_FAILS=1 INSTALL_FAILS=1 run_update_project chi)"; then
+    fail "Failed restore reported as success"
+elif [[ "$output" == *"[ERROR] Automatic restore did not complete. Restore by hand from:"* &&
+        "$output" == *"  cd $PROJECT_PATH && chmod u+w $PROJECT_PATH/web/sites/default"* &&
+        "$output" == *"  rm -rf vendor && ./composer install && chmod 555 $PROJECT_PATH/web/sites/default"* &&
+        "$output" == *"  The database only after Drupal reports 11.3.10 again:"* ]]; then
+    pass "Failed restore: the commands by hand, code first, database only after the old version is back"
+else
+    fail "failed restore: $output"
 fi
 
 # Test 10: Offline restore: the code comes back from the copy made
@@ -731,6 +754,22 @@ if output="$(printf '1\n' | BLOCK_ADVISORIES=1 REMOVE_DRY_RUN=1 run_update_proje
     pass "Advisories block the target: explained in plain words; dry run shows the plan"
 else
     fail "advisories dry run: $output"
+fi
+
+if output="$(printf '1\n' | AUDIT_CORE=1 BLOCK_ADVISORIES=1 REMOVE_DRY_RUN=1 run_update_project rho)" &&
+   [[ "$output" == *"has a published security advisory. 11.3.12 fixes"* &&
+      "$output" == *"part of it, but still has advisories (see [SECURITY] above)."* &&
+      "$output" != *"this update is needed"* ]]; then
+    pass "Plan: an advisory now and advisories in the target too: said so, no contradiction"
+else
+    fail "advisories now and in the target: $output"
+fi
+
+if output="$(printf '1\n' | AUDIT_CORE=1 REMOVE_DRY_RUN=1 run_update_project rho)" &&
+   [[ "$output" == *"has a published security advisory; this update is needed."* ]]; then
+    pass "Plan: an advisory now and a clean target: this update is needed"
+else
+    fail "advisory now, clean target: $output"
 fi
 
 if output="$(printf '1\nno\n' | BLOCK_ADVISORIES=1 run_update_project rho)"; then

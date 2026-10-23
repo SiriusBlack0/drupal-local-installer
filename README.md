@@ -43,7 +43,8 @@ The installer works in three phases:
    because one would replace the other), project directory,
    project directory, database, PHP-FPM pool, Nginx site, then Drupal and
    Drush (Composer), then `drush site:install`.
-   The sudo password is asked once, right after you confirm.
+   The sudo password is asked once, right after you confirm (not at all
+   with `NOPASSWD`; also with sudo-rs, the sudo of Ubuntu 26.04).
 
 Why this order: Composer runs `sudo -K` every time it starts, on
 purpose. It forgets your cached sudo password so that scripts from the
@@ -164,7 +165,8 @@ accepted), `config_sync_directory` (`config/sync`, outside the web root)
 and an include of `settings.local.php`. It has no secrets, so it can be
 committed.
 
-`web/sites/default/settings.local.php` (mode 600) holds the secrets: the
+`web/sites/default/settings.local.php` holds the secrets (written with
+mode 600; Drupal's installer then makes it read-only, 400): the
 database connection and the hash salt. Git ignores it. Because both are
 set before `site:install`, Drupal's installer leaves `settings.php`
 alone; the final checks confirm that `settings.php` has no secrets.
@@ -427,7 +429,10 @@ recent minors.
 The update then asks for the project name and runs: backup → maintenance
 mode → `composer update` → `drush updatedb` → `drush cache:rebuild` →
 maintenance mode off → checks (version, Drush, HTTP answer, new errors in
-the status report). The registry records the new version.
+the status report and the Drupal log, enabled modules or themes that no
+longer fit the new core). The registry records the new version. When a
+check finds something, the update ends with `[DONE WITH PROBLEMS]` and the
+list.
 
 The backup goes to
 `~/drupal-local-installer-backups/<name>-update-<date>/` (folder 700,
@@ -453,15 +458,53 @@ If any step fails, the code and, after `updatedb`, the database are
 restored automatically; restoring the database uses sudo again, so it may
 ask for your password.
 
-Restore by hand, if the automatic restore fails (`B` is the backup folder):
+### Restoring a backup by hand
+
+When the automatic restore fails, or later (for example a week after an
+upgrade, when something turns out broken). Everything changed on the site
+since the backup is lost. Do the steps **in this order**, and restore
+the database **only when the code is back**: old database with new code
+(or the other way round) breaks the site.
 
 ```bash
-cp B/composer.json B/composer.lock /var/www/mysite/ && (cd /var/www/mysite && ./composer install)
-gunzip -c B/database.sql.gz | sudo mysql                       # MariaDB/MySQL
-sudo -u postgres dropdb mysite && sudo -u postgres createdb -O "$(cat B/database.owner)" mysite \
-  && gunzip -c B/database.sql.gz | sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d mysite   # PostgreSQL
-cp B/database.sqlite /var/www/mysite/private/database.sqlite     # SQLite
+P=/var/www/mysite                                     # the project
+B=~/drupal-local-installer-backups/mysite-upgrade-20261023-221500   # the backup
+cd "$P"
+./drush state:set system.maintenance_mode 1
+
+# 1. The code. web/sites/default is read-only; the core scaffold writes in it.
+chmod u+w web/sites/default
+cp "$B/composer.json" "$B/composer.lock" .
+rm -rf vendor        # after an upgrade, Composer plugins of the new major are in vendor/
+./composer install
+chmod 555 web/sites/default
+
+# 2. Check: both versions must be the same. If not, stop here (database untouched).
+./drush status --field=drupal-version
+grep -A1 '"name": "drupal/core"' "$B/composer.lock" | grep version
 ```
+
+After an upgrade, files that only the new major's scaffold writes stay
+behind; for Drupal 10 → 11 these are `web/autoload_runtime.php` and
+`web/.gitignore`. In git, `git status` shows them as new (`??`): delete
+those two by hand (not with `git clean`, which also deletes your own
+uncommitted work).
+
+```bash
+# 3. The database, only now:
+gunzip -c "$B/database.sql.gz" | sudo mysql                     # MariaDB/MySQL
+sudo -u postgres dropdb mysite && sudo -u postgres createdb -O "$(cat "$B/database.owner")" mysite \
+  && gunzip -c "$B/database.sql.gz" | sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d mysite   # PostgreSQL
+cp "$B/database.sqlite" "$P/private/database.sqlite"           # SQLite
+
+# 4. Caches, and the site back on:
+./drush cache:rebuild
+./drush state:set system.maintenance_mode 0
+```
+
+The registry keeps the newer `drupal_version` after a manual restore
+(the installer itself reads the version from the code, so `--update` and
+`--upgrade` work correctly).
 
 Errors in the Drupal log are compared too: only errors logged **during**
 the update are reported, not older ones.
@@ -495,7 +538,7 @@ The steps, their minimum versions and the modules that left core are in
 | PHP | the new major does not support the project's PHP: change it first with `--php`, as its own step, so a problem is easy to trace (the installer names a version both releases run on) |
 | Database | the server is older than the new major needs |
 | Modules removed from core | an enabled module or theme that the new major no longer has in core (for Drupal 11: Actions UI, Activity Tracker, Book, Forum, Statistics, Tour) and composer.json does not require its drupal.org project: `composer require drupal/book`, or uninstall it |
-| Upgrade Status | never blocks; errors in **custom** code ask you before the upgrade |
+| Upgrade Status | never blocks; errors in **custom** code (outside `tests/`) ask you before the upgrade |
 | Composer trial | Composer finds no way to install the new core (see below) |
 
 **Upgrade Status** ([drupal.org/project/upgrade_status](https://www.drupal.org/project/upgrade_status))
@@ -512,6 +555,14 @@ libraries). It is a Drupal module, so the installer explains it and asks:
 3. **skip** the scan.
 
 If it is already enabled, it is used without asking.
+
+What counts: only findings in **custom** code ask you before the upgrade.
+Contrib projects get new releases from Composer (the trial below), so
+their findings are only counted per project: a large module can have
+thousands of "Check manually" notes that need no action. Findings in
+`tests/` folders of custom code are counted too, not asked about: tests
+are not part of the site, and many only mean that PHPUnit is not
+installed.
 
 The most common finding in custom code is an `.info.yml` that allows only
 the current major (`core_version_requirement: ^10`): Drupal 11 refuses
@@ -553,8 +604,12 @@ Composer; backup (database, composer.json and composer.lock, offline copy
 of the code); maintenance mode; the new requirements are written into
 composer.json; `composer update`; `drush updatedb`; caches; then the same
 checks (Drupal reports the new version, Drush bootstraps, the site answers
-over HTTP), the new errors of the status report and of the Drupal log.
-The plan lists the contrib projects that get a new release (for example
+over HTTP), the new errors of the status report and of the Drupal log,
+and enabled modules or themes that the new major considers incompatible
+(named, with their folder: their pages usually fail with an error 500).
+If any of these is found, the upgrade ends with `[DONE WITH PROBLEMS]`
+and the list, instead of `[DONE]`. The plan lists the contrib projects
+that get a new release (for example
 `webform 6.2.9 -> 6.3.1`). Any failure – also
 Ctrl+C – restores the code, composer.json, composer.lock and, after
 `updatedb`, the database. The registry gets the new version and
@@ -567,10 +622,9 @@ so it usually belongs in `.gitignore`) and, if you keep configuration in
 git, `./drush config:export`.
 
 Back to the old major later (for example a week after, when something
-turns out broken): restore the backup by hand, with the commands of
-[Updating Drupal core](#updating-drupal-core---check-updates---update)
-(`B` is the `mysite-upgrade-…` backup folder); changes made to the site
-since the upgrade are lost then.
+turns out broken): [restore the backup by hand](#restoring-a-backup-by-hand),
+in the order shown there (`B` is the `mysite-upgrade-…` backup folder);
+changes made to the site since the upgrade are lost then.
 
 ## Other PHP versions (`--php-source`)
 

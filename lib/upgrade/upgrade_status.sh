@@ -110,7 +110,7 @@ remove_temporary_upgrade_status() {
     fi
 
     if [[ "$failed" -eq 0 && "$UPGRADE_STATUS_WAS_IN_COMPOSER" -eq 0 && -n "$UPGRADE_STATUS_SAVED_DIR" ]]; then
-        if ! cp -p -- "$UPGRADE_STATUS_SAVED_DIR/composer.json" "$UPGRADE_STATUS_SAVED_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
+        if ! cp --preserve=timestamps -- "$UPGRADE_STATUS_SAVED_DIR/composer.json" "$UPGRADE_STATUS_SAVED_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
            ! run_logged_retrying_network "Removing Upgrade Status from the code (composer install)" - \
                 run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
             failed=1
@@ -148,10 +148,19 @@ interrupt_upgrade_status() {
     exit 130
 }
 
-# Summarizes the checkstyle report of upgrade_status:analyze: a line
-# "errors warnings", then "type|project|errors|warnings" per project, then
-# up to 8 findings in custom code. Returns 0: nothing, 1: errors in custom
-# code, 2: other findings only, 3: no report.
+# Summarizes the checkstyle report of upgrade_status:analyze.
+#
+# Only the custom code counts: contrib gets new releases from Composer
+# (asked below), so its findings are only counted per project; a large
+# contrib project can have thousands of "Check manually" findings that
+# need no action. Findings in tests/ folders do not affect the site (and
+# are often only PHPUnit, which a site does not have): only counted.
+#
+# Output: "custom_errors custom_warnings test_findings contrib_findings",
+# then "custom|project|errors|warnings" and "contrib|project|findings|-"
+# per project, then up to 8 findings in custom code.
+# Returns 0: nothing, 1: errors in custom code, 2: other findings only,
+# 3: no report.
 summarize_upgrade_status_report() {
     # Single quotes: PHP code, not shell code.
     # shellcheck disable=SC2016
@@ -159,38 +168,48 @@ summarize_upgrade_status_report() {
 $xml = stream_get_contents(STDIN);
 if (strpos($xml, "<checkstyle") === false) { exit(3); }
 $root = rtrim($argv[1], "/") . "/";
-$projects = []; $custom = []; $e = 0; $w = 0;
+$customProjects = []; $contribProjects = []; $custom = [];
+$e = 0; $w = 0; $tests = 0; $contrib = 0;
 foreach (preg_split("/<file\s/", $xml) as $i => $chunk) {
     if ($i === 0 || !preg_match("/^name=\"([^\"]*)\"/", $chunk, $m)) { continue; }
     $file = html_entity_decode($m[1], ENT_QUOTES | ENT_XML1);
     $rel = strpos($file, $root) === 0 ? substr($file, strlen($root)) : $file;
-    $type = "other"; $name = $rel;
-    if (preg_match("#(?:^|/)(?:modules|themes|profiles)/(custom|contrib)/([^/]+)/#", $rel, $p)) { $type = $p[1]; $name = $p[2]; }
+    // Outside modules|themes|profiles/custom|contrib: counted like contrib.
+    $type = "other"; $name = "(other files)"; $inProject = "";
+    if (preg_match("#(?:^|/)(?:modules|themes|profiles)/(custom|contrib)/([^/]+)/(.*)$#", $rel, $p)) {
+        $type = $p[1]; $name = $p[2]; $inProject = $p[3];
+    }
+    $isTest = (bool) preg_match("#(?:^|/)tests/#", $inProject);
     preg_match_all("/<error\b([^>]*)>/", $chunk, $errs);
     foreach ($errs[1] as $attrs) {
         $a = [];
         preg_match_all("/(\w+)=\"([^\"]*)\"/", $attrs, $kv, PREG_SET_ORDER);
         foreach ($kv as $x) { $a[$x[1]] = html_entity_decode($x[2], ENT_QUOTES | ENT_XML1); }
+        if ($type !== "custom") {
+            $contribProjects[$name] = ($contribProjects[$name] ?? 0) + 1;
+            $contrib++;
+            continue;
+        }
+        if ($isTest) { $tests++; continue; }
         $sev = strtolower($a["severity"] ?? "error") === "warning" ? 1 : 0;
         // Twig deprecations ("Since twig/twig 3.12: ...") still work with
         // Twig 3, which the next major uses too: a warning, not an error.
         if (preg_match("#^Since twig/twig 3\\.#", $a["message"] ?? "")) { $sev = 1; }
-        $key = "$type|$name";
-        $projects[$key] = $projects[$key] ?? [0, 0];
-        $projects[$key][$sev]++;
+        $customProjects[$name] = $customProjects[$name] ?? [0, 0];
+        $customProjects[$name][$sev]++;
         if ($sev) { $w++; } else { $e++; }
-        if ($type === "custom" && count($custom) < 8) {
+        if (count($custom) < 8) {
             $custom[] = $rel . ":" . ($a["line"] ?? "?") . " " . ($sev ? "WARNING" : "ERROR") . ": " . mb_substr(preg_replace("/\s+/", " ", $a["message"] ?? ""), 0, 160);
         }
     }
 }
-echo $e, " ", $w, "\n";
-ksort($projects);
-foreach ($projects as $k => [$pe, $pw]) { echo $k, "|", $pe, "|", $pw, "\n"; }
+echo $e, " ", $w, " ", $tests, " ", $contrib, "\n";
+ksort($customProjects);
+ksort($contribProjects);
+foreach ($customProjects as $k => [$pe, $pw]) { echo "custom|", $k, "|", $pe, "|", $pw, "\n"; }
+foreach ($contribProjects as $k => $n) { echo "contrib|", $k, "|", $n, "|-\n"; }
 foreach ($custom as $c) { echo $c, "\n"; }
-$customErrors = 0;
-foreach ($projects as $k => [$pe, $pw]) { if (strpos($k, "custom|") === 0) { $customErrors += $pe; } }
-exit($customErrors > 0 ? 1 : ($e + $w > 0 ? 2 : 0));
+exit($e > 0 ? 1 : ($w + $tests + $contrib > 0 ? 2 : 0));
 ' "$RECORD_PROJECT_PATH"
 }
 
@@ -199,18 +218,19 @@ exit($customErrors > 0 ? 1 : ($e + $w > 0 ? 2 : 0));
 print_upgrade_status_report() {
     local report="$1"
     local to_major="$2"
-    local counts
     local errors
     local warnings
+    local tests
+    local contrib
+    local contrib_projects
     local line
     local type
     local project
-    local pe
-    local pw
+    local first
+    local second
 
-    counts="$(head -n 1 <<< "$report")"
-    errors="${counts%% *}"
-    warnings="${counts##* }"
+    read -r errors warnings tests contrib <<< "$(head -n 1 <<< "$report")"
+    contrib_projects="$(grep -c '^contrib|' <<< "$report")" || contrib_projects=0
 
     if [[ "$UPGRADE_STATUS_RESULT" -eq 0 ]]; then
         echo "  [OK]      Upgrade Status: nothing found in the enabled modules and themes"
@@ -218,25 +238,47 @@ print_upgrade_status_report() {
         return 0
     fi
 
-    echo "  [WARNING] Upgrade Status: $errors error(s), $warnings warning(s) for Drupal $to_major:"
-    UPGRADE_STATUS_SUMMARY="$errors error(s), $warnings warning(s)"
+    UPGRADE_STATUS_SUMMARY="custom code: $errors error(s), $warnings warning(s)"
+    [[ "$contrib_projects" -gt 0 ]] && UPGRADE_STATUS_SUMMARY+="; contrib: $contrib_projects project(s) with findings"
+    [[ "$tests" -gt 0 ]] && UPGRADE_STATUS_SUMMARY+="; tests/: $tests finding(s)"
 
-    while IFS= read -r line; do
-        if [[ "$line" == *"|"*"|"*"|"* ]]; then
-            IFS='|' read -r type project pe pw <<< "$line"
-            echo "              $type: $project: $pe error(s), $pw warning(s)"
-        elif [[ -n "$line" ]]; then
-            echo "              $line"
+    if [[ $((errors + warnings)) -gt 0 ]]; then
+        echo "  [WARNING] Upgrade Status, custom code: $errors error(s), $warnings warning(s) for Drupal $to_major:"
+
+        while IFS= read -r line; do
+            if [[ "$line" == custom\|* ]]; then
+                IFS='|' read -r type project first second <<< "$line"
+                echo "              $type: $project: $first error(s), $second warning(s)"
+            elif [[ -n "$line" && "$line" != *"|"*"|"*"|"* ]]; then
+                echo "              $line"
+            fi
+        done < <(tail -n +2 <<< "$report")
+
+        echo "            Fix it (drupal-rector fixes many of these automatically)."
+        print_info_yml_fixes "$report" "$to_major"
+
+        if grep -q 'WARNING: Since twig/twig 3\.' <<< "$report"; then
+            echo "            Twig deprecations (warnings): they still work with Twig 3, which Drupal"
+            echo "            $to_major uses; fix them at leisure (they break only with Twig 4)."
         fi
-    done < <(tail -n +2 <<< "$report")
+    else
+        echo "  [OK]      Upgrade Status, custom code: nothing to fix for Drupal $to_major"
+    fi
 
-    echo "            Contrib: newer releases usually fix this; Composer is asked below."
-    echo "            Custom code: fix it (drupal-rector fixes many of these automatically)."
-    print_info_yml_fixes "$report" "$to_major"
+    if [[ "$tests" -gt 0 ]]; then
+        echo "  [INFO]    Upgrade Status: $tests finding(s) in tests/ folders of custom code. Tests"
+        echo "            are not part of the site, so they do not count (many only mean that"
+        echo "            PHPUnit is not installed). Fix them when you run the tests."
+    fi
 
-    if grep -q 'WARNING: Since twig/twig 3\.' <<< "$report"; then
-        echo "            Twig deprecations (warnings): they still work with Twig 3, which Drupal"
-        echo "            $to_major uses; fix them at leisure (they break only with Twig 4)."
+    if [[ "$contrib_projects" -gt 0 ]]; then
+        echo "  [INFO]    Upgrade Status, contrib: $contrib finding(s) in $contrib_projects project(s). Composer is"
+        echo "            asked below for releases that support Drupal $to_major; most findings are"
+        echo "            \"Check manually\" notes that need no action:"
+
+        while IFS='|' read -r type project first second; do
+            [[ "$type" == "contrib" ]] && echo "              $project: $first"
+        done < <(tail -n +2 <<< "$report")
     fi
 
     echo "            Full report: ./drush upgrade_status:analyze --all (while it is installed)."

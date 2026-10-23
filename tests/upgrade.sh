@@ -263,6 +263,14 @@ case "$1" in
                 # Like the real report: paths relative to the Drupal root.
                 echo "<file name=\"modules/custom/shop/shop.info.yml\"><error line=\"5\" message=\"Value of core_version_requirement: ^10 is not compatible with the next major version of Drupal core. See https://drupal.org/node/3070687.\" severity=\"error\"></error></file>"
                 ;;
+            noise)
+                # Like a large real project: thousands of "Check manually"
+                # findings in contrib, PHPUnit missing in the tests of custom code.
+                echo "<file name=\"$web/modules/contrib/search_api/src/Plugin/Foo.php\">"
+                for _ in 1 2 3 4 5; do echo "<error line=\"1\" message=\"Class Bar not found.\" severity=\"error\"></error>"; done
+                echo "</file>"
+                echo "<file name=\"$web/modules/custom/shop/tests/src/Kernel/ShopTest.php\"><error line=\"20\" message=\"Call to an undefined method ShopTest::assertSame().\" severity=\"error\"></error></file>"
+                ;;
             contrib)
                 echo "<file name=\"$web/modules/contrib/pathauto/pathauto.info.yml\"><error line=\"1\" message=\"Value of core_version_requirement: ^9 || ^10 is not compatible with Drupal 11.\" severity=\"error\"></error></file>"
                 ;;
@@ -271,6 +279,13 @@ case "$1" in
         ;;
     updatedb)
         [[ "${UPDB_FAILS:-0}" == "1" ]] && exit 1
+        ;;
+    php:eval)
+        # INCOMPATIBLE=1: a custom module that allows only Drupal 10 stays
+        # enabled after the upgrade.
+        if [[ "${INCOMPATIBLE:-0}" == "1" ]] && grep -q "'11\." "$web/core/lib/Drupal.php"; then
+            echo "module|road_map|modules/custom/road_map"
+        fi
         ;;
     core:requirements)
         echo '[{"title":"Cron"}]'
@@ -462,12 +477,13 @@ make_project epsilon
 if output="$(printf '1\n' | US_REPORT=custom REMOVE_DRY_RUN=1 run_upgrade_project epsilon)" &&
    [[ "$output" == *"Upgrade Status (drupal.org/project/upgrade_status) scans the enabled modules"* &&
       "$output" == *"1) For this scan only: add it, scan, then remove it again"* &&
-      "$output" == *"[WARNING] Upgrade Status: 1 error(s), 1 warning(s) for Drupal 11:"* &&
+      "$output" == *"[WARNING] Upgrade Status, custom code: 1 error(s), 0 warning(s) for Drupal 11:"* &&
       "$output" == *"custom: shop: 1 error(s), 0 warning(s)"* &&
-      "$output" == *"contrib: pathauto: 0 error(s), 1 warning(s)"* &&
+      "$output" == *"[INFO]    Upgrade Status, contrib: 1 finding(s) in 1 project(s)."* &&
+      "$output" == *"              pathauto: 1"* &&
       "$output" == *"web/modules/custom/shop/shop.module:12 ERROR: Call to deprecated function drupal_set_message()."* &&
       "$output" == *"[OK] Upgrade Status removed again; the project is as before the scan"* &&
-      "$output" == *"Upgrade Status: 1 error(s), 1 warning(s)"* &&
+      "$output" == *"Upgrade Status: custom code: 1 error(s), 0 warning(s); contrib: 1 project(s) with findings"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    composer_unchanged epsilon && grep -qx "core=10.6.19" "$PROJECT_PATH/composer.lock" &&
    [[ ! -e "$PROJECT_PATH/vendor/upgrade_status" && ! -e "$PROJECT_PATH/.us-enabled" ]] &&
@@ -540,13 +556,31 @@ fi
 make_project tau
 
 if output="$(printf '1\ntau\n' | US_REPORT=twig run_upgrade_project tau)" &&
-   [[ "$output" == *"[WARNING] Upgrade Status: 0 error(s), 1 warning(s) for Drupal 11:"* &&
+   [[ "$output" == *"[WARNING] Upgrade Status, custom code: 0 error(s), 1 warning(s) for Drupal 11:"* &&
       "$output" == *"Twig deprecations (warnings): they still work with Twig 3"* &&
       "$output" == *"[DONE] tau: Drupal 10.6.19 -> 11.4.2"* &&
       "$output" == *"[OK] No new errors in the Drupal log (older ones are not counted)"* ]]; then
     pass "Twig deprecations in custom code: warnings, no question; upgraded"
 else
     fail "twig warnings: $output"
+fi
+
+# Findings only in contrib and in tests/ of custom code: counted, not
+# errors; no question; the upgrade goes on.
+
+make_project upsilon
+
+if output="$(printf '1\nupsilon\n' | US_REPORT=noise run_upgrade_project upsilon)" &&
+   [[ "$output" == *"[OK]      Upgrade Status, custom code: nothing to fix for Drupal 11"* &&
+      "$output" == *"[INFO]    Upgrade Status: 1 finding(s) in tests/ folders of custom code."* &&
+      "$output" == *"[INFO]    Upgrade Status, contrib: 5 finding(s) in 1 project(s)."* &&
+      "$output" == *"              search_api: 5"* &&
+      "$output" == *"Upgrade Status: custom code: 0 error(s), 0 warning(s); contrib: 1 project(s) with findings; tests/: 1 finding(s)"* &&
+      "$output" != *"Upgrade anyway?"* && "$output" != *"WARNING] Upgrade Status"* &&
+      "$output" == *"[DONE] upsilon: Drupal 10.6.19 -> 11.4.2"* ]]; then
+    pass "Contrib findings and tests/ of custom code: counted as information, no question"
+else
+    fail "upgrade status noise: $output"
 fi
 
 # Test 5: drupal.org projects without a Drupal 11 release: the developer
@@ -648,7 +682,8 @@ mkdir -p "$PROJECT_PATH/recipes/core_recipe"
 touch "$PROJECT_PATH/recipes/core_recipe/recipe.yml"
 
 if output="$(printf '3\nrho\n' | WATCHDOG_NEW=1 run_upgrade_project rho)" &&
-   [[ "$output" == *"[DONE] rho: Drupal 10.6.19 -> 11.4.2"* &&
+   [[ "$output" == *"[DONE WITH PROBLEMS] rho: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"  - new errors in the Drupal log"* &&
       "$output" == *"Changed in git ("* &&
       "$output" == *" M composer.json"* && "$output" == *" M web/core/lib/Drupal.php"* &&
       "$output" == *"recipes/ is written by Composer (like vendor/)"* &&
@@ -737,6 +772,24 @@ if output="$(printf '1\ny\nmu\n' | US_REPORT=custom run_upgrade_project mu)" &&
     pass "Errors in custom code: 'y' goes on (the developer's decision)"
 else
     fail "custom confirm yes: $output"
+fi
+
+# An enabled module that Drupal 11 considers incompatible: named, and
+# the upgrade ends with DONE WITH PROBLEMS.
+
+make_project psi
+
+if output="$(printf '3\npsi\n' | INCOMPATIBLE=1 run_upgrade_project psi)" &&
+   [[ "$output" == *"[WARNING] Enabled, but not compatible with Drupal 11.4.2 (their pages will"* &&
+      "$output" == *"            - module road_map (modules/custom/road_map)"* &&
+      "$output" == *"Upgrade Status listed what to change in custom code"* &&
+      "$output" == *"[DONE WITH PROBLEMS] psi: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"  - module road_map is not compatible with Drupal 11.4.2"* &&
+      "$output" == *"The upgrade is installed, but check these before you work on the site."* ]] &&
+   [[ "$(version_of psi)" == "11.4.2" ]]; then
+    pass "Incompatible module after the upgrade: named; DONE WITH PROBLEMS"
+else
+    fail "incompatible module: $output"
 fi
 
 # Test 9: A Composer plugin that composer.json does not mention yet: the
