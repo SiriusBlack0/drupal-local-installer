@@ -6,6 +6,7 @@
 # sudo is checked without a question first: with NOPASSWD, or while
 # sudo still remembers the password, nothing is asked. "sudo -v" alone
 # always asks under sudo-rs (Ubuntu 26.04), even with NOPASSWD.
+# $1: what to say when it fails (default: nothing was changed).
 require_sudo() {
     if sudo -n true 2>/dev/null; then
         return 0
@@ -21,7 +22,7 @@ require_sudo() {
     if ! sudo -v; then
         echo
         echo "Administrator authentication failed."
-        echo "Installation cancelled."
+        echo "${1:-Cancelled; nothing was changed.}"
         return 1
     fi
 

@@ -453,8 +453,15 @@ Before anything changes, the installer checks that:
   undo the change), and you decide whether to continue (default: no).
   When the change prepares the next major (`composer require ...
   --no-update`), it is fine: use `--upgrade` instead, which installs it.
-  The backup is not affected: it keeps the code that is installed, and
-  `composer install` restores exactly what composer.lock lists;
+  Whether the backup can be restored later is tested too
+  (`composer install --dry-run` on a copy of the composer files): a
+  changed constraint is fine, because `composer install` restores what
+  composer.lock lists; a package that composer.json requires but
+  composer.lock lacks (`composer require vendor/name --no-update`) makes
+  `composer install` refuse the files, so a later `--restore` of that
+  backup would not work. The installer says so, with Composer's reason.
+  (The automatic restore if the update fails is not affected: it uses an
+  offline copy of the code.);
 - the site works now (Drush bootstraps it);
 - Composer can resolve the update (`--dry-run`). If a constraint in
   `composer.json` blocks it, Composer's reason is shown and nothing
@@ -610,7 +617,7 @@ The steps, their minimum versions and the modules that left core are in
 | PHP | the new major does not support the project's PHP: change it first with `--php`, as its own step, so a problem is easy to trace (the installer names a version both releases run on) |
 | Database | the server is older than the new major needs |
 | Modules removed from core | an enabled module or theme that the new major no longer has in core (for Drupal 11: Actions UI, Activity Tracker, Book, Forum, Statistics, Tour) and composer.json does not require its drupal.org project: `composer require drupal/book`, or uninstall it |
-| composer.json ahead of composer.lock | never blocks: changes made with `composer require ... --no-update` (new major releases of contrib) are installed by the upgrade; the Composer trial shows them |
+| composer.json ahead of composer.lock | does not block: changes made with `composer require ... --no-update` (new major releases of contrib) are installed by the upgrade; the Composer trial shows them. Only when such a change adds a package that composer.lock lacks, the backup could not be restored later with `--restore`: the installer says so and you decide (default: no) |
 | Upgrade Status | never blocks; errors in **custom** code (outside `tests/`) ask you before the upgrade |
 | Composer trial | Composer finds no way to install the new core (see below) |
 

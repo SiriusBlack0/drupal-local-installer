@@ -523,7 +523,7 @@ run_change_php() {
 
         # Composer forgets the cached sudo password when it starts.
         echo "Composer cleared sudo's cached password; it is needed once more."
-        require_sudo || return 1
+        require_sudo "Cancelled. PHP $new stays installed; the project was not changed." || return 1
     fi
 
     if ! check_php_extensions "$new" "${REQUIRED_PHP_EXTENSIONS[@]}"; then

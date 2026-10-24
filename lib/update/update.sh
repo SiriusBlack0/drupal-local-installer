@@ -136,7 +136,7 @@ rollback_update() {
 # of --restore ("run failed, restored automatically").
 mark_backup_result() {
     [[ -n "$UPDATE_BACKUP_DIR" && -d "$UPDATE_BACKUP_DIR" ]] || return 0
-    printf '%s %s\n' "$1" "$(date '+%F %H:%M')" > "$UPDATE_BACKUP_DIR/result" 2>/dev/null || true
+    ( umask 077 && printf '%s %s\n' "$1" "$(date '+%F %H:%M')" > "$UPDATE_BACKUP_DIR/result" ) 2>/dev/null || true
 }
 
 # The command that loads the backup's database, for this engine.
@@ -353,11 +353,34 @@ check_core_change_project() {
 # the developer decides. Returns 1 to stop.
 explain_outdated_lock() {
     local answer
+    local reason
+    local status=0
+
+    # Can a later --restore of this run's backup install these files? Not
+    # when composer.json requires a package that composer.lock lacks
+    # ("composer require vendor/name --no-update"). The automatic restore
+    # during the run is not affected: it uses an offline copy of the code.
+    reason="$(check_composer_files_installable "$RECORD_PROJECT_PATH")" || status=$?
 
     if [[ "$UPDATE_KIND" == "upgrade" ]]; then
         echo "[INFO] composer.json has changes that are not in composer.lock yet (for example"
         echo "       \"composer require ... --no-update\"). The upgrade installs them together"
         echo "       with the new core; the Composer trial below shows what changes."
+
+        [[ "$status" -eq 1 ]] || return 0
+
+        explain_unrestorable_backup "$reason"
+
+        if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
+            echo "       (Dry run: a real run asks whether to continue.)"
+            return 0
+        fi
+
+        if ! read -r -p "Continue with the upgrade anyway? [y/N]: " answer || [[ ! "$answer" =~ ^[Yy]$ ]]; then
+            echo "Upgrade cancelled; nothing was changed."
+            return 1
+        fi
+
         return 0
     fi
 
@@ -367,7 +390,13 @@ explain_outdated_lock() {
     echo "          in line first, commit, and update then:"
     echo "            cd $RECORD_PROJECT_PATH && ./composer update --dry-run   (what differs)"
     echo "            ./composer update vendor/name   (or undo the change in composer.json)"
-    echo "          The backup is not affected: it keeps the code that is installed now."
+
+    case "$status" in
+        0) echo "          The backup can be restored later: composer install accepts these files." ;;
+        1) explain_unrestorable_backup "$reason" ;;
+        *) echo "          Whether a later --restore of the backup works could not be checked (network?)." ;;
+    esac
+
     # Only when a stable next major exists (third field of the targets).
     if [[ -n "${major:-}" ]]; then
         echo "          If the change prepares Drupal ${major%%.*} (composer require ... --no-update),"
@@ -383,6 +412,17 @@ explain_outdated_lock() {
         echo "Update cancelled; nothing was changed."
         return 1
     fi
+}
+
+# The backup of this run would hold composer files that "composer install"
+# refuses: said plainly, with Composer's reason.
+explain_unrestorable_backup() {
+    echo "[WARNING] The backup of this ${UPDATE_KIND} could NOT be restored later with --restore:"
+    echo "          composer install refuses the current composer files:"
+    printf '%s\n' "$1" | head -n 4 | sed 's/^/            /'
+    echo "          (If the ${UPDATE_KIND} itself fails, the automatic restore is not affected:"
+    echo "          it uses an offline copy of the code.) Bring the files in line first to"
+    echo "          keep a backup you can go back to."
 }
 
 run_update_project() {

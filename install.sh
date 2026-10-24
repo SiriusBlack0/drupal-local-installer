@@ -172,7 +172,7 @@ main() {
 
     # Ask for the sudo password once, right after the confirmation.
     # sudo remembers it per terminal for the rest of the run.
-    if ! require_sudo; then
+    if ! require_sudo "Installation cancelled; nothing was changed."; then
         exit 1
     fi
 

@@ -206,6 +206,17 @@ case "${args[0]}" in
         fi
         ;;
     install)
+        # The test install of composer files (a dry run on a copy).
+        if [[ " ${args[*]} " == *" --dry-run "* ]]; then
+            if [[ "${INSTALL_DRYRUN_FAILS:-0}" == "1" ]]; then
+                echo "Installing dependencies from lock file (including require-dev)"
+                echo "Verifying lock file contents can be installed on current platform."
+                echo "- Required package \"drupal/token\" is not present in the lock file."
+                exit 4
+            fi
+            echo "Nothing to install, update or remove"
+            exit 0
+        fi
         if [[ "${INSTALL_FAILS:-0}" == "1" ]]; then
             echo "curl error 6: Could not resolve host: repo.packagist.org"
             exit 1
@@ -389,6 +400,19 @@ else
     fail "bootstrap: $output"
 fi
 
+# A package required without "composer update": the backup could not be
+# restored later; said with Composer's reason.
+
+if output="$(printf '1\n' | LOCK_OUTDATED=1 INSTALL_DRYRUN_FAILS=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
+   [[ "$output" == *"[WARNING] The backup of this update could NOT be restored later with --restore:"* &&
+      "$output" == *"Required package \"drupal/token\" is not present in the lock file."* &&
+      "$output" == *"the automatic restore is not affected"* &&
+      "$output" != *"The backup can be restored later"* ]]; then
+    pass "New package without composer update: the backup would not restore later, said with the reason"
+else
+    fail "unrestorable backup: $output"
+fi
+
 # No stable next major yet: no word about --upgrade.
 
 if output="$(printf '1\n' | COMPOSER_VERSIONS='["11.4.2","11.3.12","11.3.10","12.0.0-beta2"]' LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
@@ -424,11 +448,11 @@ fi
 if output="$(printf '1\n' | LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
    [[ "$output" == *"[WARNING] composer.json has changes that are not in composer.lock yet"* &&
       "$output" == *"./composer update --dry-run   (what differs)"* &&
-      "$output" == *"The backup is not affected"* &&
       "$output" == *"(Dry run: a real run asks whether to continue.)"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    [[ "$output" == *"it is fine as it is: run ./install.sh --upgrade alpha instead."* ]] &&
    [[ "$output" == *"New:          drupal/token 1.17.0 (from composer.json)"* ]] &&
+   [[ "$output" == *"The backup can be restored later: composer install accepts these files."* ]] &&
    [[ "$output" != *"could not be restored"* ]]; then
     pass "composer.lock behind composer.json: explained in the dry run (also the --upgrade case), which goes on"
 else
@@ -658,7 +682,8 @@ elif [[ "$output" == *"[ERROR] Automatic restore did not complete. The site stay
         "$output" == *"(must say 11.3.10)"* &&
         "$output" != *"The database"* ]] &&
      [[ "$(tail -n 1 < <(grep "maintenance_mode" "$CALLS_FILE"))" == *"maintenance_mode 1"* ]] &&
-     grep -q "rolled-back-incomplete" "$(find "$work_dir/backups" -maxdepth 1 -name 'chi-update-*' | head -n 1)/result"; then
+     grep -q "rolled-back-incomplete" "$(find "$work_dir/backups" -maxdepth 1 -name 'chi-update-*' | head -n 1)/result" &&
+     [[ "$(stat -c '%a' "$(find "$work_dir/backups" -maxdepth 1 -name 'chi-update-*' | head -n 1)/result")" == "600" ]]; then
     pass "Code cannot be restored: only the code steps; the site stays in maintenance mode; backup marked"
 else
     fail "failed restore: $output / $(cat "$CALLS_FILE")"

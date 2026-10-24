@@ -232,7 +232,11 @@ STUB
 
     status=0
     output="$(SUDO_V_RESULT=1 PATH="$sudo_bin:$PATH" require_sudo)" || status=$?
-    check "wrong password: refused" "1|yes" "$status|$([[ "$output" == *"Administrator authentication failed."* ]] && echo yes)"
+    check "wrong password: refused" "1|yes" "$status|$([[ "$output" == *"Administrator authentication failed."*"Cancelled; nothing was changed."* ]] && echo yes)"
+
+    status=0
+    output="$(SUDO_V_RESULT=1 PATH="$sudo_bin:$PATH" require_sudo "Installation cancelled; nothing was changed.")" || status=$?
+    check "wrong password: the caller's message" "1|yes" "$status|$([[ "$output" == *"Installation cancelled; nothing was changed."* && "$output" != *"Cancelled; nothing"* ]] && echo yes)"
 ) || exit 1
 
 echo "[SUCCESS] Preflight tests passed."

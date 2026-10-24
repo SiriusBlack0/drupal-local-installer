@@ -208,6 +208,17 @@ case "${args[0]}" in
         fi
         ;;
     install)
+        # The test install of composer files (a dry run on a copy).
+        if [[ " ${args[*]} " == *" --dry-run "* ]]; then
+            if [[ "${INSTALL_DRYRUN_FAILS:-0}" == "1" ]]; then
+                echo "Installing dependencies from lock file (including require-dev)"
+                echo "Verifying lock file contents can be installed on current platform."
+                echo "- Required package \"drupal/token\" is not present in the lock file."
+                exit 4
+            fi
+            echo "Nothing to install, update or remove"
+            exit 0
+        fi
         set_version "$(grep -oP 'core=\K.*' "$lock")"
         grep -qx upgrade_status "$lock" || rm -f "$dir/vendor/upgrade_status"
         ;;
@@ -841,6 +852,21 @@ if output="$(printf '3\nchi\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" run_upg
     pass "After the upgrade: configuration export compared with the database; export, not import"
 else
     fail "config after upgrade: $output"
+fi
+
+# The same, but a package that composer.lock lacks: the backup of the
+# upgrade could not be restored later; the developer decides.
+
+make_project omicron2
+
+if output="$(printf '3\nn\n' | LOCK_OUTDATED=1 INSTALL_DRYRUN_FAILS=1 run_upgrade_project omicron2)"; then
+    fail "Unrestorable backup accepted without asking"
+elif [[ "$output" == *"[WARNING] The backup of this upgrade could NOT be restored later with --restore:"* &&
+        "$output" == *"Upgrade cancelled; nothing was changed."* ]] &&
+     composer_unchanged omicron2 && ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "Upgrade whose backup could not be restored later: explained; 'n' changes nothing"
+else
+    fail "upgrade unrestorable: $output"
 fi
 
 # Test 9: A Composer plugin that composer.json does not mention yet: the
