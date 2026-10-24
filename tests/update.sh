@@ -383,15 +383,42 @@ else
     fail "bootstrap: $output"
 fi
 
-if output="$(LOCK_OUTDATED=1 run_update_project alpha < /dev/null)"; then
-    fail "Outdated composer.lock accepted"
-elif [[ "$output" == *"[BLOCKED] composer.lock does not match composer.json: composer.json was changed"* &&
-        "$output" == *"its backup could not be restored"* &&
-        "$output" == *"./composer update --dry-run"* ]] && ! grep -q "sudo-asked" "$CALLS_FILE"; then
-    pass "composer.lock out of date with composer.json: blocked before anything, with what to do"
+# composer.json changed without "composer update": explained; the
+# developer decides (default: no).
+
+if output="$(printf '1\n' | LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
+   [[ "$output" == *"[WARNING] composer.json has changes that are not in composer.lock yet"* &&
+      "$output" == *"./composer update --dry-run   (what differs)"* &&
+      "$output" == *"The backup is not affected"* &&
+      "$output" == *"(Dry run: a real run asks whether to continue.)"* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
+   [[ "$output" != *"could not be restored"* ]]; then
+    pass "composer.lock behind composer.json: explained in the dry run, which goes on"
 else
-    fail "outdated lock: $output"
+    fail "outdated lock dry run: $output"
 fi
+
+: > "$CALLS_FILE"
+
+if output="$(printf 'n\n' | LOCK_OUTDATED=1 run_update_project alpha)"; then
+    fail "Outdated composer.lock accepted without asking"
+elif [[ "$output" == *"Continue with the update anyway? [y/N]"* || "$output" == *"Update cancelled; nothing was changed."* ]] &&
+     ! grep -q "sudo-asked" "$CALLS_FILE" && [[ "$(version_of alpha)" == "11.3.10" ]]; then
+    pass "composer.lock behind composer.json: 'n' (the default) changes nothing"
+else
+    fail "outdated lock no: $output"
+fi
+
+make_project upsilon
+
+if output="$(printf 'y\n1\nupsilon\n' | LOCK_OUTDATED=1 run_update_project upsilon)" &&
+   [[ "$output" == *"[DONE] upsilon: Drupal 11.3.10 -> 11.3.12"* && "$(version_of upsilon)" == "11.3.12" ]]; then
+    pass "composer.lock behind composer.json: 'y' goes on (the developer's decision)"
+else
+    fail "outdated lock yes: $output"
+fi
+
+make_project alpha
 
 git -C "$PROJECT_PATH" init -q
 git -C "$PROJECT_PATH" add composer.json composer.lock

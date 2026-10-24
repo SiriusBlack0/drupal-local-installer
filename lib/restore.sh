@@ -390,22 +390,21 @@ run_restore_project() {
         return 1
     fi
 
-    if is_composer_lock_outdated "$RESTORE_BACKUP_DIR"; then
-        echo "[BLOCKED] In this backup, composer.lock does not match composer.json (the backup"
-        echo "          was made while composer.json had changes without \"composer update\")."
-        echo "          composer install cannot install it. Choose another backup."
-        return 1
-    fi
+    local installable
+    local install_status=0
+    installable="$(check_composer_files_installable "$RESTORE_BACKUP_DIR")" || install_status=$?
 
-    local platform
-    local platform_status=0
-    platform="$(check_lock_platform "$RESTORE_BACKUP_DIR")" || platform_status=$?
+    if [[ "$install_status" -eq 1 ]]; then
+        echo "[BLOCKED] The backup's packages cannot be installed (composer install --dry-run):"
+        printf '%s\n' "$installable" | sed 's/^/            /'
 
-    if [[ "$platform_status" -eq 1 ]]; then
-        echo "[BLOCKED] The backup's packages do not run with this project's PHP $RECORD_PHP_VERSION:"
-        printf '%s\n' "$platform" | sed 's/^/            /'
-        echo "          Change the PHP version first (./install.sh --php $machine_name X.Y), or"
-        echo "          choose another backup."
+        if grep -qi 'requires php\|ext-' <<< "$installable"; then
+            echo "          They need another PHP version or extension: change the PHP first"
+            echo "          (./install.sh --php $machine_name X.Y), or choose another backup."
+        else
+            echo "          Choose another backup, or restore by hand (README.md)."
+        fi
+
         return 1
     fi
 
@@ -445,8 +444,16 @@ run_restore_project() {
         echo "              restored database afterwards."
     fi
 
-    if [[ "$platform_status" -eq 2 ]]; then
-        echo "PHP:          could not check the backup's requirements (composer check-platform-reqs)."
+    if [[ "$install_status" -eq 2 ]]; then
+        echo "Check:        could not test the install of the backup (network?); the restore"
+        echo "              checks the code again before it touches the database."
+    else
+        echo "Check:        the backup's packages can be installed (composer install --dry-run)."
+    fi
+
+    if is_composer_lock_outdated "$RESTORE_BACKUP_DIR"; then
+        echo "[NOTE] In this backup composer.json has changes that were not in composer.lock"
+        echo "       yet. The restore installs what composer.lock lists: the code of that time."
     fi
     echo
     echo "Steps: backup -> maintenance mode -> code (composer install) -> check that"

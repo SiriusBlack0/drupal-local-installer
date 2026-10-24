@@ -21,40 +21,58 @@ foreach (array_slice($argv, 2) as $p) { if (isset($req[$p])) { echo $p, "\n"; } 
 ' "$project_path/composer.json" "${CORE_COMPANION_PACKAGES[@]}"
 }
 
-# composer.lock written for another composer.json (composer.json changed
-# without "composer update"). Then "composer install" of these files fails,
-# and an update would install that change too. $1 is a folder with both
-# files: the project, or a backup. Returns 0 when they do not match.
-# composer validate reads only the files: no network.
+# composer.lock written for another composer.json: composer.json was
+# changed without "composer update" (for example "composer require
+# 'drupal/gin:^5' --no-update" before an upgrade). "composer install"
+# still installs exactly what the lock file lists; only "composer update"
+# brings the change. $1 is a folder with both files. Returns 0 when they
+# do not match. composer validate reads only the files: no network.
 is_composer_lock_outdated() {
     local dir="$1"
     local output
 
-    output="$(run_project_composer "$dir" "$RECORD_PHP_VERSION"         validate --no-check-publish --no-check-all 2>&1)" || true
+    output="$(run_project_composer "$dir" "$RECORD_PHP_VERSION" \
+        validate --no-check-publish --no-check-all 2>&1)" || true
 
     grep -qi 'lock file is not up to date' <<< "$output"
 }
 
-# The project's PHP and its extensions against the composer.lock in $1.
-# Prints the requirements that fail. Returns 0: all met, 1: some fail,
-# 2: could not check.
-check_lock_platform() {
+# Can the composer files in $1 be installed with the project's PHP?
+# "composer install --dry-run" on a copy in an empty temporary folder:
+# it checks what the real install checks (PHP and extensions, plugins,
+# conflicts) and installs nothing. Prints Composer's reason when it
+# fails. Returns 0: installable, 1: not, 2: could not check.
+check_composer_files_installable() {
     local dir="$1"
+    local temp
     local output
-    local failed
+    local status=0
 
-    if output="$(run_project_composer "$dir" "$RECORD_PHP_VERSION" check-platform-reqs --lock 2>&1)"; then
-        return 0
+    temp="$(run_as_project_user "$PROJECT_USER" mktemp -d)" || return 2
+
+    if ! run_as_project_user "$PROJECT_USER" cp -- "$dir/composer.json" "$dir/composer.lock" "$temp/"; then
+        run_as_project_user "$PROJECT_USER" rm -rf -- "$temp"
+        return 2
     fi
 
-    failed="$(grep -Ei '[[:space:]]failed' <<< "$output" | sed 's/[[:space:]]\+/ /g')" || failed=""
+    output="$(run_project_composer "$temp" "$RECORD_PHP_VERSION" \
+        install --dry-run --no-scripts 2>&1)" || status=$?
+    run_as_project_user "$PROJECT_USER" rm -rf -- "$temp"
+    log_line "composer install --dry-run of $dir:"$'\n'"$output"
 
-    if [[ -n "$failed" ]]; then
-        printf '%s\n' "$failed"
-        return 1
+    [[ "$status" -eq 0 ]] && return 0
+
+    if composer_output_is_network_error "$output"; then
+        return 2
     fi
 
-    return 2
+    printf '%s\n' "$output" | grep -v '^[[:space:]]*$' | tail -n 8
+    return 1
+}
+
+# Composer's message for a download or connection problem.
+composer_output_is_network_error() {
+    grep -qiE 'curl error|could not resolve host|failed to open stream|connection (timed out|refused)|network' <<< "$1"
 }
 
 # Prints "patch_target|minor_target|major_target" (each may be empty)

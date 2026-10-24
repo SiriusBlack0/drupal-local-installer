@@ -177,7 +177,8 @@ choose_blocking_projects_handling() {
     echo
     echo "1) Stop here; nothing is changed. Then, for each of them, one of:"
     echo "   - a newer release supports Drupal $to_major: allow it in composer.json, e.g."
-    echo "     composer require '${blockers%%$'\n'*}:^NEW' --no-update (see its project page)"
+    echo "     composer require '${blockers%%$'\n'*}:^NEW' --no-update (see its project page;"
+    echo "     --no-update, because it needs the new core: the upgrade then installs it)"
     echo "   - not needed any more: ./drush pm:uninstall <module>, then composer remove <package>"
     echo "   - a patch for Drupal $to_major from its issue queue (cweagans/composer-patches)"
     echo "2) Install them anyway with the \"lenient\" Composer plugin ($LENIENT_PLUGIN):"

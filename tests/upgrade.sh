@@ -124,6 +124,12 @@ blocked_by_contrib() {
     return 0
 }
 case "${args[0]}" in
+    validate)
+        if [[ "${LOCK_OUTDATED:-0}" == "1" ]]; then
+            echo "- The lock file is not up to date with the latest changes in composer.json, it is recommended that you run \`composer update\` or \`composer update <package name>\`."
+            exit 1
+        fi
+        ;;
     show)
         echo "{\"name\":\"${args[-1]}\",\"versions\":${COMPOSER_VERSIONS:-[]}}"
         ;;
@@ -791,6 +797,21 @@ if output="$(printf '3\npsi\n' | INCOMPATIBLE=1 run_upgrade_project psi)" &&
     pass "Incompatible module after the upgrade: named; DONE WITH PROBLEMS"
 else
     fail "incompatible module: $output"
+fi
+
+# composer.json with "composer require ... --no-update" before the
+# upgrade: not a reason to stop; the upgrade installs it.
+
+make_project omega
+
+if output="$(printf '3\nomega\n' | LOCK_OUTDATED=1 run_upgrade_project omega)" &&
+   [[ "$output" == *"[INFO] composer.json has changes that are not in composer.lock yet"* &&
+      "$output" == *"The upgrade installs them together"* &&
+      "$output" != *"Continue with the update anyway"* &&
+      "$output" == *"[DONE] omega: Drupal 10.6.19 -> 11.4.2"* ]]; then
+    pass "Upgrade with composer.json ahead of composer.lock (require --no-update): noted, upgraded"
+else
+    fail "upgrade with outdated lock: $output"
 fi
 
 # Test 9: A Composer plugin that composer.json does not mention yet: the

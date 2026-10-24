@@ -273,18 +273,46 @@ check_core_change_project() {
     fi
 
     if is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
-        echo "[BLOCKED] composer.lock does not match composer.json: composer.json was changed"
-        echo "          without \"composer update\". The ${UPDATE_KIND} would install that change"
-        echo "          too, and its backup could not be restored (composer install fails)."
-        echo "          See what differs:  cd $RECORD_PROJECT_PATH && ./composer update --dry-run"
-        echo "          Then update the package you changed (./composer update vendor/name) or"
-        echo "          undo the change in composer.json, commit, and run this again."
-        return 1
+        explain_outdated_lock || return 1
     fi
 
     if [[ "$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" status --field=bootstrap 2>/dev/null)" != *"Successful"* ]]; then
         echo "[BLOCKED] The site does not work right now (Drush cannot bootstrap it)."
         echo "          Fix that first: an update could not be checked afterwards."
+        return 1
+    fi
+}
+
+# composer.json has changes that are not in composer.lock yet. For an
+# upgrade that is the usual way to allow new major releases of contrib
+# ("composer require 'drupal/gin:^5' --no-update"): the upgrade installs
+# them. For a core update it is unclear what should happen with them:
+# the developer decides. Returns 1 to stop.
+explain_outdated_lock() {
+    local answer
+
+    if [[ "$UPDATE_KIND" == "upgrade" ]]; then
+        echo "[INFO] composer.json has changes that are not in composer.lock yet (for example"
+        echo "       \"composer require ... --no-update\"). The upgrade installs them together"
+        echo "       with the new core; the Composer trial below shows what changes."
+        return 0
+    fi
+
+    echo "[WARNING] composer.json has changes that are not in composer.lock yet: it was"
+    echo "          changed without \"composer update\". A core update may install those"
+    echo "          changes too, or fail because of them. Usually it is better to bring them"
+    echo "          in line first, commit, and update then:"
+    echo "            cd $RECORD_PROJECT_PATH && ./composer update --dry-run   (what differs)"
+    echo "            ./composer update vendor/name   (or undo the change in composer.json)"
+    echo "          The backup is not affected: it keeps the code that is installed now."
+
+    if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
+        echo "          (Dry run: a real run asks whether to continue.)"
+        return 0
+    fi
+
+    if ! read -r -p "Continue with the update anyway? [y/N]: " answer || [[ ! "$answer" =~ ^[Yy]$ ]]; then
+        echo "Update cancelled; nothing was changed."
         return 1
     fi
 }

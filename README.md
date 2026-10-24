@@ -411,10 +411,14 @@ Before anything changes, the installer checks that:
 - it is a Composer project with `drupal/core-recommended` or
   `drupal/core` (Drupal 7 is refused);
 - `composer.json` and `composer.lock` have no uncommitted changes (git);
-- `composer.lock` matches `composer.json` (`composer validate`, no
-  network): when composer.json was changed without `composer update`, the
-  update would install that change too, and its backup could not be
-  restored. The installer stops and shows how to bring them in line;
+- whether `composer.lock` matches `composer.json` (`composer validate`,
+  no network). When composer.json was changed without `composer update`,
+  a core update may install that change too, or fail because of it. The
+  installer explains it, shows how to bring them in line first
+  (`./composer update --dry-run`, then `./composer update vendor/name` or
+  undo the change), and you decide whether to continue (default: no).
+  The backup is not affected: it keeps the code that is installed, and
+  `composer install` restores exactly what composer.lock lists;
 - the site works now (Drush bootstraps it);
 - Composer can resolve the update (`--dry-run`). If a constraint in
   `composer.json` blocks it, Composer's reason is shown and nothing
@@ -548,6 +552,7 @@ The steps, their minimum versions and the modules that left core are in
 | PHP | the new major does not support the project's PHP: change it first with `--php`, as its own step, so a problem is easy to trace (the installer names a version both releases run on) |
 | Database | the server is older than the new major needs |
 | Modules removed from core | an enabled module or theme that the new major no longer has in core (for Drupal 11: Actions UI, Activity Tracker, Book, Forum, Statistics, Tour) and composer.json does not require its drupal.org project: `composer require drupal/book`, or uninstall it |
+| composer.json ahead of composer.lock | never blocks: changes made with `composer require ... --no-update` (new major releases of contrib) are installed by the upgrade; the Composer trial shows them |
 | Upgrade Status | never blocks; errors in **custom** code (outside `tests/`) ask you before the upgrade |
 | Composer trial | Composer finds no way to install the new core (see below) |
 
@@ -598,7 +603,9 @@ trial finds such plugins first, and you decide before anything changes:
 allow them, install them with the plugin part switched off, or stop. When a drupal.org project has no release for the new major
 that your composer.json allows, the installer names it and you decide:
 
-1. **stop** – nothing changes. Then allow a newer release in composer.json,
+1. **stop** – nothing changes. Then allow a newer release in composer.json
+   (`composer require 'drupal/gin:^5' --no-update`: `--no-update`, because
+   that release needs the new core; the next `--upgrade` installs it),
    remove the module if it is unused, or apply a patch from its issue queue;
 2. **lenient** – the [mglaman/composer-drupal-lenient](https://github.com/mglaman/composer-drupal-lenient)
    plugin is added (after the backup) and lists that project, so Composer
@@ -668,10 +675,18 @@ In this order:
 5. caches, maintenance mode off, the usual checks (Drush, HTTP).
 
 Before anything changes (also in `--dry-run`), the backup itself is
-checked: its `composer.lock` must match its `composer.json`
-(`composer validate`), and the project's PHP must meet its requirements
-(`composer check-platform-reqs --lock`; otherwise change the PHP first
-with `--php`).
+test-installed: `composer install --dry-run` on a copy of its composer
+files in an empty temporary folder. It checks what the real install
+checks (the project's PHP and extensions, Composer plugins, conflicts)
+and installs nothing. When it fails, Composer's reason is shown and the
+restore stops (for another PHP: change it first with `--php`). When it
+cannot run (network), the plan says so; the code is checked again before
+the database is touched anyway.
+
+A backup whose `composer.lock` does not match its `composer.json`
+(composer.json had changes without `composer update` at that time) is
+restored normally: `composer install` installs what composer.lock lists,
+which is the code of that time. The plan notes it.
 
 If the code cannot be installed, or Drupal reports another version, the
 database is never touched. If any step fails, the state of before comes

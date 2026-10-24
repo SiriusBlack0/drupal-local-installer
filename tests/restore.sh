@@ -109,15 +109,28 @@ case "${args[0]}" in
             exit 1
         fi
         ;;
-    check-platform-reqs)
-        if [[ "${PLATFORM_FAILS:-0}" == "1" ]]; then
-            echo "php      8.3.20  drupal/core requires php (>=8.4.0)      failed"
-            echo "ext-gd   8.3.20                                         success"
-            exit 2
-        fi
-        echo "php 8.3.20 success"
-        ;;
     install)
+        # The check before the restore: a dry run on a copy.
+        if [[ " ${args[*]} " == *" --dry-run "* ]]; then
+            case "${INSTALL_DRYRUN:-ok}" in
+                php)
+                    echo "Your lock file does not contain a compatible set of packages."
+                    echo "  Problem 1"
+                    echo "    - drupal/core is locked to version 10.5.12 and requires php >=8.4.0 -> your php version (8.3.20) does not satisfy that requirement."
+                    exit 2
+                    ;;
+                plugin)
+                    echo "symfony/runtime contains a Composer plugin which is blocked by your allow-plugins config."
+                    exit 1
+                    ;;
+                network)
+                    echo "curl error 6 while downloading https://repo.packagist.org/packages.json: Could not resolve host"
+                    exit 1
+                    ;;
+            esac
+            echo "Package operations: 188 installs, 0 updates, 0 removals"
+            exit 0
+        fi
         version="$(grep -oP '"name": *"drupal/core", *"version": *"\K[^"]+' "$dir/composer.lock")"
         if [[ -e "$dir/vendor/symfony-runtime" && "$version" == 10.* ]]; then
             echo "symfony/runtime contains a Composer plugin which is blocked by your allow-plugins config."
@@ -172,6 +185,7 @@ lock_for() {
 record_of() { printf '%s/drupal-local-installer/projects/%s.conf\n' "$XDG_DATA_HOME" "$1"; }
 version_of() { get_drupal_version_in "$DRUPAL_PROJECTS_DIR/$1/web"; }
 calls_line() { grep -n -m1 -F -- "$1" "$CALLS_FILE" | cut -d: -f1; }
+calls_exact() { grep -n -m1 -x -F -- "$1" "$CALLS_FILE" | cut -d: -f1; }
 
 # A project on Drupal 11.4.11 after an upgrade, as Composer leaves it.
 make_project() {
@@ -252,7 +266,7 @@ if output="$(printf '1\n' | REMOVE_DRY_RUN=1 run_restore_project gamma)" &&
       "$output" == *"The database is replaced only after the code is back."* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    [[ "$(version_of gamma)" == "11.4.11" ]] && grep -q '"new"' "$PROJECT_PATH/composer.json" &&
-   ! grep -q "sudo-asked\|composer install" "$CALLS_FILE"; then
+   ! grep -q "sudo-asked\|composer install$" "$CALLS_FILE"; then
     pass "Dry run: list, versions, what is lost, the order; nothing changed"
 else
     fail "dry run: $output"
@@ -309,8 +323,8 @@ else
 fi
 
 if [[ "$(calls_line sudo-asked)" -lt "$(calls_line 'dump ')" &&
-      "$(calls_line 'dump ')" -lt "$(calls_line 'composer install')" &&
-      "$(calls_line 'composer install')" -lt "$(calls_line 'mysql restore: OLD DB')" &&
+      "$(calls_line 'dump ')" -lt "$(calls_exact 'composer install')" &&
+      "$(calls_exact 'composer install')" -lt "$(calls_line 'mysql restore: OLD DB')" &&
       "$(calls_line 'mysql restore: OLD DB')" -lt "$(calls_line 'drush cache:rebuild')" ]]; then
     pass "Order: sudo, backup of the current state, code, then the database, then caches"
 else
@@ -395,28 +409,52 @@ else
     fail "database failure: $output / $(cat "$CALLS_FILE")"
 fi
 
-# Test 7b: A backup that cannot be installed is refused before anything
-# changes, also in the dry run.
+# Test 7b: Before anything changes (also in the dry run) the backup is
+# test-installed on a copy; one that cannot be installed is refused.
 
 make_project gamma
 
-if output="$(printf 'gamma\n' | LOCK_OUTDATED_IN="$newer" RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)"; then
-    fail "Backup with an outdated lock accepted"
-elif [[ "$output" == *"[BLOCKED] In this backup, composer.lock does not match composer.json"* ]] &&
-     [[ "$(version_of gamma)" == "11.4.11" ]] && ! grep -q "sudo-asked\|composer install" "$CALLS_FILE"; then
-    pass "Backup whose composer.lock does not match its composer.json: refused, nothing changed"
+if output="$(INSTALL_DRYRUN=php REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)"; then
+    fail "Backup that needs another PHP accepted"
+elif [[ "$output" == *"[BLOCKED] The backup's packages cannot be installed (composer install --dry-run):"* &&
+        "$output" == *"requires php >=8.4.0"* &&
+        "$output" == *"./install.sh --php gamma X.Y"* ]] &&
+     ! grep -q "composer install$" "$CALLS_FILE"; then
+    pass "Backup that needs another PHP: refused in the dry run, Composer's reason and the way out"
+else
+    fail "php: $output"
+fi
+
+if output="$(printf 'gamma\n' | INSTALL_DRYRUN=plugin RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)"; then
+    fail "Backup that cannot be installed accepted"
+elif [[ "$output" == *"[BLOCKED] The backup's packages cannot be installed"* &&
+        "$output" == *"blocked by your allow-plugins config"* ]] &&
+     [[ "$(version_of gamma)" == "11.4.11" ]] && ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "Backup that cannot be installed: refused before sudo, nothing changed"
+else
+    fail "not installable: $output"
+fi
+
+# composer.lock that does not match composer.json: composer install still
+# installs exactly the lock, so the backup is restored (with a note).
+if output="$(printf 'gamma\nn\n' | LOCK_OUTDATED_IN="$newer" RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)" &&
+   [[ "$output" == *"Check:        the backup's packages can be installed (composer install --dry-run)."* &&
+      "$output" == *"[NOTE] In this backup composer.json has changes that were not in composer.lock"* &&
+      "$output" == *"[DONE] gamma: Drupal 11.4.11 -> 10.6.20"* ]] &&
+   [[ "$(version_of gamma)" == "10.6.20" ]]; then
+    pass "Backup with an older lock hash: noted, and restored (composer install uses the lock)"
 else
     fail "outdated lock in backup: $output"
 fi
 
-if output="$(PLATFORM_FAILS=1 REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)"; then
-    fail "Backup that needs another PHP accepted"
-elif [[ "$output" == *"[BLOCKED] The backup's packages do not run with this project's PHP 8.3:"* &&
-        "$output" == *"drupal/core requires php (>=8.4.0) failed"* &&
-        "$output" == *"./install.sh --php gamma X.Y"* ]]; then
-    pass "Backup that needs another PHP: refused in the dry run, with the way out"
+make_project gamma
+
+if output="$(INSTALL_DRYRUN=network REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)" &&
+   [[ "$output" == *"could not test the install of the backup (network?)"* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]]; then
+    pass "Install test not possible (network): said so, not refused"
 else
-    fail "platform: $output"
+    fail "network: $output"
 fi
 
 # Test 7c: The configuration export folder is compared with the restored
