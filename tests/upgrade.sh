@@ -564,6 +564,8 @@ make_project tau
 if output="$(printf '1\ntau\n' | US_REPORT=twig run_upgrade_project tau)" &&
    [[ "$output" == *"[WARNING] Upgrade Status, custom code: 0 error(s), 1 warning(s) for Drupal 11:"* &&
       "$output" == *"Twig deprecations (warnings): they still work with Twig 3"* &&
+      "$output" == *"Only warnings: nothing has to change for Drupal 11 now."* &&
+      "$output" != *"Fix it (drupal-rector"* &&
       "$output" == *"[DONE] tau: Drupal 10.6.19 -> 11.4.2"* &&
       "$output" == *"[OK] No new errors in the Drupal log (older ones are not counted)"* ]]; then
     pass "Twig deprecations in custom code: warnings, no question; upgraded"

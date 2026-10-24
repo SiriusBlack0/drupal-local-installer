@@ -18,6 +18,8 @@ RESTORE_BACKUP_DIR=""
 RESTORE_VERSION=""
 # The BACKUP argument of --restore (optional). Set in lib/output.sh.
 RESTORE_BACKUP_ARGUMENT=""
+# 1 when the configuration export differs from the restored database.
+RESTORE_CONFIG_DIFFERS=0
 
 # Backups of a project that can be restored, newest first: folders
 # NAME-update-*, NAME-upgrade-* and NAME-restore-* with composer.json,
@@ -288,6 +290,7 @@ report_config_sync_differences() {
     local json
     local count
 
+    RESTORE_CONFIG_DIFFERS=0
     sync_dir="$(get_config_sync_dir)" || sync_dir=""
     [[ -n "$sync_dir" && -d "$sync_dir" ]] || return 0
     [[ -n "$(find "$sync_dir" -maxdepth 1 -name '*.yml' -print -quit 2>/dev/null)" ]] || return 0
@@ -307,6 +310,7 @@ echo is_array($d) ? count($d) : 0;
         return 0
     fi
 
+    RESTORE_CONFIG_DIFFERS=1
     echo
     echo "[WARNING] The configuration export (${sync_dir#"$RECORD_PROJECT_PATH/"}) differs from the restored"
     echo "          database in $count item(s): the restore does not change that folder, so it is"
@@ -578,5 +582,11 @@ perform_restore() {
     echo "[DONE] $machine_name: Drupal ${UPDATE_PREVIOUS_VERSION:-unknown} -> $RESTORE_VERSION (backup of $(get_backup_time "$RESTORE_BACKUP_DIR"))"
     echo "The state before this restore: $UPDATE_BACKUP_DIR"
     echo "  (undo: ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR)"
-    print_git_commit_hint "Restore backup $(basename "$RESTORE_BACKUP_DIR") (Drupal $RESTORE_VERSION)"
+    if [[ "$RESTORE_CONFIG_DIFFERS" -eq 1 ]]; then
+        print_git_commit_hint "Restore backup $(basename "$RESTORE_BACKUP_DIR") (Drupal $RESTORE_VERSION)" \
+            "Decide about the configuration export first (see the WARNING above: export or
+take it from git), then commit everything together:"
+    else
+        print_git_commit_hint "Restore backup $(basename "$RESTORE_BACKUP_DIR") (Drupal $RESTORE_VERSION)"
+    fi
 }

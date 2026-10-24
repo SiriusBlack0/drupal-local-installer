@@ -381,7 +381,7 @@ run_update_project() {
 
         if [[ -z "$blocked" ]]; then
             echo "[BLOCKED] Composer cannot update to $UPDATE_TARGET with the current composer.json:"
-            printf '%s\n' "$dry_output" | tail -n 12 | sed 's/^/  /'
+            printf '%s\n' "$dry_output" | summarize_composer_problem | sed 's/^/  /'
             echo "  Nothing was changed."
             return 1
         fi
@@ -496,6 +496,9 @@ perform_update() {
         remove_project_field "$record" accepted_advisories || true
     fi
 
+    # A note of an earlier --restore describes a state that is gone now.
+    remove_project_field "$record" restored_from || true
+
     remove_code_snapshot
     restore_sites_default_mode
 
@@ -533,8 +536,13 @@ print_git_commit_hint() {
         echo "vendor/, add it there too:  echo '/recipes/' >> $RECORD_PROJECT_PATH/.gitignore"
     fi
 
-    echo "Review it, then commit once the site works (the next --update or"
-    echo "--upgrade waits for that, so changes never mix):"
+    if [[ -n "${2:-}" ]]; then
+        printf '%s\n' "$2"
+    else
+        echo "Review it, then commit once the site works (the next --update or"
+        echo "--upgrade waits for that, so changes never mix):"
+    fi
+
     echo "  cd $RECORD_PROJECT_PATH && git add -A && git commit -m \"$message\""
 }
 

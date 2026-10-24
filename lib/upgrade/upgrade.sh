@@ -164,7 +164,7 @@ run_upgrade_project() {
             fi
         else
             echo "[BLOCKED] Composer cannot install Drupal $target with the current composer.json:"
-            printf '%s\n' "$dry_output" | grep -vE '^(\./)?composer\.dli-upgrade\.json has been updated' | tail -n 12 | sed 's/^/  /'
+            printf '%s\n' "$dry_output" | grep -vE '^(\./)?composer\.dli-upgrade\.json has been updated' | summarize_composer_problem | sed 's/^/  /'
             echo "  Nothing was changed."
             return 1
         fi
@@ -316,6 +316,9 @@ perform_upgrade() {
         # Advisories accepted for an older version no longer apply.
         remove_project_field "$record" accepted_advisories || true
     fi
+
+    # A note of an earlier --restore describes a state that is gone now.
+    remove_project_field "$record" restored_from || true
 
     remove_code_snapshot
     restore_sites_default_mode

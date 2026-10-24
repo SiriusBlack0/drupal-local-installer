@@ -410,10 +410,12 @@ else
 fi
 
 make_project upsilon
+set_project_field "$(record_of upsilon)" restored_from "2026-10-24 upsilon-upgrade-20261023-221500"
 
 if output="$(printf 'y\n1\nupsilon\n' | LOCK_OUTDATED=1 run_update_project upsilon)" &&
-   [[ "$output" == *"[DONE] upsilon: Drupal 11.3.10 -> 11.3.12"* && "$(version_of upsilon)" == "11.3.12" ]]; then
-    pass "composer.lock behind composer.json: 'y' goes on (the developer's decision)"
+   [[ "$output" == *"[DONE] upsilon: Drupal 11.3.10 -> 11.3.12"* && "$(version_of upsilon)" == "11.3.12" ]] &&
+   ! grep -q "^restored_from=" "$(record_of upsilon)"; then
+    pass "composer.lock behind composer.json: 'y' goes on; an old restored_from note goes"
 else
     fail "outdated lock yes: $output"
 fi
@@ -857,6 +859,31 @@ if output="$(printf '1\n' | BLOCK_CORE_ADVISORIES=1 REMOVE_DRY_RUN=1 run_update_
     pass "Advisories on Drupal core itself: explained as an unsupported line"
 else
     fail "core advisories: $output"
+fi
+
+# Composer's reason without the general advice: from "Problem 1" on.
+
+composer_failure='Loading composer repositories with package information
+Updating dependencies
+Your requirements could not be resolved to an installable set of packages.
+
+  Problem 1
+    - drupal/gin_toolbar 2.1.0 requires drupal/core ^10 -> found drupal/core[10.6.20] but it conflicts with your root composer.json require (^11.4).
+    - Root composer.json requires drupal/gin_toolbar ^2 -> satisfiable by drupal/gin_toolbar[2.1.0].
+
+Potential causes:
+ - A typo in the package name
+ - The package is not available in a stable-enough version according to your minimum-stability setting
+Read <https://getcomposer.org/doc/articles/troubleshooting.md> for further assistance.'
+summary="$(summarize_composer_problem <<< "$composer_failure")"
+no_problem="$(summarize_composer_problem <<< $'line a\nline b\nPotential causes:\n - A typo')"
+
+if [[ "$summary" == "  Problem 1"*"drupal/gin_toolbar 2.1.0 requires drupal/core ^10"*"satisfiable by drupal/gin_toolbar[2.1.0]." &&
+      "$summary" != *"typo"* && "$summary" != *"minimum-stability"* && "$summary" != *"Loading composer"* &&
+      "$no_problem" == $'line a\nline b' ]]; then
+    pass "Composer's reason shown from \"Problem 1\" on, without the general advice"
+else
+    fail "composer summary: $summary / $no_problem"
 fi
 
 echo "[SUCCESS] Update tests passed."

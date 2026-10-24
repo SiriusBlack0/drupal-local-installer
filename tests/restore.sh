@@ -463,13 +463,18 @@ fi
 make_project gamma
 mkdir -p "$PROJECT_PATH/config/sync"
 echo "name: New" > "$PROJECT_PATH/config/sync/system.site.yml"
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Drupal 11"
 
 if output="$(printf 'gamma\nn\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" CONFIG_DIFFERS=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)" &&
    [[ "$output" == *"Config:       config/ is not changed by the restore"* &&
       "$output" == *"[WARNING] The configuration export (config/sync) differs from the restored"* &&
       "$output" == *"database in 2 item(s)"* &&
       "$output" == *"Do NOT run \"drush config:import\" now"* &&
-      "$output" == *"./drush config:export, review, commit"* ]] &&
+      "$output" == *"./drush config:export, review, commit"* &&
+      "$output" == *"Decide about the configuration export first (see the WARNING above: export or"* &&
+      "$output" != *"Review it, then commit once the site works"* ]] &&
    [[ "$(cat "$PROJECT_PATH/config/sync/system.site.yml")" == "name: New" ]]; then
     pass "Configuration export differs from the restored database: warned, folder untouched"
 else

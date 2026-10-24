@@ -66,8 +66,28 @@ check_composer_files_installable() {
         return 2
     fi
 
-    printf '%s\n' "$output" | grep -v '^[[:space:]]*$' | tail -n 8
+    printf '%s\n' "$output" | summarize_composer_problem
     return 1
+}
+
+# The part of Composer's output that says why it failed: from the first
+# "Problem 1" on, without the general advice at the end ("Potential
+# causes: a typo, minimum-stability, ..."), which only misleads here.
+# Without a "Problem" line: the last lines before that advice.
+summarize_composer_problem() {
+    awk '
+        /^[[:space:]]*Potential causes:/ || /^[[:space:]]*Read <https?:\/\/getcomposer/ ||
+        /^[[:space:]]*You can also try re-running composer require/ ||
+        /^[[:space:]]*Use the option --with-all-dependencies/ { stop = 1 }
+        stop || /^[[:space:]]*$/ { next }
+        { lines[++n] = $0; if (!first && $0 ~ /^[[:space:]]*Problem [0-9]+/) first = n }
+        END {
+            start = first ? first : (n > 10 ? n - 9 : 1)
+            end = first ? (start + 19 < n ? start + 19 : n) : n
+            for (i = start; i <= end; i++) print lines[i]
+            if (first && end < n) print "  ... (the whole output is in the log)"
+        }
+    '
 }
 
 # Composer's message for a download or connection problem.

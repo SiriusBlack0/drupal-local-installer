@@ -254,7 +254,11 @@ print_upgrade_status_report() {
             fi
         done < <(tail -n +2 <<< "$report")
 
-        echo "            Fix it (drupal-rector fixes many of these automatically)."
+        if [[ "$errors" -gt 0 ]]; then
+            echo "            Fix it (drupal-rector fixes many of these automatically)."
+        else
+            echo "            Only warnings: nothing has to change for Drupal $to_major now."
+        fi
         print_info_yml_fixes "$report" "$to_major"
 
         if grep -q 'WARNING: Since twig/twig 3\.' <<< "$report"; then

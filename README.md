@@ -705,9 +705,12 @@ installer says so: do **not** run `drush config:import` then (it would
 load the newer configuration into the older database). Either keep the
 database's configuration (`./drush config:export`, review, commit), or
 take the folder from the time of the backup in git
-(`git log -- config/sync`, then `git checkout <commit> -- config/sync`).
+(`git log -- config/sync`, then `git checkout <commit> -- config/sync`). The
+commit line at the end then reminds you to decide about it first.
 
-The registry gets the backup's version and `restored_from`. Backups keep
+The registry gets the backup's version and `restored_from` (removed again
+by the next successful `--update` or `--upgrade`, which describe the state
+from then on). Backups keep
 a copy of the registry record (`registry.conf`), so its notes come back as
 they were at that time (`upgraded_from`, `accepted_advisories`,
 `lenient_packages`); for older backups without the copy, notes of the
