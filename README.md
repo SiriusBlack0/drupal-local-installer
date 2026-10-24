@@ -181,7 +181,8 @@ No password ever appears in a command line (where other users could see
 it with `ps`) or in the log: the database password goes into
 `settings.local.php` through stdin, the administrator password is passed
 to Drush through stdin. `site:install` itself prints a temporary password
-in the log; it is replaced immediately and no longer works.
+that Drupal makes up; it is replaced immediately, no longer works, and is
+masked in the log (`[temporary password, replaced by the installer]`).
 
 ### Git repository
 
@@ -472,7 +473,23 @@ a restore).
 
 If any step fails, the code and, after `updatedb`, the database are
 restored automatically; restoring the database uses sudo again, so it may
-ask for your password.
+ask for your password. The database is restored only once the code is
+back (old database with new code would not match). The restore is written
+to the log too.
+
+If the automatic restore cannot complete (for example the sudo password
+is refused three times), the site **stays in maintenance mode**, because
+code and database do not match, and the installer prints only the steps
+that are left: the code steps when the code is not back, otherwise just
+the one command that loads the database from the backup, then
+`./drush cache:rebuild` and maintenance mode off. The offline copy of the
+old code is kept until then (the command to remove it is shown).
+
+The plan also shows database updates that are **pending already** (for
+example a custom module changed without `drush updatedb`): `drush
+updatedb` runs them as part of the update, so they can make it fail too.
+Packages that the update adds (a module required in composer.json without
+`composer update`) are listed in the plan and at the end.
 
 ### Restoring a backup by hand
 
@@ -659,6 +676,10 @@ lost then.
 ./install.sh --restore mysite ~/drupal-local-installer-backups/mysite-upgrade-20261023-221500
 ```
 
+The list marks backups of runs that failed and were restored
+automatically ("that run failed and was restored automatically"): they
+hold the same state as the run before them.
+
 Goes back to a backup of `--update`, `--upgrade` or an earlier
 `--restore` (each is the state **before** that run): composer.json,
 composer.lock, the code and the database. A failed update is restored
@@ -721,7 +742,8 @@ by the next successful `--update` or `--upgrade`, which describe the state
 from then on). Backups keep
 a copy of the registry record (`registry.conf`), so its notes come back as
 they were at that time (`upgraded_from`, `accepted_advisories`,
-`lenient_packages`); for older backups without the copy, notes of the
+`lenient_packages`; undoing a restore with its `*-restore-*` backup gives
+the whole record back as before, without a `restored_from` note); for older backups without the copy, notes of the
 newer state go.
 
 `--update` and `--upgrade` end with the exact `--restore` command for

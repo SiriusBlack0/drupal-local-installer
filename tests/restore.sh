@@ -248,7 +248,10 @@ mkdir -p "$work_dir/backups/gamma-php-20261024-090000" "$work_dir/backups/gamma-
 touch "$work_dir/backups/gamma-php-20261024-090000/composer.lock" "$work_dir/backups/gamma-update-20261024-100000/composer.json"
 RECORD_PHP_VERSION="8.3"
 
+echo "rolled-back 2026-10-20 09:01" > "$older/result"
+
 if [[ "$(list_restorable_backups gamma)" == "$newer"$'\n'"$older" &&
+      "$(describe_backup "$older")" == "update, 2026-10-20, Drupal 10.6.19; that run failed and was restored automatically" &&
       "$(describe_backup "$newer")" == "upgrade, 2026-10-23, Drupal 10.6.20" &&
       "$(get_backup_time "$newer")" == "2026-10-23 22:15" ]]; then
     pass "Backups of the project, newest first (incomplete ones and --php backups left out)"
@@ -260,7 +263,7 @@ fi
 
 if output="$(printf '1\n' | REMOVE_DRY_RUN=1 run_restore_project gamma)" &&
    [[ "$output" == *"1) gamma-upgrade-20261023-221500 (upgrade, 2026-10-23, Drupal 10.6.20)"* &&
-      "$output" == *"2) gamma-update-20261020-090000 (update, 2026-10-20, Drupal 10.6.19)"* &&
+      "$output" == *"2) gamma-update-20261020-090000 (update, 2026-10-20, Drupal 10.6.19; that run failed and was restored automatically)"* &&
       "$output" == *"Drupal core:  11.4.11 -> 10.6.20"* &&
       "$output" == *"changed since 2026-10-23 22:15 are lost."* &&
       "$output" == *"The database is replaced only after the code is back."* &&
@@ -355,8 +358,9 @@ if output="$(printf 'gamma\n' | RESTORE_BACKUP_ARGUMENT="$safety" run_restore_pr
    [[ "$output" == *"[DONE] gamma: Drupal 10.6.20 -> 11.4.11"* ]] &&
    [[ "$(read_project_field "$record" upgraded_from)" == "2026-10-23 10.6.20" &&
       "$(read_project_field "$record" accepted_advisories)" == "2026-10-23 11.4.11: x" &&
-      "$(read_project_field "$record" drupal_version)" == "11.4.11" ]]; then
-    pass "Undo with the backup made by the restore: 11.4.11, its database and its registry notes back"
+      "$(read_project_field "$record" drupal_version)" == "11.4.11" ]] &&
+   ! grep -q "^restored_from=" "$record"; then
+    pass "Undo with the backup made by the restore: 11.4.11, its database and its registry exactly as before"
 else
     fail "undo: $output"
 fi

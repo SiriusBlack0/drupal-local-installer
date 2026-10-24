@@ -247,6 +247,15 @@ run_drupal_site_install() {
         --account-mail="$admin_mail"
 }
 
+# site:install prints the temporary password Drupal made up ("User
+# password: ..."). It is replaced right after and no longer works, but a
+# password in the log only confuses: it is masked there.
+mask_temporary_password_in_log() {
+    [[ -n "${LOG_FILE:-}" && -f "$LOG_FILE" ]] || return 0
+    sed -i -E 's/(User password:[[:space:]]*)[^[:space:]].*$/\1[temporary password, replaced by the installer]/' "$LOG_FILE" || true
+    return 0
+}
+
 # Sets and verifies the administrator password. The password is read
 # by PHP from stdin, so it is never in a command line or the log.
 set_drupal_admin_password() {
@@ -340,6 +349,7 @@ install_drupal_site() {
     write_drupal_settings "$project_path" "$run_user" &&
     run_drupal_site_install \
         "$project_path" "$run_user" "$site_name" "$admin_user" "$admin_mail" &&
+    mask_temporary_password_in_log &&
     set_drupal_admin_password "$project_path" "$run_user" "$admin_password" &&
     verify_drupal_site "$project_path" "$run_user" "$PROJECT_MACHINE_NAME"
 }

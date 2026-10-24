@@ -41,6 +41,8 @@ UPDATE_SITES_DEFAULT_MODE=""
 # user accepted the advisories that block it).
 UPDATE_EXTRA_ARGS=()
 UPDATE_ACCEPTED_ADVISORIES=""
+# Packages the update adds (from the dry run), for the plan and the end.
+UPDATE_NEW_PACKAGES=""
 # The target that was not chosen (patch or minor), for advice.
 UPDATE_ALTERNATIVE=""
 # "update" or "upgrade" (--upgrade reuses the backup and the restore).
@@ -66,65 +68,124 @@ interrupt_update() {
 # install") and, when it was changed, the database. Prints manual steps
 # if that fails too.
 rollback_update() {
-    local failed=0
+    local code_ok=1
+    local database_ok=1
 
-    echo
-    echo "Restoring the project as it was before the ${UPDATE_KIND}..."
+    say
+    say "Restoring the project as it was before the ${UPDATE_KIND}..."
 
     if ! cp --preserve=timestamps -- "$UPDATE_BACKUP_DIR/composer.json" "$UPDATE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/"; then
-        echo "[FAILED] composer.json and composer.lock could not be copied back"
-        failed=1
+        say "[FAILED] composer.json and composer.lock could not be copied back"
+        code_ok=0
     elif restore_code_snapshot; then
-        echo "[OK] Code restored (from the offline copy)"
+        say "[OK] Code restored (from the offline copy)"
     elif { [[ "$UPDATE_KIND" == "update" ]] || remove_project_vendor; } &&
          run_logged "Restoring the previous code (composer install)" \
             run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
-        echo "[OK] Code restored"
+        say "[OK] Code restored"
     else
-        echo "[FAILED] Code"
-        failed=1
+        say "[FAILED] Code"
+        code_ok=0
     fi
 
-    if [[ "$UPDATE_DATABASE_CHANGED" -eq 1 ]]; then
-        if [[ "$RECORD_DATABASE_ENGINE" != "sqlite" ]]; then
-            echo "The database is restored with sudo (it may ask for your password again)."
-        fi
-
-        if restore_database_from_backup; then
-            echo "[OK] Database restored"
-        else
-            echo "[FAILED] Database"
-            failed=1
-        fi
-    fi
-
-    set_maintenance_mode 0 || true
-    run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" cache:rebuild > /dev/null 2>&1 || true
-
-    if [[ "$failed" -eq 0 && -n "$UPDATE_PREVIOUS_VERSION" &&
+    if [[ "$code_ok" -eq 1 && -n "$UPDATE_PREVIOUS_VERSION" &&
           "$(get_drupal_version_in "$UPDATE_WEB_ROOT" 2>/dev/null)" != "$UPDATE_PREVIOUS_VERSION" ]]; then
-        echo "[FAILED] Drupal does not report version $UPDATE_PREVIOUS_VERSION again."
-        failed=1
+        say "[FAILED] Drupal does not report version $UPDATE_PREVIOUS_VERSION again."
+        code_ok=0
+    fi
+
+    # The old database only with the old code: with the new code it would
+    # be the wrong one (the new code and the updated database still match).
+    if [[ "$UPDATE_DATABASE_CHANGED" -eq 1 ]]; then
+        if [[ "$code_ok" -eq 0 ]]; then
+            say "[SKIPPED] Database: not restored while the code is not back."
+            database_ok=0
+        else
+            if [[ "$RECORD_DATABASE_ENGINE" != "sqlite" ]]; then
+                say "The database is restored with sudo (it may ask for your password again)."
+            fi
+
+            if restore_database_from_backup; then
+                say "[OK] Database restored"
+            else
+                say "[FAILED] Database"
+                database_ok=0
+            fi
+        fi
     fi
 
     restore_sites_default_mode
 
-    if [[ "$failed" -eq 0 ]]; then
+    if [[ "$code_ok" -eq 1 && "$database_ok" -eq 1 ]]; then
+        set_maintenance_mode 0 || true
+        run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" cache:rebuild > /dev/null 2>&1 || true
         remove_code_snapshot
-        echo "[OK] The project is back to its previous version."
+        mark_backup_result "rolled-back"
+        say "[OK] The project is back to its previous version."
         return 0
     fi
 
-    echo
-    [[ -n "$UPDATE_SNAPSHOT_DIR" ]] && echo "Offline copy of the old code (kept): $UPDATE_SNAPSHOT_DIR/code"
-    echo "[ERROR] Automatic restore did not complete. Restore by hand from:"
-    echo "        $UPDATE_BACKUP_DIR"
-    echo "  cd $RECORD_PROJECT_PATH && chmod u+w $UPDATE_WEB_ROOT/sites/default"
-    echo "  cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock ."
-    echo "  rm -rf vendor && ./composer install && chmod 555 $UPDATE_WEB_ROOT/sites/default"
-    echo "  The database only after Drupal reports $UPDATE_PREVIOUS_VERSION again:"
-    echo "  README.md, \"Restoring a backup by hand\"."
+    # Code and database do not match now: the site stays closed.
+    set_maintenance_mode 1 || true
+    mark_backup_result "rolled-back-incomplete"
+    print_manual_restore "$code_ok" "$database_ok"
     return 1
+}
+
+# Notes in the backup folder how the run that made it ended, for the list
+# of --restore ("run failed, restored automatically").
+mark_backup_result() {
+    [[ -n "$UPDATE_BACKUP_DIR" && -d "$UPDATE_BACKUP_DIR" ]] || return 0
+    printf '%s %s\n' "$1" "$(date '+%F %H:%M')" > "$UPDATE_BACKUP_DIR/result" 2>/dev/null || true
+}
+
+# The command that loads the backup's database, for this engine.
+get_manual_database_restore_command() {
+    local backup="$UPDATE_BACKUP_DIR"
+
+    case "$RECORD_DATABASE_ENGINE" in
+        mariadb|mysql)
+            echo "gunzip -c $backup/database.sql.gz | sudo mysql"
+            ;;
+        postgresql)
+            echo "sudo -u postgres dropdb $RECORD_DATABASE_NAME && sudo -u postgres createdb -O \"\$(cat $backup/database.owner)\" $RECORD_DATABASE_NAME && gunzip -c $backup/database.sql.gz | sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d $RECORD_DATABASE_NAME"
+            ;;
+        sqlite)
+            echo "cp $backup/database.sqlite $RECORD_SQLITE_PATH"
+            ;;
+    esac
+}
+
+# What is left to do by hand: only the part that failed.
+print_manual_restore() {
+    local code_ok="$1"
+    local database_ok="$2"
+
+    say
+    say "[ERROR] Automatic restore did not complete. The site stays in maintenance mode"
+    say "        until code and database match again. Backup: $UPDATE_BACKUP_DIR"
+
+    if [[ "$code_ok" -eq 0 ]]; then
+        say "  1. The code:"
+        say "     cd $RECORD_PROJECT_PATH && chmod u+w $UPDATE_WEB_ROOT/sites/default"
+        say "     cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock ."
+        say "     rm -rf vendor && ./composer install && chmod 555 $UPDATE_WEB_ROOT/sites/default"
+        say "     Check: ./drush status --field=drupal-version  (must say ${UPDATE_PREVIOUS_VERSION:-the old version})"
+    else
+        say "  The code is back (Drupal ${UPDATE_PREVIOUS_VERSION:-as before}); only the database is missing."
+    fi
+
+    if [[ "$UPDATE_DATABASE_CHANGED" -eq 1 ]]; then
+        say "  $([[ "$code_ok" -eq 0 ]] && echo "2. Then the database" || echo "1. The database"):"
+        say "     $(get_manual_database_restore_command)"
+    fi
+
+    say "  Last: cd $RECORD_PROJECT_PATH && ./drush cache:rebuild && ./drush state:set system.maintenance_mode 0"
+
+    if [[ -n "$UPDATE_SNAPSHOT_DIR" && -d "$UPDATE_SNAPSHOT_DIR" ]]; then
+        say "  The offline copy of the old code is kept: $UPDATE_SNAPSHOT_DIR"
+        say "  Remove it once the site works: chmod -R u+w $UPDATE_SNAPSHOT_DIR && rm -rf $UPDATE_SNAPSHOT_DIR"
+    fi
 }
 
 update_record_version() {
@@ -307,8 +368,11 @@ explain_outdated_lock() {
     echo "            cd $RECORD_PROJECT_PATH && ./composer update --dry-run   (what differs)"
     echo "            ./composer update vendor/name   (or undo the change in composer.json)"
     echo "          The backup is not affected: it keeps the code that is installed now."
-    echo "          If the change prepares the next major (composer require ... --no-update),"
-    echo "          it is fine as it is: run ./install.sh --upgrade $machine_name instead."
+    # Only when a stable next major exists (third field of the targets).
+    if [[ -n "${major:-}" ]]; then
+        echo "          If the change prepares Drupal ${major%%.*} (composer require ... --no-update),"
+        echo "          it is fine as it is: run ./install.sh --upgrade $machine_name instead."
+    fi
 
     if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
         echo "          (Dry run: a real run asks whether to continue.)"
@@ -329,6 +393,7 @@ run_update_project() {
     local targets
     local patch
     local minor
+    local major
     local with_args=()
     local package
     local dry_output
@@ -349,7 +414,7 @@ run_update_project() {
         return 1
     fi
 
-    IFS='|' read -r patch minor _ <<< "$targets"
+    IFS='|' read -r patch minor major <<< "$targets"
 
     if [[ -z "$patch" && -z "$minor" ]]; then
         echo "[OK] Drupal $current is the newest release of Drupal ${current%%.*}."
@@ -420,6 +485,11 @@ run_update_project() {
     esac
     echo "PHP $RECORD_PHP_VERSION:      supported by $(echo "$UPDATE_TARGET" | cut -d. -f1,2)"
     echo "Packages:     $(describe_lock_operations "$dry_output")"
+    UPDATE_NEW_PACKAGES="$(get_new_packages "$dry_output")"
+    if [[ -n "$UPDATE_NEW_PACKAGES" ]]; then
+        echo "New:          $(paste -sd ',' - <<< "$UPDATE_NEW_PACKAGES" | sed 's/,/, /g') (from composer.json)"
+    fi
+    print_pending_database_updates
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
         echo "Advisories:   accepted for this update (see [SECURITY] above)"
     fi
@@ -511,6 +581,11 @@ perform_update() {
     restore_sites_default_mode
 
     print_update_done "$machine_name" "$current"
+
+    if [[ -n "$UPDATE_NEW_PACKAGES" ]]; then
+        echo "Also installed (from composer.json): $(paste -sd ',' - <<< "$UPDATE_NEW_PACKAGES" | sed 's/,/, /g')"
+    fi
+
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
     echo "Back to Drupal $current later: ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
     report_config_after_update
@@ -636,6 +711,48 @@ report_config_after_update() {
     echo "       drush updatedb changed configuration. Export it, review, commit:"
     echo "         ./drush config:export"
     echo "       Not \"drush config:import\" before that: it would undo those changes."
+}
+
+# Database updates that are pending already, before the update (custom
+# or contrib code changed without "drush updatedb"). drush updatedb runs
+# them too: "module 10001, module 10002". Empty when there are none.
+get_pending_database_updates() {
+    local json
+
+    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+        updatedb:status --format=json 2>/dev/null)" || return 0
+    [[ -n "$json" ]] || return 0
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true);
+if (!is_array($d)) { exit(0); }
+$out = [];
+foreach ($d as $k => $row) {
+    if (!is_array($row)) { continue; }
+    $out[] = trim(($row["module"] ?? "") . " " . ($row["update_id"] ?? $k));
+}
+echo implode(", ", array_slice($out, 0, 8)), count($out) > 8 ? ", ..." : "";
+' 2>/dev/null || true
+}
+
+# A plan line about them, when there are any.
+print_pending_database_updates() {
+    local pending
+
+    pending="$(get_pending_database_updates)"
+    [[ -n "$pending" ]] || return 0
+
+    echo "Pending:      $pending"
+    echo "              (database updates that wait already; drush updatedb runs them too)"
+}
+
+# Packages the update adds that are not there yet (for example a module
+# required in composer.json without "composer update"): from the dry run.
+get_new_packages() {
+    grep -oE '^[[:space:]]*- Locking [^[:space:]]+ \([^)]*\)' <<< "$1" |
+        sed -E 's/^[[:space:]]*- Locking ([^[:space:]]+) \(([^)]*)\)/\1 \2/' | head -n 8
 }
 
 # What went wrong after a successful update or upgrade; the site works,

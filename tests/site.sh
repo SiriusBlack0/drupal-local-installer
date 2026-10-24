@@ -59,7 +59,11 @@ new_project() {
 #!/usr/bin/env bash
 echo "$*" >> "$DRUSH_CALLS"
 case "$1" in
-    site:install) exit "${DRUSH_INSTALL_RESULT:-0}" ;;
+    site:install)
+        # Like Drush: the temporary password Drupal made up.
+        echo " [success] Installation complete.  User name: admin  User password: Tmp9xYzQ"
+        exit "${DRUSH_INSTALL_RESULT:-0}"
+        ;;
     php:eval)
         input="$(cat)"
         if [[ "$input" == "$EXPECTED_ADMIN_PASSWORD" ]]; then
@@ -261,6 +265,13 @@ if grep -qxF 'site:install standard --yes --site-name=First Test --site-mail=adm
     pass "site:install runs the standard profile with the project name"
 else
     fail "site:install arguments: $(cat "$DRUSH_CALLS")"
+fi
+
+if grep -q "User password: \[temporary password, replaced by the installer\]" "$LOG_FILE" &&
+   ! grep -q "Tmp9xYzQ" "$LOG_FILE"; then
+    pass "The temporary password of site:install is masked in the log"
+else
+    fail "temporary password in log: $(grep -i 'password' "$LOG_FILE")"
 fi
 
 if grep -qF "$DB_SECRET" "$argv_log" "$DRUSH_CALLS" "$LOG_FILE" ||

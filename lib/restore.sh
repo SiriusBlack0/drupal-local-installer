@@ -76,7 +76,11 @@ describe_backup() {
         day="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
     fi
 
-    printf '%s, %s, Drupal %s\n' "$kind" "$day" "$version"
+    if [[ -f "$dir/result" ]]; then
+        printf '%s, %s, Drupal %s; that run failed and was restored automatically\n' "$kind" "$day" "$version"
+    else
+        printf '%s, %s, Drupal %s\n' "$kind" "$day" "$version"
+    fi
 }
 
 # The folder name ends with "-YYYYMMDD-HHMMSS": the date and time part.
@@ -237,12 +241,19 @@ update_record_after_restore() {
     local copy="$RESTORE_BACKUP_DIR/registry.conf"
     local field
     local value
+    local -a fields=("${RESTORE_RECORD_FIELDS[@]}")
 
     set_project_field "$record" drupal_version "$RESTORE_VERSION" || true
     set_project_field "$record" restored_from "$(date +%F) $(basename "$RESTORE_BACKUP_DIR")" || true
 
+    # Undoing a restore (a *-restore-* backup): the record exactly as it was
+    # before that restore, without a restored_from note of its own.
+    if [[ "$(basename "$RESTORE_BACKUP_DIR")" == *-restore-* ]]; then
+        fields+=(restored_from)
+    fi
+
     if [[ -f "$copy" ]]; then
-        for field in "${RESTORE_RECORD_FIELDS[@]}"; do
+        for field in "${fields[@]}"; do
             if value="$(read_project_field "$copy" "$field")" && [[ -n "$value" ]]; then
                 set_project_field "$record" "$field" "$value" || true
             else

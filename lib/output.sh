@@ -51,6 +51,12 @@ log_line() {
     fi
 }
 
+# Prints a line and writes it to the log too (no secrets).
+say() {
+    printf '%s\n' "$*"
+    log_line "$*"
+}
+
 # Shows what comes through stdin and copies it into the log, for steps
 # that print only short status lines (no secrets).
 copy_to_log() {
@@ -136,7 +142,9 @@ run_logged() {
         echo "FAILED"
         echo
         echo "Last lines of the output:"
-        tail -n 15 "$LOG_FILE" | sed 's/^/  /'
+        # Without Composer's long usage lines ("update [--with WITH] ..."),
+        # which push the real reason out of view.
+        grep -vE '^[[:space:]]*[a-z][a-z:-]* \[--' "$LOG_FILE" | tail -n 15 | sed 's/^/  /'
     fi
 
     if [[ -n "$LOG_FILE" ]]; then

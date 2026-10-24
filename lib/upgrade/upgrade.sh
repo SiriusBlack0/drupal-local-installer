@@ -207,6 +207,7 @@ run_upgrade_project() {
     fi
 
     echo "Upgrade Status: $UPGRADE_STATUS_SUMMARY"
+    print_pending_database_updates | sed 's/^Pending:      /Pending:       /; s/^              /               /'
     echo
     echo "Steps: backup -> maintenance mode -> composer -> drush updatedb -> cache -> checks"
     echo "On failure: code, composer.json and database are restored automatically."

@@ -276,4 +276,21 @@ else
     fail "copy_to_log: $shown / $(cat "$LOG_FILE") / $no_log"
 fi
 
+# Test 10: "Last lines" leave out Composer's usage lines.
+
+LOG_FILE="$work_dir/usage.log"
+: > "$LOG_FILE"
+failing() {
+    echo "curl error 7 while downloading https://repo.packagist.org: Could not connect"
+    echo "update [--with WITH] [--prefer-source] [--prefer-dist] [--dry-run] [--dev] [--no-dev] [--] [<packages>...]"
+    return 1
+}
+output="$(VERBOSE=0 run_logged "Updating" failing)" || true
+
+if [[ "$output" == *"curl error 7"* && "$output" != *"[--with WITH]"* ]]; then
+    pass "Last lines of a failure: Composer's usage line left out, the reason kept"
+else
+    fail "usage filter: $output"
+fi
+
 echo "[SUCCESS] Output tests passed."

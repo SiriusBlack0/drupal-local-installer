@@ -58,7 +58,9 @@ restore_database_from_backup() {
 
     case "$RECORD_DATABASE_ENGINE" in
         mariadb|mysql)
-            gunzip -c -- "$UPDATE_DATABASE_BACKUP" | sudo mysql
+            # gunzip's "Broken pipe" when mysql stops is noise: the result
+            # of both sides is checked below.
+            gunzip -c -- "$UPDATE_DATABASE_BACKUP" 2>/dev/null | sudo mysql
             pipe_status=("${PIPESTATUS[@]}")
             ;;
         postgresql)
@@ -69,7 +71,7 @@ restore_database_from_backup() {
 
             sudo -u postgres dropdb "${dropdb_options[@]}" -- "$RECORD_DATABASE_NAME" &&
             sudo -u postgres createdb -O "$UPDATE_DATABASE_OWNER" -- "$RECORD_DATABASE_NAME" || return 1
-            gunzip -c -- "$UPDATE_DATABASE_BACKUP" |
+            gunzip -c -- "$UPDATE_DATABASE_BACKUP" 2>/dev/null |
                 sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d "$RECORD_DATABASE_NAME" > /dev/null
             pipe_status=("${PIPESTATUS[@]}")
             ;;

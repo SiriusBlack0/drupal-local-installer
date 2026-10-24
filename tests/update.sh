@@ -70,7 +70,9 @@ STUB
 
 cat > "$stub_bin/mysql" <<'STUB'
 #!/usr/bin/env bash
-echo "mysql restore: $(cat)" >> "$CALLS_FILE"
+input="$(cat)"
+[[ "${MYSQL_FAILS:-0}" == "1" ]] && { echo "mysql failed: $input" >> "$CALLS_FILE"; exit 1; }
+echo "mysql restore: $input" >> "$CALLS_FILE"
 STUB
 
 # PostgreSQL: the owner query, the server version and the restore.
@@ -158,6 +160,7 @@ case "${args[0]}" in
                 exit 2
             fi
             echo "Lock file operations: 1 install, 2 updates, 0 removals"
+            [[ "${LOCK_OUTDATED:-0}" == "1" ]] && echo "  - Locking drupal/token (1.17.0)"
             echo "  - Upgrading drupal/core ($(grep -oP 'core=\K.*' "$dir/composer.lock") => $target)"
             echo "  - Upgrading symfony/console (v7.3.0 => v7.3.4)"
             exit 0
@@ -232,6 +235,9 @@ case "$1" in
         sqlite="$(dirname "$0")/private/database.sqlite"
         [[ -f "$sqlite" ]] && echo "updated schema" >> "$sqlite"
         [[ "${UPDB_FAILS:-0}" == "1" ]] && exit 1
+        ;;
+    updatedb:status)
+        [[ -n "${PENDING_UPDATES:-}" ]] && echo "$PENDING_UPDATES"
         ;;
     core:requirements)
         if [[ -n "${NEW_ERROR:-}" ]] && ! grep -q "'11.3.10'" "$web/core/lib/Drupal.php"; then
@@ -383,6 +389,25 @@ else
     fail "bootstrap: $output"
 fi
 
+# No stable next major yet: no word about --upgrade.
+
+if output="$(printf '1\n' | COMPOSER_VERSIONS='["11.4.2","11.3.12","11.3.10","12.0.0-beta2"]' LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
+   [[ "$output" == *"[WARNING] composer.json has changes"* && "$output" != *"--upgrade alpha instead"* ]]; then
+    pass "Lock note without a stable next major: no --upgrade advice"
+else
+    fail "no major: $output"
+fi
+
+# Database updates pending already: in the plan.
+
+if output="$(printf '1\n' | PENDING_UPDATES='{"rb_fail-10001":{"module":"rb_fail","update_id":"10001","type":"hook_update_n","description":"Fails."}}' REMOVE_DRY_RUN=1 run_update_project alpha)" &&
+   [[ "$output" == *"Pending:      rb_fail 10001"* &&
+      "$output" == *"(database updates that wait already; drush updatedb runs them too)"* ]]; then
+    pass "Database updates pending already: shown in the plan"
+else
+    fail "pending updates: $output"
+fi
+
 # Nothing to update: no word about composer.lock.
 
 if output="$(COMPOSER_VERSIONS='["11.3.10"]' LOCK_OUTDATED=1 run_update_project alpha < /dev/null)" &&
@@ -403,6 +428,7 @@ if output="$(printf '1\n' | LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project 
       "$output" == *"(Dry run: a real run asks whether to continue.)"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    [[ "$output" == *"it is fine as it is: run ./install.sh --upgrade alpha instead."* ]] &&
+   [[ "$output" == *"New:          drupal/token 1.17.0 (from composer.json)"* ]] &&
    [[ "$output" != *"could not be restored"* ]]; then
     pass "composer.lock behind composer.json: explained in the dry run (also the --upgrade case), which goes on"
 else
@@ -425,6 +451,7 @@ set_project_field "$(record_of upsilon)" restored_from "2026-10-24 upsilon-upgra
 
 if output="$(printf '1\ny\nupsilon\n' | LOCK_OUTDATED=1 run_update_project upsilon)" &&
    [[ "$output" == *"[DONE] upsilon: Drupal 11.3.10 -> 11.3.12"* && "$(version_of upsilon)" == "11.3.12" ]] &&
+   [[ "$output" == *"Also installed (from composer.json): drupal/token 1.17.0"* ]] &&
    ! grep -q "^restored_from=" "$(record_of upsilon)"; then
     pass "composer.lock behind composer.json: 'y' goes on; an old restored_from note goes"
 else
@@ -624,14 +651,41 @@ make_project chi
 
 if output="$(printf '1\nchi\n' | UPDATE_FAILS=1 INSTALL_FAILS=1 run_update_project chi)"; then
     fail "Failed restore reported as success"
-elif [[ "$output" == *"[ERROR] Automatic restore did not complete. Restore by hand from:"* &&
-        "$output" == *"  cd $PROJECT_PATH && chmod u+w $PROJECT_PATH/web/sites/default"* &&
-        "$output" == *"  rm -rf vendor && ./composer install && chmod 555 $PROJECT_PATH/web/sites/default"* &&
-        "$output" == *"  The database only after Drupal reports 11.3.10 again:"* ]]; then
-    pass "Failed restore: the commands by hand, code first, database only after the old version is back"
+elif [[ "$output" == *"[ERROR] Automatic restore did not complete. The site stays in maintenance mode"* &&
+        "$output" == *"  1. The code:"* &&
+        "$output" == *"     cd $PROJECT_PATH && chmod u+w $PROJECT_PATH/web/sites/default"* &&
+        "$output" == *"     rm -rf vendor && ./composer install && chmod 555 $PROJECT_PATH/web/sites/default"* &&
+        "$output" == *"(must say 11.3.10)"* &&
+        "$output" != *"The database"* ]] &&
+     [[ "$(tail -n 1 < <(grep "maintenance_mode" "$CALLS_FILE"))" == *"maintenance_mode 1"* ]] &&
+     grep -q "rolled-back-incomplete" "$(find "$work_dir/backups" -maxdepth 1 -name 'chi-update-*' | head -n 1)/result"; then
+    pass "Code cannot be restored: only the code steps; the site stays in maintenance mode; backup marked"
 else
-    fail "failed restore: $output"
+    fail "failed restore: $output / $(cat "$CALLS_FILE")"
 fi
+
+# The code is back but the database cannot be restored (for example sudo
+# refused): maintenance mode stays on, only the database step is shown.
+
+make_project psi
+LOG_FILE="$work_dir/psi.log"
+: > "$LOG_FILE"
+
+if output="$(printf '1\npsi\n' | UPDB_FAILS=1 MYSQL_FAILS=1 run_update_project psi)"; then
+    fail "Failed database restore reported as success"
+elif [[ "$output" == *"[OK] Code restored"* && "$output" == *"[FAILED] Database"* &&
+        "$output" == *"The code is back (Drupal 11.3.10); only the database is missing."* &&
+        "$output" == *"  1. The database:"*"gunzip -c $work_dir/backups/psi-update-"*"/database.sql.gz | sudo mysql"* &&
+        "$output" == *"Last: cd $PROJECT_PATH && ./drush cache:rebuild && ./drush state:set system.maintenance_mode 0"* &&
+        "$output" != *"1. The code:"* ]] &&
+     [[ "$(grep "maintenance_mode" "$CALLS_FILE" | tail -n 1)" == *"maintenance_mode 1"* ]] &&
+     grep -q "\[FAILED\] Database" "$LOG_FILE" && grep -q "only the database is missing" "$LOG_FILE"; then
+    pass "Database cannot be restored: maintenance mode stays on, only the database step, all in the log"
+else
+    fail "database restore failure: $output / $(cat "$CALLS_FILE")"
+fi
+
+LOG_FILE=""
 
 # Test 10: Offline restore: the code comes back from the copy made
 # before Composer, even when "composer install" (network) would fail.
