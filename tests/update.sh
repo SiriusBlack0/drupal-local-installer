@@ -383,6 +383,16 @@ else
     fail "bootstrap: $output"
 fi
 
+# Nothing to update: no word about composer.lock.
+
+if output="$(COMPOSER_VERSIONS='["11.3.10"]' LOCK_OUTDATED=1 run_update_project alpha < /dev/null)" &&
+   [[ "$output" == *"[OK] Drupal 11.3.10 is the newest release of Drupal 11."* &&
+      "$output" != *"composer.lock"* ]]; then
+    pass "Newest release already: the composer.lock note is not shown"
+else
+    fail "newest with outdated lock: $output"
+fi
+
 # composer.json changed without "composer update": explained; the
 # developer decides (default: no).
 
@@ -392,15 +402,16 @@ if output="$(printf '1\n' | LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project 
       "$output" == *"The backup is not affected"* &&
       "$output" == *"(Dry run: a real run asks whether to continue.)"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
+   [[ "$output" == *"it is fine as it is: run ./install.sh --upgrade alpha instead."* ]] &&
    [[ "$output" != *"could not be restored"* ]]; then
-    pass "composer.lock behind composer.json: explained in the dry run, which goes on"
+    pass "composer.lock behind composer.json: explained in the dry run (also the --upgrade case), which goes on"
 else
     fail "outdated lock dry run: $output"
 fi
 
 : > "$CALLS_FILE"
 
-if output="$(printf 'n\n' | LOCK_OUTDATED=1 run_update_project alpha)"; then
+if output="$(printf '1\nn\n' | LOCK_OUTDATED=1 run_update_project alpha)"; then
     fail "Outdated composer.lock accepted without asking"
 elif [[ "$output" == *"Continue with the update anyway? [y/N]"* || "$output" == *"Update cancelled; nothing was changed."* ]] &&
      ! grep -q "sudo-asked" "$CALLS_FILE" && [[ "$(version_of alpha)" == "11.3.10" ]]; then
@@ -412,7 +423,7 @@ fi
 make_project upsilon
 set_project_field "$(record_of upsilon)" restored_from "2026-10-24 upsilon-upgrade-20261023-221500"
 
-if output="$(printf 'y\n1\nupsilon\n' | LOCK_OUTDATED=1 run_update_project upsilon)" &&
+if output="$(printf '1\ny\nupsilon\n' | LOCK_OUTDATED=1 run_update_project upsilon)" &&
    [[ "$output" == *"[DONE] upsilon: Drupal 11.3.10 -> 11.3.12"* && "$(version_of upsilon)" == "11.3.12" ]] &&
    ! grep -q "^restored_from=" "$(record_of upsilon)"; then
     pass "composer.lock behind composer.json: 'y' goes on; an old restored_from note goes"

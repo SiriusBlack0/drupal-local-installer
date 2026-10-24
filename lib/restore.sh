@@ -268,18 +268,6 @@ update_record_after_restore() {
     log_line "Registry of $machine_name: drupal_version=$RESTORE_VERSION"
 }
 
-# The configuration export folder (config_sync_directory) of the site, as
-# an absolute path; empty when there is none.
-get_config_sync_dir() {
-    # Single quotes: PHP code for Drush, not shell code.
-    # shellcheck disable=SC2016
-    run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" php:eval '
-$d = (string) \Drupal\Core\Site\Settings::get("config_sync_directory", "");
-if ($d !== "" && $d[0] !== "/") { $d = \Drupal::root() . "/" . $d; }
-echo $d !== "" ? (realpath($d) ?: "") : "";
-' 2>/dev/null
-}
-
 # After a restore the database is the backup's, but the configuration
 # export folder (often in git) is still the newer one. "drush
 # config:import" would then load newer configuration into the older
@@ -287,23 +275,11 @@ echo $d !== "" ? (realpath($d) ?: "") : "";
 report_config_sync_differences() {
     local machine_name="$1"
     local sync_dir
-    local json
     local count
 
     RESTORE_CONFIG_DIFFERS=0
     sync_dir="$(get_config_sync_dir)" || sync_dir=""
-    [[ -n "$sync_dir" && -d "$sync_dir" ]] || return 0
-    [[ -n "$(find "$sync_dir" -maxdepth 1 -name '*.yml' -print -quit 2>/dev/null)" ]] || return 0
-
-    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
-        config:status --format=json 2>/dev/null)" || json=""
-
-    # Single quotes: PHP code, not shell code.
-    # shellcheck disable=SC2016
-    count="$(printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
-$d = json_decode(stream_get_contents(STDIN), true);
-echo is_array($d) ? count($d) : 0;
-' 2>/dev/null)" || count=0
+    count="$(count_config_differences "$sync_dir")" || return 0
 
     if [[ "$count" -eq 0 ]]; then
         echo "[OK] The configuration export (${sync_dir#"$RECORD_PROJECT_PATH/"}) matches the restored database"

@@ -272,7 +272,9 @@ check_core_change_project() {
         return 1
     fi
 
-    if is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
+    # --update checks it after it found a target (nothing to say when Drupal
+    # is already the newest release).
+    if [[ "$UPDATE_KIND" == "upgrade" ]] && is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
         explain_outdated_lock || return 1
     fi
 
@@ -305,6 +307,8 @@ explain_outdated_lock() {
     echo "            cd $RECORD_PROJECT_PATH && ./composer update --dry-run   (what differs)"
     echo "            ./composer update vendor/name   (or undo the change in composer.json)"
     echo "          The backup is not affected: it keeps the code that is installed now."
+    echo "          If the change prepares the next major (composer require ... --no-update),"
+    echo "          it is fine as it is: run ./install.sh --upgrade $machine_name instead."
 
     if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
         echo "          (Dry run: a real run asks whether to continue.)"
@@ -357,6 +361,10 @@ run_update_project() {
     choose_update_target "$patch" "$minor" || { echo "Update cancelled."; return 1; }
 
     check_target_compatibility "$UPDATE_TARGET" "$RECORD_PHP_VERSION" "$RECORD_DATABASE_ENGINE" || return 1
+
+    if is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
+        explain_outdated_lock || return 1
+    fi
 
     with_args=()
     for package in "${UPDATE_WITH_PACKAGES[@]}"; do
@@ -505,9 +513,8 @@ perform_update() {
     print_update_done "$machine_name" "$current"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
     echo "Back to Drupal $current later: ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
+    report_config_after_update
     print_git_commit_hint "Drupal core $UPDATE_TARGET"
-    echo "If the project keeps configuration in git, export it now:"
-    echo "  drush config:export   (then review and commit the changes)"
 }
 
 # Projects in git: nothing is committed by the installer. Shows what
@@ -568,6 +575,69 @@ echo $max, "\n";
 
 # Errors Drupal logged after id $1 (first 5): only what the update brought,
 # not the old ones.
+# The configuration export folder (config_sync_directory) of the site, as
+# an absolute path; empty when there is none.
+get_config_sync_dir() {
+    # Single quotes: PHP code for Drush, not shell code.
+    # shellcheck disable=SC2016
+    run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" php:eval '
+$d = (string) \Drupal\Core\Site\Settings::get("config_sync_directory", "");
+if ($d !== "" && $d[0] !== "/") { $d = \Drupal::root() . "/" . $d; }
+echo $d !== "" ? (realpath($d) ?: "") : "";
+' 2>/dev/null
+}
+
+# Number of configuration items in which the export folder $1 and the
+# database differ (drush config:status). Returns 1 when there is no export
+# to compare with (no folder, or no .yml files in it).
+count_config_differences() {
+    local sync_dir="$1"
+    local json
+
+    [[ -n "$sync_dir" && -d "$sync_dir" ]] || return 1
+    [[ -n "$(find "$sync_dir" -maxdepth 1 -name '*.yml' -print -quit 2>/dev/null)" ]] || return 1
+
+    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+        config:status --format=json 2>/dev/null)" || json=""
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true);
+echo is_array($d) ? count($d) : 0, "\n";
+' 2>/dev/null || echo 0
+}
+
+# After an update or upgrade the database is the right one: drush
+# updatedb changes configuration. The export folder is the older one, so
+# it is exported (and "drush config:import" before that would undo the
+# changes of updatedb).
+report_config_after_update() {
+    local sync_dir
+    local count
+    local rel
+
+    sync_dir="$(get_config_sync_dir)" || sync_dir=""
+
+    if ! count="$(count_config_differences "$sync_dir")"; then
+        echo "If the project keeps configuration in git, export it now:"
+        echo "  ./drush config:export   (then review and commit the changes)"
+        return 0
+    fi
+
+    rel="${sync_dir#"$RECORD_PROJECT_PATH/"}"
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "[OK] The configuration export ($rel) matches the database"
+        return 0
+    fi
+
+    echo "[INFO] The configuration export ($rel) differs from the database in $count item(s):"
+    echo "       drush updatedb changed configuration. Export it, review, commit:"
+    echo "         ./drush config:export"
+    echo "       Not \"drush config:import\" before that: it would undo those changes."
+}
+
 # What went wrong after a successful update or upgrade; the site works,
 # but these need attention. Filled by report_update_results.
 UPDATE_PROBLEMS=()

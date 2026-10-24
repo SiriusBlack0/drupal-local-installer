@@ -328,8 +328,6 @@ perform_upgrade() {
     echo
     echo "Check it yourself (the installer only opened the front page):"
     echo "  - log in, open the pages your modules provide, submit a form"
-    echo "  - export the configuration if you keep it in git: ./drush config:export"
-    echo "    (review, then commit)"
 
     if [[ "${#UPGRADE_LENIENT[@]}" -gt 0 ]]; then
         echo "  - $(printf '%s ' "${UPGRADE_LENIENT[@]}")run without a release for Drupal $to_major (lenient):"
@@ -344,5 +342,7 @@ perform_upgrade() {
 
     echo "Back to Drupal $current later (the site's changes since now are lost then):"
     echo "  ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
+    echo
+    report_config_after_update
     print_git_commit_hint "Drupal core $UPDATE_TARGET (upgrade from $current)"
 }

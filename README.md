@@ -412,11 +412,13 @@ Before anything changes, the installer checks that:
   `drupal/core` (Drupal 7 is refused);
 - `composer.json` and `composer.lock` have no uncommitted changes (git);
 - whether `composer.lock` matches `composer.json` (`composer validate`,
-  no network). When composer.json was changed without `composer update`,
+  no network; checked once a newer release was found). When composer.json was changed without `composer update`,
   a core update may install that change too, or fail because of it. The
   installer explains it, shows how to bring them in line first
   (`./composer update --dry-run`, then `./composer update vendor/name` or
   undo the change), and you decide whether to continue (default: no).
+  When the change prepares the next major (`composer require ...
+  --no-update`), it is fine: use `--upgrade` instead, which installs it.
   The backup is not affected: it keeps the code that is installed, and
   `composer install` restores exactly what composer.lock lists;
 - the site works now (Drush bootstraps it);
@@ -527,8 +529,14 @@ If the project is in git, the installer lists what changed (composer
 files, and the files the core scaffold writes, such as `web/index.php` and
 `web/.htaccess`) and prints the commit; commit once the site works: the
 next `--update` or `--upgrade` refuses uncommitted Composer files, so two
-changes never mix. If it keeps its configuration in git too, run
-`drush config:export` and commit that.
+changes never mix.
+
+The configuration export (`config/sync`) is compared with the database
+afterwards (`drush config:status`): `drush updatedb` often changes
+configuration, so the installer gives the number of differences and says
+to export it (`./drush config:export`, review, commit), and **not** to run
+`drush config:import` before that, which would undo those changes. The
+same check runs after `--upgrade`.
 
 ## Upgrading to a new major (`--upgrade`)
 
@@ -635,8 +643,8 @@ Ctrl+C – restores the code, composer.json, composer.lock and, after
 Afterwards, check what only a person can: log in, open the pages your
 modules provide, submit a form. Then commit what changed (the installer
 lists it; a new `recipes/` folder is written by Composer like `vendor/`,
-so it usually belongs in `.gitignore`) and, if you keep configuration in
-git, `./drush config:export`.
+so it usually belongs in `.gitignore`) and the configuration export: the
+installer compares it with the database, as after `--update`.
 
 Back to the old major later (for example a week after, when something
 turns out broken): [`--restore`](#restoring-a-backup---restore) with the

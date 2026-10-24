@@ -292,6 +292,16 @@ case "$1" in
         if [[ "${INCOMPATIBLE:-0}" == "1" ]] && grep -q "'11\." "$web/core/lib/Drupal.php"; then
             echo "module|road_map|modules/custom/road_map"
         fi
+        # CONFIG_SYNC: the configuration export folder.
+        [[ -n "${CONFIG_SYNC:-}" ]] && printf '%s' "$CONFIG_SYNC"
+        ;;
+    config:status)
+        # After updatedb the database has configuration the export lacks.
+        if grep -q "'11\." "$web/core/lib/Drupal.php"; then
+            echo '{"system.site":{"name":"system.site","state":"Different"},"core.extension":{"name":"core.extension","state":"Different"}}'
+        else
+            echo '[]'
+        fi
         ;;
     core:requirements)
         echo '[{"title":"Cron"}]'
@@ -814,6 +824,23 @@ if output="$(printf '3\nomega\n' | LOCK_OUTDATED=1 run_upgrade_project omega)" &
     pass "Upgrade with composer.json ahead of composer.lock (require --no-update): noted, upgraded"
 else
     fail "upgrade with outdated lock: $output"
+fi
+
+# After the upgrade: the configuration export is compared with the
+# database (updatedb changes configuration): export, not import.
+
+make_project chi
+mkdir -p "$PROJECT_PATH/config/sync"
+echo "name: Chi" > "$PROJECT_PATH/config/sync/system.site.yml"
+
+if output="$(printf '3\nchi\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" run_upgrade_project chi)" &&
+   [[ "$output" == *"[INFO] The configuration export (config/sync) differs from the database in 2 item(s):"* &&
+      "$output" == *"drush updatedb changed configuration. Export it, review, commit:"* &&
+      "$output" == *"Not \"drush config:import\" before that: it would undo those changes."* &&
+      "$output" != *"export the configuration if you keep it in git"* ]]; then
+    pass "After the upgrade: configuration export compared with the database; export, not import"
+else
+    fail "config after upgrade: $output"
 fi
 
 # Test 9: A Composer plugin that composer.json does not mention yet: the
