@@ -28,12 +28,31 @@ rewrite_launchers() {
     # shellcheck disable=SC2034
     PHP_CHANGE_LAUNCHERS_CHANGED=1
 
+    local url=""
+    local site=""
+    local socket="default"
+    local error_log=""
+    local machine
+    local values
+
+    machine="$(basename "$path")"
+
+    # Adopted projects (launchers from --launchers): their own URL, Nginx
+    # site and error log; the socket of the pool for the new PHP.
+    if [[ "$RECORD_MANAGED_BY" == "adopted" ]]; then
+        machine="$(get_project_machine_name "$machine")"
+        values="$(get_launcher_values "$(get_project_record_path "$machine")" "$machine")"
+        IFS='|' read -r url site _ error_log <<< "$values"
+        socket="$PHP_CHANGE_NEW_SOCKET"
+    fi
+
     run_as_project_user "$PROJECT_USER" rm -f -- "$path/drush" "$path/composer" "$path/.drupal-local-installer/bin/php" || return 1
-    create_project_launchers "$path" "$new" "$PROJECT_USER" || return 1
+    create_project_launchers "$path" "$new" "$PROJECT_USER" "$url" || return 1
 
     if [[ "$PHP_CHANGE_HAS_START" -eq 1 ]]; then
         run_as_project_user "$PROJECT_USER" rm -f -- "$path/start" &&
-        create_start_script "$path" "$new" "$RECORD_DATABASE_ENGINE" "$(basename "$path")" "$PROJECT_USER" || return 1
+        create_start_script "$path" "$new" "$RECORD_DATABASE_ENGINE" "$machine" "$PROJECT_USER" \
+            "$url" "$site" "$socket" "$error_log" || return 1
     fi
 }
 

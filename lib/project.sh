@@ -251,10 +251,13 @@ write_project_launcher() {
     run_as_project_user "$run_user" chmod 0750 "$launcher_path"
 }
 
+# Argument 4 (adopted projects): the project URL for Drush; without it,
+# the address the installer gives its own projects.
 create_project_launchers() {
     local project_path="$1"
     local php_version="$2"
     local run_user="$3"
+    local url="${4:-}"
     local php_binary
     local composer_path
     local shim_dir="$project_path/.drupal-local-installer/bin"
@@ -281,14 +284,23 @@ create_project_launchers() {
     # The project URL lets Drush build correct links ("./drush user:login").
     # An environment variable is used because the drush/ config directory
     # name is taken by the ./drush launcher itself.
-    machine_name="$(basename "$project_path")"
+    if [[ -z "$url" ]]; then
+        machine_name="$(basename "$project_path")"
 
-    if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
-        echo "[ERROR] Invalid project directory name: $machine_name"
+        if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
+            echo "[ERROR] Invalid project directory name: $machine_name"
+            return 1
+        fi
+
+        url="http://$(get_project_nginx_domain "$machine_name")"
+    fi
+
+    if [[ ! "$url" =~ ^https?://[A-Za-z0-9_.:-]+(/[A-Za-z0-9._~/-]*)?$ ]]; then
+        echo "[ERROR] Unexpected project URL for Drush: $url"
         return 1
     fi
 
-    drush_uri="export DRUSH_OPTIONS_URI=\"\${DRUSH_OPTIONS_URI:-http://$(get_project_nginx_domain "$machine_name")}\""
+    drush_uri="export DRUSH_OPTIONS_URI=\"\${DRUSH_OPTIONS_URI:-$url}\""
 
     write_project_launcher "$project_path/drush" "$php_binary" \
         "$drush_command" "$run_user" "$drush_uri" &&
@@ -318,12 +330,21 @@ verify_drush() {
 # prints the project URL. Running services are left alone, so it is
 # safe to run at any time. Nothing is ever stopped: other projects may
 # use the same services.
+#
+# Arguments 6-9 are for adopted projects, whose site, pool and address
+# have their own names: URL, enabled Nginx site, PHP-FPM socket ("" = no
+# socket of its own to check, e.g. a TCP or shared pool) and error log.
+# Without them: the names the installer gives its own projects.
 create_start_script() {
     local project_path="$1"
     local php_version="$2"
     local database_engine="$3"
     local machine_name="$4"
     local run_user="$5"
+    local url="${6:-}"
+    local site_config="${7:-}"
+    local socket="${8-default}"
+    local error_log="${9:-}"
     local start_path="$project_path/start"
     local database_service
     local services
@@ -332,6 +353,18 @@ create_start_script() {
        [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]] ||
        ! database_service="$(get_database_service_name "$database_engine")"; then
         echo "[ERROR] Invalid input for the start script."
+        return 1
+    fi
+
+    [[ -n "$url" ]] || url="http://$(get_project_nginx_domain "$machine_name")"
+    [[ -n "$site_config" ]] || site_config="/etc/nginx/sites-enabled/${machine_name}.conf"
+    [[ "$socket" != "default" ]] || socket="$(get_project_php_fpm_socket "$machine_name" "$php_version")"
+    [[ -n "$error_log" ]] || error_log="/var/log/nginx/${machine_name}.error.log"
+
+    # The values go into the script as they are: only plain characters.
+    if [[ ! "$url" =~ ^https?://[A-Za-z0-9_.:-]+(/[A-Za-z0-9._~/-]*)?$ ]] ||
+       [[ ! "$site_config$socket$error_log" =~ ^[A-Za-z0-9._/@+-]*$ ]]; then
+        echo "[ERROR] Unexpected URL or path for the start script: $url"
         return 1
     fi
 
@@ -351,13 +384,13 @@ create_start_script() {
         '# running services are left alone and nothing is ever stopped.' \
         '' \
         "services=($services)" \
-        "site_config=/etc/nginx/sites-enabled/${machine_name}.conf" \
-        "socket=$(get_project_php_fpm_socket "$machine_name" "$php_version")" \
+        "site_config=$site_config" \
+        "socket=$socket" \
         "fpm_service=php${php_version}-fpm" \
         "fpm_binary=php-fpm${php_version}" \
-        "error_log=/var/log/nginx/${machine_name}.error.log" \
+        "error_log=$error_log" \
         'ipv6_flag=/proc/net/if_inet6' \
-        "url=http://$(get_project_nginx_domain "$machine_name")" \
+        "url=$url" \
         '' \
         'has_systemd() { [[ -d /run/systemd/system ]]; }' \
         '' \
@@ -425,7 +458,7 @@ create_start_script() {
         'fi' \
         '' \
         '# A pool added while PHP-FPM was already running is loaded on reload.' \
-        'if [[ ! -S "$socket" ]]; then' \
+        'if [[ -n "$socket" && ! -S "$socket" ]]; then' \
         '    if sudo "$fpm_binary" -t > /dev/null 2>&1 &&' \
         '       reload_service "$fpm_service" > /dev/null; then' \
         '        sleep 1' \

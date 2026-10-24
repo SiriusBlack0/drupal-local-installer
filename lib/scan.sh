@@ -336,6 +336,7 @@ run_scan_projects() {
     local index
     local -a snapshots=()
     local -a labels=()
+    local -a registered_names=()
 
     base_dir="$(get_projects_base_dir)" || return 1
 
@@ -379,6 +380,7 @@ run_scan_projects() {
             if write_project_record > /dev/null; then
                 echo "  [OK] Registered as '$PROJECT_MACHINE_NAME' (adopted)"
                 registered=$((registered + 1))
+                registered_names+=("$PROJECT_MACHINE_NAME")
             else
                 echo "  [FAILED] '$PROJECT_MACHINE_NAME' could not be registered"
             fi
@@ -388,6 +390,8 @@ run_scan_projects() {
     fi
 
     REGISTRY_VALUES=()
+
+    offer_launchers_after_scan "${registered_names[@]}"
 
     echo
     if [[ "$found" -eq 0 ]]; then

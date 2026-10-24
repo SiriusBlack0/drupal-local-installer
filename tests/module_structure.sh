@@ -37,6 +37,7 @@ modules = [
     "lib/restore.sh",
     "lib/php_source.sh",
     "lib/php_change.sh",
+    "lib/launchers.sh",
     "lib/completion.sh",
     "lib/workflow.sh",
 ]

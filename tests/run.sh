@@ -49,6 +49,7 @@ SUITES=(
     "Tab Completion Tests|bash tests/completion.sh"
     "Checklist Tests|bash tests/checklist.sh"
     "Git Repository Tests|bash tests/git.sh"
+    "Launcher Tests|bash tests/launchers.sh"
 )
 
 echo "======================================"

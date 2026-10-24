@@ -34,6 +34,7 @@ source "$SCRIPT_DIR/lib/upgrade.sh"
 source "$SCRIPT_DIR/lib/restore.sh"
 source "$SCRIPT_DIR/lib/php_source.sh"
 source "$SCRIPT_DIR/lib/php_change.sh"
+source "$SCRIPT_DIR/lib/launchers.sh"
 source "$SCRIPT_DIR/lib/completion.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
 
@@ -141,6 +142,11 @@ main() {
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-restore"
             run_command run_restore_project "$REMOVE_PROJECT"
             ;;
+        14)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            run_command run_launchers_project "$REMOVE_PROJECT"
+            ;;
         *) exit 1 ;;
     esac
 
@@ -202,6 +208,8 @@ print_project_summary() {
     echo "Path:     $PROJECT_PATH"
     echo "Secrets:  web/sites/default/settings.local.php (database, hash salt; not in git)"
     echo "Site:     http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")"
+    echo "          (browsers open *.localhost by themselves; a tool that cannot, such"
+    echo "          as an older curl: curl -H \"Host: $(get_project_nginx_domain "$PROJECT_MACHINE_NAME")\" http://127.0.0.1/)"
     echo "Admin:    http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")/user/login"
     echo "User:     $ADMIN_USER"
 

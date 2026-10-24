@@ -262,6 +262,21 @@ else
     fail "step mode: $output"
 fi
 
+REMOVE_DRY_RUN=0
+REMOVE_PROJECT=""
+status=0
+parse_options --launchers shop --dry-run > /dev/null || status=$?
+status2=0
+output2="$(parse_options --launchers)" || status2=$?
+
+if [[ "$status" -eq 14 && "$REMOVE_PROJECT" == "shop" && "$REMOVE_DRY_RUN" == "1" &&
+      "$status2" -eq 1 && "$output2" == *"--launchers needs a project name"* ]]; then
+    pass "--launchers NAME [--dry-run] recognised; without a name rejected"
+else
+    fail "--launchers: $status/$status2"
+fi
+REMOVE_DRY_RUN=0
+
 # Test 9: copy_to_log shows the lines and copies them into the log.
 
 LOG_FILE="$work_dir/copy.log"

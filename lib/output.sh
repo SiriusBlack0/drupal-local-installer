@@ -200,6 +200,10 @@ Options:
               Go back to a backup of --update, --upgrade or --restore (code
               and database); without BACKUP: choose from a list; the current
               state is backed up first; --dry-run only shows the plan
+  --launchers NAME
+              Write the missing ./start, ./drush and ./composer of a project
+              (for adopted projects; asks first, never replaces a file;
+              --dry-run only shows them)
   --php NAME VERSION
               Change the PHP version of a project, e.g. --php mysite 8.4
               (restored automatically on failure; --dry-run only checks)
@@ -222,7 +226,7 @@ USAGE
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
 # 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
 # 9 --php-source, 10 --php, 11 --install-completion, 12 --upgrade,
-# 13 --restore.
+# 13 --restore, 14 --launchers.
 REMOVE_PROJECT=""
 PHP_TARGET_VERSION=""
 
@@ -296,6 +300,18 @@ parse_options() {
                     shift
                 fi
                 ;;
+            --launchers)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    echo "[ERROR] --launchers needs a project name, e.g. --launchers mysite"
+                    return 1
+                fi
+
+                action="launchers"
+                # Used by install.sh.
+                # shellcheck disable=SC2034
+                REMOVE_PROJECT="$2"
+                shift
+                ;;
             --unregister)
                 action="unregister"
                 # Used by install.sh. Without a name: choose from a list.
@@ -337,8 +353,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" && "$action" != "restore" ]]; then
-        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade, --restore and --php"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" && "$action" != "restore" && "$action" != "launchers" ]]; then
+        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade, --restore, --launchers and --php"
         return 1
     fi
 
@@ -354,6 +370,7 @@ parse_options() {
         install-completion) return 11 ;;
         upgrade) return 12 ;;
         restore) return 13 ;;
+        launchers) return 14 ;;
     esac
 
     return 0

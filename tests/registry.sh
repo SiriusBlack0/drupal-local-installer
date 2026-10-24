@@ -67,8 +67,9 @@ for expected in "format=1" "name=Third Test" "machine_name=thirdtest" \
     grep -qxF "$expected" "$record" || fail "missing line: $expected"
 done
 
-if grep -qE '^created=[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$record"; then
-    pass "All project details recorded"
+if grep -qE '^created=[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$record" &&
+   grep -qE '^installer_version=([0-9a-f]{7,}(-modified)?|unknown)$' "$record"; then
+    pass "All project details recorded (with the installer version)"
 else
     fail "created timestamp"
 fi

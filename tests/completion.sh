@@ -63,7 +63,9 @@ if [[ "$(complete_line './install.sh --update |')" == "alpha beta" &&
       "$(complete_line './install.sh --php a')" == "alpha" &&
       "$(complete_line './install.sh --remove |')" == "alpha beta" &&
       "$(complete_line './install.sh --unregister b')" == "beta" &&
-      "$(complete_line './install.sh --upgrade |')" == "alpha beta" ]]; then
+      "$(complete_line './install.sh --upgrade |')" == "alpha beta" &&
+      "$(complete_line './install.sh --launchers a')" == "alpha" &&
+      "$(complete_line './install.sh --launchers alpha |')" == "--dry-run" ]]; then
     pass "Registered projects are completed"
 else
     fail "projects: $(complete_line './install.sh --update |')"

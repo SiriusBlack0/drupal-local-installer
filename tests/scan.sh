@@ -19,6 +19,8 @@ source lib/compatibility.sh
 source lib/checklist.sh
 source lib/scan.sh
 source lib/remove.sh
+source lib/git.sh
+source lib/launchers.sh
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT

@@ -21,6 +21,7 @@ REGISTRY_FIELDS=(
     name
     machine_name
     created
+    installer_version
     owner
     project_path
     web_root
@@ -38,6 +39,27 @@ REGISTRY_FIELDS=(
     nginx_enabled
     log_file
 )
+
+# The installer's own version: its git commit ("4001343", with
+# "-modified" when it has uncommitted changes), or "unknown" outside git.
+# Recorded with every project, to know which version made it.
+REGISTRY_INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+get_installer_version() {
+    local commit
+
+    if ! command -v git > /dev/null 2>&1 ||
+       ! commit="$(git -C "$REGISTRY_INSTALLER_DIR" rev-parse --short HEAD 2>/dev/null)"; then
+        echo "unknown"
+        return 0
+    fi
+
+    if [[ -n "$(git -C "$REGISTRY_INSTALLER_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        echo "${commit}-modified"
+    else
+        echo "$commit"
+    fi
+}
 
 get_user_home() {
     getent passwd "$1" | cut -d: -f6
@@ -189,6 +211,7 @@ get_registry_value() {
         name) echo "$PROJECT_NAME" ;;
         machine_name) echo "$PROJECT_MACHINE_NAME" ;;
         created) date --iso-8601=seconds ;;
+        installer_version) get_installer_version ;;
         owner) echo "$PROJECT_USER" ;;
         project_path) echo "$PROJECT_PATH" ;;
         url) echo "http://$(get_project_nginx_domain "$PROJECT_MACHINE_NAME")" ;;
@@ -393,6 +416,27 @@ remove_project_field() {
     fi
 }
 
+# The Drupal version for --list: read from the code (the registry may be
+# older, e.g. after a restore by hand), else the registered one with "?".
+get_listed_drupal_version() {
+    local record="$1"
+    local project_path="$2"
+    local web_root
+    local version
+
+    web_root="$(read_project_field "$record" web_root)" || web_root=""
+    [[ -n "$web_root" ]] || web_root="$project_path/web"
+
+    if declare -F get_drupal_version_in > /dev/null &&
+       version="$(get_drupal_version_in "$web_root" 2>/dev/null)" && [[ -n "$version" ]]; then
+        echo "$version"
+        return 0
+    fi
+
+    version="$(read_project_field "$record" drupal_version)" || version=""
+    echo "${version:-?}${version:+?}"
+}
+
 list_registered_projects() {
     local registry_dir
     local record
@@ -411,7 +455,7 @@ list_registered_projects() {
         [[ -f "$record" ]] || continue
 
         if [[ "$found" -eq 0 ]]; then
-            printf '%-20s %-34s %-5s %-11s %-9s %s\n' "PROJECT" "URL" "PHP" "DATABASE" "TYPE" "STATE"
+            printf '%-20s %-34s %-5s %-9s %-11s %-9s %s\n' "PROJECT" "URL" "PHP" "DRUPAL" "DATABASE" "TYPE" "STATE"
             found=1
         fi
 
@@ -428,10 +472,11 @@ list_registered_projects() {
             esac
         fi
 
-        printf '%-20s %-34s %-5s %-11s %-9s %s\n' \
+        printf '%-20s %-34s %-5s %-9s %-11s %-9s %s\n' \
             "$machine_name" \
             "$(read_project_field "$record" url)" \
             "$(read_project_field "$record" php_version | grep . || echo "?")" \
+            "$(get_listed_drupal_version "$record" "$project_path")" \
             "$(read_project_field "$record" database_engine)" \
             "$(read_project_field "$record" managed_by || echo installer)" \
             "$state"

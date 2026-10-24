@@ -109,7 +109,9 @@ After a successful installation the project is recorded in
 (directory 700, file 600, owned by you). It lists everything the
 installer created – project path, URL, Drupal/PHP versions, database
 engine, name and user (or the SQLite file), PHP-FPM pool and socket,
-Nginx files, log file – so the project can be removed or updated later.
+Nginx files, log file – so the project can be removed or updated later,
+and the version of the installer that made it (`installer_version`: its
+git commit, `-modified` with uncommitted changes, or `unknown`).
 **No password is ever stored there.** The file is read as plain data,
 never executed.
 
@@ -118,6 +120,9 @@ never executed.
 ```
 
 shows all registered projects and marks those whose directory is gone.
+The DRUPAL column is read from the code itself (the registry may be older,
+for example after a restore by hand); a version followed by `?` comes
+from the registry because the code could not be read.
 
 ## MariaDB and MySQL
 
@@ -382,6 +387,34 @@ Removing an adopted project (`--remove`) works like for any other project,
 with three extra rules: shared resources are never touched, the database
 **user** is kept (it may be shared; only the database is dropped), and an
 Nginx site that no longer serves the project is left in place.
+
+### Launchers for adopted projects (`--launchers`)
+
+```bash
+./install.sh --launchers myshop --dry-run   # what would be written
+./install.sh --launchers myshop
+```
+
+Projects made by the installer have `./start`, `./drush` and `./composer`.
+Adopted projects do not: there `vendor/bin/drush` and `composer` run with
+the system's default PHP, which may not be the project's (a common trap
+when several PHP versions are installed). `--launchers` writes the
+missing ones, after asking (default: no):
+
+- `./start` with the project's own URL, Nginx site, PHP-FPM socket (none
+  to check for a TCP or shared pool) and error log;
+- `./drush` with the project's PHP and URL (`./drush user:login` gives a
+  correct link);
+- `./composer` with the project's PHP.
+
+Only these files change. An existing file is never replaced; a `drush/`
+folder (custom Drush commands) means no `./drush` (then
+`./composer exec drush -- <command>`); without an Nginx site there is no
+`./start`. In git they go to `.git/info/exclude` (this computer only);
+the project's `.gitignore` is not touched. Nginx, the PHP-FPM pool and
+the project's settings stay as they are. `--php` rewrites them for the
+new PHP version later. After `--scan`, the projects just registered are
+offered in a list for the same.
 
 ## Updating Drupal core (`--check-updates`, `--update`)
 
@@ -932,5 +965,6 @@ temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
 - [x] Optional package source for other PHP versions (`--php-source`)
 - [x] Major upgrades with Upgrade Status and a Composer trial (`--upgrade`)
 - [x] Restore a backup of an update or upgrade (`--restore`)
+- [x] Launchers for adopted projects (`--launchers`, offered after `--scan`)
 - [x] New projects git ready (`settings.local.php`, `.gitignore`, initial commit)
 - [ ] Docker mode
