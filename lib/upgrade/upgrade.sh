@@ -339,6 +339,7 @@ perform_upgrade() {
         echo "    ./drush pm:uninstall upgrade_status && composer remove --dev drupal/upgrade_status"
     fi
 
-    echo "Back to Drupal $current: README.md, \"Upgrading to a new major\" (from the backup)."
+    echo "Back to Drupal $current later (the site's changes since now are lost then):"
+    echo "  ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
     print_git_commit_hint "Drupal core $UPDATE_TARGET (upgrade from $current)"
 }

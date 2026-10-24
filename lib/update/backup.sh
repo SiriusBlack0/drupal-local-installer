@@ -91,6 +91,14 @@ restore_database_from_backup() {
     [[ "${pipe_status[0]}" -eq 0 && "${pipe_status[1]}" -eq 0 ]]
 }
 
+copy_registry_record() {
+    local record
+
+    record="$(get_project_record_path "$1")" || return 0
+    [[ -f "$record" ]] || return 0
+    cp -- "$record" "$2"
+}
+
 create_update_backup() {
     local machine_name="$1"
     local old_umask
@@ -120,8 +128,11 @@ create_update_backup() {
 
         # The scaffold files of now: --restore removes the ones a newer
         # release adds later (web/autoload_runtime.php after Drupal 11).
+        # And the registry record: --restore puts its notes back as they
+        # were (upgraded_from, accepted_advisories, ...).
         if cp --preserve=timestamps -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/" &&
-           get_scaffold_files "$(get_web_root_relative)" > "$UPDATE_BACKUP_DIR/scaffold-files.list"; then
+           get_scaffold_files "$(get_web_root_relative)" > "$UPDATE_BACKUP_DIR/scaffold-files.list" &&
+           copy_registry_record "$machine_name" "$UPDATE_BACKUP_DIR/registry.conf"; then
             echo "OK"
         else
             echo "FAILED"

@@ -272,6 +272,16 @@ check_core_change_project() {
         return 1
     fi
 
+    if is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
+        echo "[BLOCKED] composer.lock does not match composer.json: composer.json was changed"
+        echo "          without \"composer update\". The ${UPDATE_KIND} would install that change"
+        echo "          too, and its backup could not be restored (composer install fails)."
+        echo "          See what differs:  cd $RECORD_PROJECT_PATH && ./composer update --dry-run"
+        echo "          Then update the package you changed (./composer update vendor/name) or"
+        echo "          undo the change in composer.json, commit, and run this again."
+        return 1
+    fi
+
     if [[ "$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" status --field=bootstrap 2>/dev/null)" != *"Successful"* ]]; then
         echo "[BLOCKED] The site does not work right now (Drush cannot bootstrap it)."
         echo "          Fix that first: an update could not be checked afterwards."
@@ -463,6 +473,7 @@ perform_update() {
 
     print_update_done "$machine_name" "$current"
     echo "Backup (keep it until you are sure): $UPDATE_BACKUP_DIR"
+    echo "Back to Drupal $current later: ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
     print_git_commit_hint "Drupal core $UPDATE_TARGET"
     echo "If the project keeps configuration in git, export it now:"
     echo "  drush config:export   (then review and commit the changes)"

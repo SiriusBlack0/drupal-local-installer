@@ -225,12 +225,34 @@ offer_removing_newer_scaffold_files() {
 
 # Registry after the restore: the backup's version; notes that belonged
 # to the newer state go.
+# Fields that describe the state of the code; a backup's copy of the
+# record (registry.conf) gives them back as they were.
+RESTORE_RECORD_FIELDS=(upgraded_from accepted_advisories lenient_packages)
+
 update_record_after_restore() {
     local record="$1"
     local machine_name="$2"
+    local copy="$RESTORE_BACKUP_DIR/registry.conf"
+    local field
+    local value
 
     set_project_field "$record" drupal_version "$RESTORE_VERSION" || true
     set_project_field "$record" restored_from "$(date +%F) $(basename "$RESTORE_BACKUP_DIR")" || true
+
+    if [[ -f "$copy" ]]; then
+        for field in "${RESTORE_RECORD_FIELDS[@]}"; do
+            if value="$(read_project_field "$copy" "$field")" && [[ -n "$value" ]]; then
+                set_project_field "$record" "$field" "$value" || true
+            else
+                remove_project_field "$record" "$field" || true
+            fi
+        done
+
+        log_line "Registry of $machine_name: drupal_version=$RESTORE_VERSION, notes from the backup"
+        return 0
+    fi
+
+    # Older backups have no copy: notes of the newer state go.
     remove_project_field "$record" accepted_advisories || true
 
     if [[ "${RESTORE_VERSION%%.*}" -lt "${UPDATE_PREVIOUS_VERSION%%.*}" ]] 2>/dev/null; then
@@ -242,6 +264,58 @@ update_record_after_restore() {
     fi
 
     log_line "Registry of $machine_name: drupal_version=$RESTORE_VERSION"
+}
+
+# The configuration export folder (config_sync_directory) of the site, as
+# an absolute path; empty when there is none.
+get_config_sync_dir() {
+    # Single quotes: PHP code for Drush, not shell code.
+    # shellcheck disable=SC2016
+    run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" php:eval '
+$d = (string) \Drupal\Core\Site\Settings::get("config_sync_directory", "");
+if ($d !== "" && $d[0] !== "/") { $d = \Drupal::root() . "/" . $d; }
+echo $d !== "" ? (realpath($d) ?: "") : "";
+' 2>/dev/null
+}
+
+# After a restore the database is the backup's, but the configuration
+# export folder (often in git) is still the newer one. "drush
+# config:import" would then load newer configuration into the older
+# database: said clearly, with the two safe ways.
+report_config_sync_differences() {
+    local machine_name="$1"
+    local sync_dir
+    local json
+    local count
+
+    sync_dir="$(get_config_sync_dir)" || sync_dir=""
+    [[ -n "$sync_dir" && -d "$sync_dir" ]] || return 0
+    [[ -n "$(find "$sync_dir" -maxdepth 1 -name '*.yml' -print -quit 2>/dev/null)" ]] || return 0
+
+    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
+        config:status --format=json 2>/dev/null)" || json=""
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    count="$(printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true);
+echo is_array($d) ? count($d) : 0;
+' 2>/dev/null)" || count=0
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "[OK] The configuration export (${sync_dir#"$RECORD_PROJECT_PATH/"}) matches the restored database"
+        return 0
+    fi
+
+    echo
+    echo "[WARNING] The configuration export (${sync_dir#"$RECORD_PROJECT_PATH/"}) differs from the restored"
+    echo "          database in $count item(s): the restore does not change that folder, so it is"
+    echo "          still the newer configuration (./drush config:status lists them)."
+    echo "          Do NOT run \"drush config:import\" now: it would load the newer configuration"
+    echo "          into this older database. Instead, either:"
+    echo "            - keep the database's configuration: ./drush config:export, review, commit;"
+    echo "            - or, in git, take the folder from the time of the backup:"
+    echo "              git log -- ${sync_dir#"$RECORD_PROJECT_PATH/"}   (then git checkout <commit> -- that folder)"
 }
 
 # UPDATE_* variables are read in lib/update/ (backup, rollback, checks).
@@ -316,6 +390,25 @@ run_restore_project() {
         return 1
     fi
 
+    if is_composer_lock_outdated "$RESTORE_BACKUP_DIR"; then
+        echo "[BLOCKED] In this backup, composer.lock does not match composer.json (the backup"
+        echo "          was made while composer.json had changes without \"composer update\")."
+        echo "          composer install cannot install it. Choose another backup."
+        return 1
+    fi
+
+    local platform
+    local platform_status=0
+    platform="$(check_lock_platform "$RESTORE_BACKUP_DIR")" || platform_status=$?
+
+    if [[ "$platform_status" -eq 1 ]]; then
+        echo "[BLOCKED] The backup's packages do not run with this project's PHP $RECORD_PHP_VERSION:"
+        printf '%s\n' "$platform" | sed 's/^/            /'
+        echo "          Change the PHP version first (./install.sh --php $machine_name X.Y), or"
+        echo "          choose another backup."
+        return 1
+    fi
+
     if [[ "$RECORD_DATABASE_ENGINE" == "sqlite" && ! -s "$RESTORE_BACKUP_DIR/database.sqlite" ]] ||
        [[ "$RECORD_DATABASE_ENGINE" != "sqlite" && ! -s "$RESTORE_BACKUP_DIR/database.sql.gz" ]]; then
         echo "[BLOCKED] The backup has no database of this engine ($RECORD_DATABASE_ENGINE)."
@@ -346,6 +439,15 @@ run_restore_project() {
     echo "              changed since $backup_time are lost."
     echo "First:        a backup of the current state (${machine_name}-restore-...), so this"
     echo "              restore can be undone with --restore again."
+
+    if [[ -n "$(find "$RECORD_PROJECT_PATH/config" -name '*.yml' -print -quit 2>/dev/null)" ]]; then
+        echo "Config:       config/ is not changed by the restore; it is compared with the"
+        echo "              restored database afterwards."
+    fi
+
+    if [[ "$platform_status" -eq 2 ]]; then
+        echo "PHP:          could not check the backup's requirements (composer check-platform-reqs)."
+    fi
     echo
     echo "Steps: backup -> maintenance mode -> code (composer install) -> check that"
     echo "Drupal reports $RESTORE_VERSION -> database -> cache -> checks"
@@ -463,6 +565,7 @@ perform_restore() {
     update_record_after_restore "$record" "$machine_name"
     remove_code_snapshot
     restore_sites_default_mode
+    report_config_sync_differences "$machine_name"
 
     echo
     echo "[DONE] $machine_name: Drupal ${UPDATE_PREVIOUS_VERSION:-unknown} -> $RESTORE_VERSION (backup of $(get_backup_time "$RESTORE_BACKUP_DIR"))"

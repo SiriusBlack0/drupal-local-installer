@@ -643,6 +643,7 @@ make_project kappa
 
 if output="$(printf '3\nkappa\n' | run_upgrade_project kappa)" &&
    [[ "$output" == *"[DONE] kappa: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"  ./install.sh --restore kappa $work_dir/backups/kappa-upgrade-"* &&
       "$output" == *"Check it yourself (the installer only opened the front page):"* &&
       "$output" == *"./drush config:export"* ]] &&
    [[ "$(version_of kappa)" == "11.4.2" ]] &&

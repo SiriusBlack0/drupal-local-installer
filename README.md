@@ -411,6 +411,10 @@ Before anything changes, the installer checks that:
 - it is a Composer project with `drupal/core-recommended` or
   `drupal/core` (Drupal 7 is refused);
 - `composer.json` and `composer.lock` have no uncommitted changes (git);
+- `composer.lock` matches `composer.json` (`composer validate`, no
+  network): when composer.json was changed without `composer update`, the
+  update would install that change too, and its backup could not be
+  restored. The installer stops and shows how to bring them in line;
 - the site works now (Drush bootstraps it);
 - Composer can resolve the update (`--dry-run`). If a constraint in
   `composer.json` blocks it, Composer's reason is shown and nothing
@@ -663,6 +667,12 @@ In this order:
    Composer forgets it);
 5. caches, maintenance mode off, the usual checks (Drush, HTTP).
 
+Before anything changes (also in `--dry-run`), the backup itself is
+checked: its `composer.lock` must match its `composer.json`
+(`composer validate`), and the project's PHP must meet its requirements
+(`composer check-platform-reqs --lock`; otherwise change the PHP first
+with `--php`).
+
 If the code cannot be installed, or Drupal reports another version, the
 database is never touched. If any step fails, the state of before comes
 back automatically (code from an offline copy, and the database).
@@ -673,9 +683,23 @@ decide whether they go (default: kept; a file you added yourself at that
 place would be listed too). Backups record their scaffold files for this;
 for older backups `git status` shows them as new.
 
-The registry gets the backup's version and `restored_from`; notes of the
-newer state (`upgraded_from`, `accepted_advisories`, `lenient_packages`)
-go.
+The configuration export folder (`config/sync`, often in git) is **not**
+part of the backup and is not changed. Afterwards it is compared with the
+restored database (`drush config:status`); when they differ, the
+installer says so: do **not** run `drush config:import` then (it would
+load the newer configuration into the older database). Either keep the
+database's configuration (`./drush config:export`, review, commit), or
+take the folder from the time of the backup in git
+(`git log -- config/sync`, then `git checkout <commit> -- config/sync`).
+
+The registry gets the backup's version and `restored_from`. Backups keep
+a copy of the registry record (`registry.conf`), so its notes come back as
+they were at that time (`upgraded_from`, `accepted_advisories`,
+`lenient_packages`); for older backups without the copy, notes of the
+newer state go.
+
+`--update` and `--upgrade` end with the exact `--restore` command for
+their backup.
 
 ## Other PHP versions (`--php-source`)
 

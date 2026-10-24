@@ -100,6 +100,23 @@ for a in "$@"; do
 done
 echo "composer ${args[*]}" >> "$CALLS_FILE"
 case "${args[0]}" in
+    validate)
+        # LOCK_OUTDATED_IN: composer.lock of that folder is out of date.
+        if [[ -n "${LOCK_OUTDATED_IN:-}" && "$dir" == "$LOCK_OUTDATED_IN" ]]; then
+            echo "./composer.json is valid but your composer.lock has some errors"
+            echo "# Lock file errors"
+            echo "- The lock file is not up to date with the latest changes in composer.json, it is recommended that you run \`composer update\` or \`composer update <package name>\`."
+            exit 1
+        fi
+        ;;
+    check-platform-reqs)
+        if [[ "${PLATFORM_FAILS:-0}" == "1" ]]; then
+            echo "php      8.3.20  drupal/core requires php (>=8.4.0)      failed"
+            echo "ext-gd   8.3.20                                         success"
+            exit 2
+        fi
+        echo "php 8.3.20 success"
+        ;;
     install)
         version="$(grep -oP '"name": *"drupal/core", *"version": *"\K[^"]+' "$dir/composer.lock")"
         if [[ -e "$dir/vendor/symfony-runtime" && "$version" == 10.* ]]; then
@@ -131,6 +148,17 @@ case "$1" in
     status) echo "Successful" ;;
     core:requirements) echo '[]' ;;
     cache:rebuild) [[ "${CACHE_FAILS:-0}" == "1" ]] && exit 1 ;;
+    php:eval)
+        # The configuration export folder, when CONFIG_SYNC is set.
+        [[ -n "${CONFIG_SYNC:-}" ]] && printf '%s' "$CONFIG_SYNC"
+        ;;
+    config:status)
+        if [[ "${CONFIG_DIFFERS:-0}" == "1" ]]; then
+            echo '{"system.site":{"name":"system.site","state":"Different"},"views.view.x":{"name":"views.view.x","state":"Only in sync dir"}}'
+        else
+            echo '[]'
+        fi
+        ;;
 esac
 exit 0
 STUB
@@ -310,8 +338,11 @@ fi
 if output="$(printf 'gamma\n' | RESTORE_BACKUP_ARGUMENT="$safety" run_restore_project gamma)" &&
    [[ "$(version_of gamma)" == "11.4.11" && "$(cat "$STATE_DIR/database")" == "NEW DB" ]] &&
    grep -q '"new"' "$PROJECT_PATH/composer.json" &&
-   [[ "$output" == *"[DONE] gamma: Drupal 10.6.20 -> 11.4.11"* ]]; then
-    pass "Undo with the backup made by the restore: back on 11.4.11 with its database"
+   [[ "$output" == *"[DONE] gamma: Drupal 10.6.20 -> 11.4.11"* ]] &&
+   [[ "$(read_project_field "$record" upgraded_from)" == "2026-10-23 10.6.20" &&
+      "$(read_project_field "$record" accepted_advisories)" == "2026-10-23 11.4.11: x" &&
+      "$(read_project_field "$record" drupal_version)" == "11.4.11" ]]; then
+    pass "Undo with the backup made by the restore: 11.4.11, its database and its registry notes back"
 else
     fail "undo: $output"
 fi
@@ -362,6 +393,60 @@ elif [[ "$output" == *"[ERROR] The database of the backup could not be restored.
     pass "Database restore fails: code and database of before back"
 else
     fail "database failure: $output / $(cat "$CALLS_FILE")"
+fi
+
+# Test 7b: A backup that cannot be installed is refused before anything
+# changes, also in the dry run.
+
+make_project gamma
+
+if output="$(printf 'gamma\n' | LOCK_OUTDATED_IN="$newer" RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)"; then
+    fail "Backup with an outdated lock accepted"
+elif [[ "$output" == *"[BLOCKED] In this backup, composer.lock does not match composer.json"* ]] &&
+     [[ "$(version_of gamma)" == "11.4.11" ]] && ! grep -q "sudo-asked\|composer install" "$CALLS_FILE"; then
+    pass "Backup whose composer.lock does not match its composer.json: refused, nothing changed"
+else
+    fail "outdated lock in backup: $output"
+fi
+
+if output="$(PLATFORM_FAILS=1 REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)"; then
+    fail "Backup that needs another PHP accepted"
+elif [[ "$output" == *"[BLOCKED] The backup's packages do not run with this project's PHP 8.3:"* &&
+        "$output" == *"drupal/core requires php (>=8.4.0) failed"* &&
+        "$output" == *"./install.sh --php gamma X.Y"* ]]; then
+    pass "Backup that needs another PHP: refused in the dry run, with the way out"
+else
+    fail "platform: $output"
+fi
+
+# Test 7c: The configuration export folder is compared with the restored
+# database; differences are explained, with what not to do.
+
+make_project gamma
+mkdir -p "$PROJECT_PATH/config/sync"
+echo "name: New" > "$PROJECT_PATH/config/sync/system.site.yml"
+
+if output="$(printf 'gamma\nn\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" CONFIG_DIFFERS=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)" &&
+   [[ "$output" == *"Config:       config/ is not changed by the restore"* &&
+      "$output" == *"[WARNING] The configuration export (config/sync) differs from the restored"* &&
+      "$output" == *"database in 2 item(s)"* &&
+      "$output" == *"Do NOT run \"drush config:import\" now"* &&
+      "$output" == *"./drush config:export, review, commit"* ]] &&
+   [[ "$(cat "$PROJECT_PATH/config/sync/system.site.yml")" == "name: New" ]]; then
+    pass "Configuration export differs from the restored database: warned, folder untouched"
+else
+    fail "config differs: $output"
+fi
+
+make_project gamma
+mkdir -p "$PROJECT_PATH/config/sync"
+echo "name: Old" > "$PROJECT_PATH/config/sync/system.site.yml"
+
+if output="$(printf 'gamma\nn\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma)" &&
+   [[ "$output" == *"[OK] The configuration export (config/sync) matches the restored database"* ]]; then
+    pass "Configuration export matches: OK"
+else
+    fail "config same: $output"
 fi
 
 # Test 8: Newer scaffold files are kept when the developer says no.

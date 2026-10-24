@@ -119,6 +119,12 @@ set_version() {
     printf "<?php\nclass Drupal {\n  const VERSION = '%s';\n}\n" "$1" > "$dir/web/core/lib/Drupal.php"
 }
 case "${args[0]}" in
+    validate)
+        if [[ "${LOCK_OUTDATED:-0}" == "1" ]]; then
+            echo "- The lock file is not up to date with the latest changes in composer.json, it is recommended that you run \`composer update\` or \`composer update <package name>\`."
+            exit 1
+        fi
+        ;;
     show)
         echo "{\"name\":\"${args[-1]}\",\"versions\":${COMPOSER_VERSIONS:-[]}}"
         ;;
@@ -377,6 +383,16 @@ else
     fail "bootstrap: $output"
 fi
 
+if output="$(LOCK_OUTDATED=1 run_update_project alpha < /dev/null)"; then
+    fail "Outdated composer.lock accepted"
+elif [[ "$output" == *"[BLOCKED] composer.lock does not match composer.json: composer.json was changed"* &&
+        "$output" == *"its backup could not be restored"* &&
+        "$output" == *"./composer update --dry-run"* ]] && ! grep -q "sudo-asked" "$CALLS_FILE"; then
+    pass "composer.lock out of date with composer.json: blocked before anything, with what to do"
+else
+    fail "outdated lock: $output"
+fi
+
 git -C "$PROJECT_PATH" init -q
 git -C "$PROJECT_PATH" add composer.json composer.lock
 git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m init
@@ -434,6 +450,7 @@ if output="$(printf '2\nalpha\n' | NEW_ERROR="Update notifications" run_update_p
    [[ "$(read_project_field "$(record_of alpha)" drupal_version)" == "11.4.2" ]] &&
    [[ "$output" == *"[DONE WITH PROBLEMS] alpha: Drupal 11.3.10 -> 11.4.2"* &&
       "$output" == *"  - new errors in the status report: Update notifications"* &&
+      "$output" == *"Back to Drupal 11.3.10 later: ./install.sh --restore alpha $work_dir/backups/alpha-update-"* &&
       "$output" == *"[WARNING] New errors in the Drupal status report"* &&
       "$output" == *"- Update notifications"* && "$output" != *"- Cron"* &&
       "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2\""* ]]; then

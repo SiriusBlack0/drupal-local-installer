@@ -21,6 +21,42 @@ foreach (array_slice($argv, 2) as $p) { if (isset($req[$p])) { echo $p, "\n"; } 
 ' "$project_path/composer.json" "${CORE_COMPANION_PACKAGES[@]}"
 }
 
+# composer.lock written for another composer.json (composer.json changed
+# without "composer update"). Then "composer install" of these files fails,
+# and an update would install that change too. $1 is a folder with both
+# files: the project, or a backup. Returns 0 when they do not match.
+# composer validate reads only the files: no network.
+is_composer_lock_outdated() {
+    local dir="$1"
+    local output
+
+    output="$(run_project_composer "$dir" "$RECORD_PHP_VERSION"         validate --no-check-publish --no-check-all 2>&1)" || true
+
+    grep -qi 'lock file is not up to date' <<< "$output"
+}
+
+# The project's PHP and its extensions against the composer.lock in $1.
+# Prints the requirements that fail. Returns 0: all met, 1: some fail,
+# 2: could not check.
+check_lock_platform() {
+    local dir="$1"
+    local output
+    local failed
+
+    if output="$(run_project_composer "$dir" "$RECORD_PHP_VERSION" check-platform-reqs --lock 2>&1)"; then
+        return 0
+    fi
+
+    failed="$(grep -Ei '[[:space:]]failed' <<< "$output" | sed 's/[[:space:]]\+/ /g')" || failed=""
+
+    if [[ -n "$failed" ]]; then
+        printf '%s\n' "$failed"
+        return 1
+    fi
+
+    return 2
+}
+
 # Prints "patch_target|minor_target|major_target" (each may be empty)
 # from the versions Composer reports for the core package. Minor and major
 # targets are limited to the minors in config/compatibility.conf, so a
