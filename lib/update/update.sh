@@ -43,6 +43,9 @@ UPDATE_EXTRA_ARGS=()
 UPDATE_ACCEPTED_ADVISORIES=""
 # Packages the update adds (from the dry run), for the plan and the end.
 UPDATE_NEW_PACKAGES=""
+# git status before the run (remember_git_status), for the commit line.
+GIT_STATUS_BEFORE=""
+GIT_STATUS_CAPTURED=0
 # The target that was not chosen (patch or minor), for advice.
 UPDATE_ALTERNATIVE=""
 # "update" or "upgrade" (--upgrade reuses the backup and the restore).
@@ -214,13 +217,17 @@ choose_update_target() {
 
     UPDATE_ALTERNATIVE=""
 
+    # One target only: no question (said, so that the next answer is
+    # not taken for this one).
     if [[ -n "$patch" && -z "$minor" ]]; then
         UPDATE_TARGET="$patch"
+        echo "Only one target: $patch (patch update); no choice to make."
         return 0
     fi
 
     if [[ -z "$patch" && -n "$minor" ]]; then
         UPDATE_TARGET="$minor"
+        echo "Only one target: $minor (minor update); no choice to make."
         return 0
     fi
 
@@ -325,6 +332,8 @@ check_core_change_project() {
 
     UPDATE_CORE_PACKAGE="${with_args[0]}"
     UPDATE_WITH_PACKAGES=("${with_args[@]}")
+
+    remember_git_status
 
     if [[ -d "$RECORD_PROJECT_PATH/.git" ]] &&
        [[ -n "$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain -- composer.json composer.lock 2>/dev/null)" ]]; then
@@ -639,24 +648,76 @@ perform_update() {
 print_git_commit_hint() {
     local message="$1"
     local changed
+    local own
     local count
+    local line
+    local path
+    local answer
+    local others=0
+    local -a paths=()
+    local -a words=()
 
     [[ -d "$RECORD_PROJECT_PATH/.git" ]] || return 0
 
-    changed="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain 2>/dev/null)" || return 0
+    changed="$(project_git_status)" || return 0
     [[ -n "$changed" ]] || return 0
-    count="$(grep -c . <<< "$changed")"
+
+    # Only what this run changed: the developer's own untracked or
+    # modified files (notes, exports) stay out of the commit.
+    own="$changed"
+
+    if [[ "$GIT_STATUS_CAPTURED" -eq 1 ]]; then
+        own="$(grep -vxF -f <(printf '%s\n' "$GIT_STATUS_BEFORE") <<< "$changed" || true)"
+        [[ -n "$GIT_STATUS_BEFORE" ]] && others=1
+    fi
+
+    [[ -n "$own" ]] || return 0
+
+    if grep -qxF '?? recipes/' <<< "$own" &&
+       ! grep -qxE '/?recipes/?' "$RECORD_PROJECT_PATH/.gitignore" 2>/dev/null; then
+        echo
+        echo "recipes/ is written by Composer (like vendor/), so it usually stays out of git."
+
+        if read -r -p "Add /recipes/ to .gitignore? [y/N]: " answer && [[ "$answer" =~ ^[Yy]$ ]] &&
+           printf '/recipes/\n' | run_as_project_user "$PROJECT_USER" tee -a "$RECORD_PROJECT_PATH/.gitignore" > /dev/null; then
+            echo "[OK] /recipes/ added to .gitignore"
+            changed="$(project_git_status)" || changed=""
+            own="$(grep -vxF -f <(printf '%s\n' "$GIT_STATUS_BEFORE") <<< "$changed" || true)"
+        else
+            echo "  Kept as it is (later: echo '/recipes/' >> .gitignore)."
+        fi
+    fi
+
+    count="$(grep -c . <<< "$own")"
 
     echo
-    echo "Changed in git ($count; composer files, and the files Drupal's scaffold"
-    echo "writes such as web/index.php and web/.htaccess):"
-    head -n 15 <<< "$changed" | sed 's/^/  /'
+    echo "Changed in git by this run ($count; composer files, and the files Drupal's"
+    echo "scaffold writes such as web/index.php and web/.htaccess):"
+    head -n 15 <<< "$own" | sed 's/^/  /'
     [[ "$count" -gt 15 ]] && echo "  ... ($((count - 15)) more: git status)"
 
-    if grep -qxF '?? recipes/' <<< "$changed"; then
-        echo "recipes/ is written by Composer (like vendor/): if .gitignore leaves out"
-        echo "vendor/, add it there too:  echo '/recipes/' >> $RECORD_PROJECT_PATH/.gitignore"
+    if [[ "$others" -eq 1 ]]; then
+        echo "Other changes in the folder were there before this run; they are left out."
     fi
+
+    while IFS= read -r line; do
+        path="${line:3}"
+        [[ "$path" == *" -> "* ]] && path="${path##* -> }"
+        [[ -n "$path" ]] && paths+=("$path")
+    done <<< "$own"
+
+    # Many files: their top folders (git add -A -- web composer.json ...).
+    if [[ "${#paths[@]}" -gt 20 ]]; then
+        mapfile -t paths < <(printf '%s\n' "${paths[@]}" | sed -E 's|^"?([^/"]+).*|\1|' | sort -u)
+    fi
+
+    for path in "${paths[@]}"; do
+        if [[ "$path" == \"* ]]; then
+            words+=("$path")
+        else
+            words+=("$(printf '%q' "$path")")
+        fi
+    done
 
     if [[ -n "${2:-}" ]]; then
         printf '%s\n' "$2"
@@ -665,7 +726,24 @@ print_git_commit_hint() {
         echo "--upgrade waits for that, so changes never mix):"
     fi
 
-    echo "  cd $RECORD_PROJECT_PATH && git add -A && git commit -m \"$message\""
+    echo "  cd $RECORD_PROJECT_PATH && git add -A -- ${words[*]} && git commit -m \"$message\""
+}
+
+# git status of the project, as the project user.
+project_git_status() {
+    run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain 2>/dev/null
+}
+
+# Before a run changes anything: what git shows already, so that the
+# commit line at the end names only what the run changed.
+remember_git_status() {
+    GIT_STATUS_CAPTURED=0
+    GIT_STATUS_BEFORE=""
+    [[ -d "$RECORD_PROJECT_PATH/.git" ]] || return 0
+
+    if GIT_STATUS_BEFORE="$(project_git_status)"; then
+        GIT_STATUS_CAPTURED=1
+    fi
 }
 
 # The highest id of an error in the Drupal log (empty without dblog), so

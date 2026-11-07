@@ -44,7 +44,11 @@ The installer works in three phases:
    project directory, database, PHP-FPM pool, Nginx site, then Drupal and
    Drush (Composer), then `drush site:install`.
    The sudo password is asked once, right after you confirm (not at all
-   with `NOPASSWD`; also with sudo-rs, the sudo of Ubuntu 26.04).
+   with `NOPASSWD`; also with sudo-rs, the sudo of Ubuntu 26.04). sudo
+   asks on the terminal, not on stdin: without a terminal (answers piped
+   by a script or an AI agent) the installer stops before anything
+   changes, unless `SUDO_ASKPASS` names a program that gives the password
+   (`sudo -A`) or sudo needs none.
 
 Why this order: Composer runs `sudo -K` every time it starts, on
 purpose. It forgets your cached sudo password so that scripts from the
@@ -463,6 +467,8 @@ Before anything changes, the installer checks that:
   (The automatic restore if the update fails is not affected: it uses an
   offline copy of the code.);
 - the site works now (Drush bootstraps it);
+- with one possible target (only a patch, or only a minor update), the
+  installer says "Only one target: …" instead of asking;
 - Composer can resolve the update (`--dry-run`). If a constraint in
   `composer.json` blocks it, Composer's reason is shown and nothing
   changes. `composer.json` itself is never edited: the version is fixed
@@ -634,7 +640,13 @@ libraries). It is a Drupal module, so the installer explains it and asks:
    `./drush pm:uninstall upgrade_status && composer remove --dev drupal/upgrade_status`);
 3. **skip** the scan.
 
-If it is already enabled, it is used without asking.
+If it is already enabled, it is used without asking. While composer.json
+has changes that are not in composer.lock yet (for example `composer
+require 'drupal/gin:^5' --no-update` for the new major), it cannot be
+added: Composer would have to install those changes too. The installer
+says so and skips the scan; run the scan before such changes. When adding
+it fails and Composer put everything back itself, the installer says that
+nothing changed (no steps by hand).
 
 What counts: only findings in **custom** code ask you before the upgrade.
 Contrib projects get new releases from Composer (the trial below), so
@@ -698,10 +710,12 @@ Ctrl+C – restores the code, composer.json, composer.lock and, after
 `upgraded_from`.
 
 Afterwards, check what only a person can: log in, open the pages your
-modules provide, submit a form. Then commit what changed (the installer
-lists it; a new `recipes/` folder is written by Composer like `vendor/`,
-so it usually belongs in `.gitignore`) and the configuration export: the
-installer compares it with the database, as after `--update`.
+modules provide, submit a form. Then commit what changed and the
+configuration export (the installer compares it with the database, as
+after `--update`). The commit line names only what the run changed: the
+installer notes `git status` at the start, so your own files (notes,
+exports) stay out. A new `recipes/` folder is written by Composer like
+`vendor/`; the installer asks whether to add it to `.gitignore`.
 
 Back to the old major later (for example a week after, when something
 turns out broken): [`--restore`](#restoring-a-backup---restore) with the
@@ -879,8 +893,9 @@ modules provide, submit a form, `./drush cron`,
 `./install.sh --php mysite <old version>`, because the old PHP stays
 installed and code and database are never changed.
 
-Then, after the project name is typed: packages (apt shows them and asks;
-nothing is ever removed) → a new PHP-FPM pool next to the old one
+Then, after the project name is typed: packages (the plan shows how many
+apt installs with their dependencies; after your yes, apt runs without
+asking again, and nothing is ever removed) → a new PHP-FPM pool next to the old one
 (`php-fpm8.4 -t`, reload) → the `fastcgi_pass` line of the Nginx site
 switched to the new socket (`nginx -t`, reload) → `./drush`, `./composer`
 and `./start` rewritten for the new PHP → checks (Drush and the HTTP
@@ -888,7 +903,10 @@ answer with the new PHP) → the old pool removed → registry updated.
 Copies of the old Nginx site and launchers go to
 `~/drupal-local-installer-backups/<name>-php-<date>/`. If a step fails,
 the site, the launchers and the pools are restored; the packages stay.
-Code and database are never changed, nor the system's default `php`.
+Code and database are never changed, nor the system's default `php`:
+installing a new PHP version makes apt switch `php` (and `phar`) to it
+when they follow the newest version ("auto" mode); the installer sets
+them back to what they were and says so.
 
 When PHP was not installed yet, Composer can only check the packages
 after it is installed; Composer then clears sudo's cached password, so

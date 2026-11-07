@@ -202,6 +202,8 @@ case "${args[0]}" in
         [[ "${UPGRADE_FAILS:-0}" == "1" ]] && exit 1
         set_version "$target"
         mkdir -p "$dir/vendor" && echo "drush 13" > "$dir/vendor/drush-version"
+        # Drupal 11 brings core recipes (installer-paths: recipes/).
+        [[ "${WITH_RECIPES:-0}" == "1" ]] && mkdir -p "$dir/recipes/core_recipe" && touch "$dir/recipes/core_recipe/recipe.yml"
         if [[ "${UPGRADE_INTERRUPT:-0}" == "1" ]]; then
             kill -INT "$PPID"
             exit 130
@@ -562,8 +564,10 @@ make_project eta
 
 if output="$(printf '1\n' | US_ADD_FAILS=1 REMOVE_DRY_RUN=1 run_upgrade_project eta)" &&
    [[ "$output" == *"[SKIPPED] Upgrade Status could not be added (see above)."* &&
+      "$output" == *"[OK] composer.json, composer.lock and the code are unchanged (Upgrade Status was not added)"* &&
+      "$output" != *"Remove it by hand"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] && composer_unchanged eta; then
-    pass "Upgrade Status cannot be added (network): skipped, the other checks go on"
+    pass "Upgrade Status cannot be added (network): skipped, files said unchanged (no 'by hand'), checks go on"
 else
     fail "upgrade status add failure: $output"
 fi
@@ -708,20 +712,24 @@ make_project rho
 git -C "$PROJECT_PATH" init -q
 git -C "$PROJECT_PATH" add -A
 git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m init
-mkdir -p "$PROJECT_PATH/recipes/core_recipe"
-touch "$PROJECT_PATH/recipes/core_recipe/recipe.yml"
+# The developer's own files, there before the run: not for this commit.
+echo "a,b" > "$PROJECT_PATH/notes.csv"
+echo "draft" > "$PROJECT_PATH/web/index.php.notes"
 
-if output="$(printf '3\nrho\n' | WATCHDOG_NEW=1 run_upgrade_project rho)" &&
+if output="$(printf '3\nrho\ny\n' | WITH_RECIPES=1 WATCHDOG_NEW=1 run_upgrade_project rho)" &&
    [[ "$output" == *"[DONE WITH PROBLEMS] rho: Drupal 10.6.19 -> 11.4.2"* &&
       "$output" == *"  - new errors in the Drupal log"* &&
-      "$output" == *"Changed in git ("* &&
+      "$output" == *"Changed in git by this run ("* &&
       "$output" == *" M composer.json"* && "$output" == *" M web/core/lib/Drupal.php"* &&
-      "$output" == *"recipes/ is written by Composer (like vendor/)"* &&
-      "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* &&
+      "$output" == *"recipes/ is written by Composer (like vendor/), so it usually stays out of git."* &&
+      "$output" == *"[OK] /recipes/ added to .gitignore"* &&
+      "$output" == *"Other changes in the folder were there before this run; they are left out."* &&
+      "$output" == *"git add -A -- "*"composer.json"*".gitignore"*" && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* &&
+      "$output" != *"notes.csv"* && "$output" != *"recipes/ &&"* &&
       "$output" == *"[WARNING] Drupal logged new errors during the upgrade:"* &&
       "$output" == *"php: Error: Call to undefined function old_api() in shop_page()"* &&
       "$output" != *"old SMTP error"* ]]; then
-    pass "Project in git: every changed file and the commit shown; recipes/ explained; only new log errors"
+    pass "Project in git: only the run's changes in the commit line (not the developer's files); recipes/ to .gitignore on 'y'; only new log errors"
 else
     fail "git hint: $output"
 fi
@@ -827,12 +835,14 @@ fi
 
 make_project omega
 
-if output="$(printf '3\nomega\n' | LOCK_OUTDATED=1 run_upgrade_project omega)" &&
+if output="$(printf 'omega\n' | LOCK_OUTDATED=1 run_upgrade_project omega)" &&
    [[ "$output" == *"[INFO] composer.json has changes that are not in composer.lock yet"* &&
+      "$output" == *"[SKIPPED] Upgrade Status cannot be added now: composer.json has changes that"* &&
+      "$output" != *"1) For this scan only"* &&
       "$output" == *"The upgrade installs them together"* &&
       "$output" != *"Continue with the update anyway"* &&
       "$output" == *"[DONE] omega: Drupal 10.6.19 -> 11.4.2"* ]]; then
-    pass "Upgrade with composer.json ahead of composer.lock (require --no-update): noted, upgraded"
+    pass "Upgrade with composer.json ahead of composer.lock: noted, Upgrade Status not offered (explained), upgraded"
 else
     fail "upgrade with outdated lock: $output"
 fi
@@ -859,7 +869,7 @@ fi
 
 make_project omicron2
 
-if output="$(printf '3\nn\n' | LOCK_OUTDATED=1 INSTALL_DRYRUN_FAILS=1 run_upgrade_project omicron2)"; then
+if output="$(printf 'n\n' | LOCK_OUTDATED=1 INSTALL_DRYRUN_FAILS=1 run_upgrade_project omicron2)"; then
     fail "Unrestorable backup accepted without asking"
 elif [[ "$output" == *"[WARNING] The backup of this upgrade could NOT be restored later with --restore:"* &&
         "$output" == *"Upgrade cancelled; nothing was changed."* ]] &&

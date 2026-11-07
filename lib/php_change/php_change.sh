@@ -421,6 +421,8 @@ run_change_php() {
 
     if [[ "$package_count" -gt 0 ]]; then
         echo "Packages:     install ${INSTALL_PACKAGES[*]}"
+        echo "              ($(count_simulated_installs) packages with their dependencies; the system's"
+        echo "              default php command stays as it is)"
     else
         echo "Packages:     PHP $new and its extensions are installed"
     fi

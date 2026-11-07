@@ -125,6 +125,13 @@ main() {
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             init_log "$(get_project_machine_name "$REMOVE_PROJECT")-php"
+
+            # The dry run runs no logged step: its plan goes to the log too.
+            if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
+                run_command run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION" | copy_to_log
+                exit "${PIPESTATUS[0]}"
+            fi
+
             run_command run_change_php "$REMOVE_PROJECT" "$PHP_TARGET_VERSION"
             ;;
         11)

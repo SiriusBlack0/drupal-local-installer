@@ -414,6 +414,7 @@ run_restore_project() {
 
     current="$(get_drupal_version_in "$web_root" 2>/dev/null)" || current=""
     UPDATE_PREVIOUS_VERSION="$current"
+    remember_git_status
     backup_time="$(get_backup_time "$RESTORE_BACKUP_DIR")"
 
     # ---- Plan ----

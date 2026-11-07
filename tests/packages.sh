@@ -72,8 +72,8 @@ INSTALL_PACKAGES=("postgresql")
 export APT_OUTPUT=''
 
 if execute_apt_package_installation > /dev/null &&
-   [[ "$(cat "$APT_CALLS")" == "apt-get install --no-remove -- postgresql" ]]; then
-    pass "Real installation uses --no-remove"
+   [[ "$(cat "$APT_CALLS")" == "apt-get install -y --no-remove -- postgresql" ]]; then
+    pass "Real installation uses --no-remove, and -y (the packages were approved already)"
 else
     fail "install command: $(cat "$APT_CALLS")"
 fi
@@ -89,6 +89,49 @@ if simulate_apt_package_installation > /dev/null &&
     pass "No packages: apt-get not called"
 else
     fail "apt-get called without packages"
+fi
+
+# Test 6: apt switches the system's default php (a new PHP version in
+# "auto" mode): it is set back.
+
+export ALT_STATE="$work_dir/alternatives"
+cat > "$stub_bin/update-alternatives" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    --query) grep "^$2=" "$ALT_STATE" | sed 's/^[^=]*=/Value: /' ;;
+    --set) sed -i "s|^$2=.*|$2=$3|" "$ALT_STATE"; echo "set $2 $3" >> "$APT_CALLS" ;;
+esac
+STUB
+# The real apt-get install runs the new PHP's postinst: auto mode moves php.
+cat > "$stub_bin/apt-get" <<'STUB'
+#!/usr/bin/env bash
+echo "apt-get $*" >> "$APT_CALLS"
+if [[ "$1" == "install" ]]; then
+    sed -i 's|^php=.*|php=/usr/bin/php8.4|; s|^phar=.*|phar=/usr/bin/phar8.4|' "$ALT_STATE"
+fi
+exit 0
+STUB
+chmod +x "$stub_bin/update-alternatives" "$stub_bin/apt-get"
+printf '%s\n' "php=/usr/bin/php8.3" "phar=/usr/bin/phar8.3" > "$ALT_STATE"
+INSTALL_PACKAGES=("php8.4-cli")
+: > "$APT_CALLS"
+
+if output="$(execute_apt_package_installation)" &&
+   grep -qx "php=/usr/bin/php8.3" "$ALT_STATE" && grep -qx "phar=/usr/bin/phar8.3" "$ALT_STATE" &&
+   [[ "$output" == *"[OK] The system's default php stays /usr/bin/php8.3 (apt had switched it to /usr/bin/php8.4)"* ]] &&
+   ! grep -q "set phar.phar" "$APT_CALLS"; then
+    pass "apt switched the default php: set back to the one before (php and phar)"
+else
+    fail "alternatives: $output / $(cat "$ALT_STATE")"
+fi
+
+printf '%s\n' "php=/usr/bin/php8.4" > "$ALT_STATE"
+: > "$APT_CALLS"
+
+if execute_apt_package_installation > /dev/null && ! grep -q "^set " "$APT_CALLS"; then
+    pass "Default php unchanged by apt: nothing is set"
+else
+    fail "alternatives unchanged: $(cat "$APT_CALLS")"
 fi
 
 echo "[SUCCESS] Package installation tests passed."

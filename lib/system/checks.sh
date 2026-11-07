@@ -6,6 +6,11 @@
 # sudo is checked without a question first: with NOPASSWD, or while
 # sudo still remembers the password, nothing is asked. "sudo -v" alone
 # always asks under sudo-rs (Ubuntu 26.04), even with NOPASSWD.
+# Is there a terminal sudo can ask the password on?
+has_terminal_for_sudo() {
+    { : < /dev/tty; } 2>/dev/null
+}
+
 # $1: what to say when it fails (default: nothing was changed).
 require_sudo() {
     if sudo -n true 2>/dev/null; then
@@ -15,6 +20,23 @@ require_sudo() {
     echo
     echo "Administrator privileges are required"
     echo "for system, database and web server operations."
+    # sudo asks on the terminal, not on stdin. Without one (a script or an
+    # AI agent that pipes the answers) it cannot ask: said before anything
+    # changes. SUDO_ASKPASS names a program that gives the password.
+    if ! has_terminal_for_sudo; then
+        if [[ -n "${SUDO_ASKPASS:-}" ]] && sudo -A -v; then
+            echo "✓ Administrator privileges confirmed (SUDO_ASKPASS)."
+            return 0
+        fi
+
+        echo "[BLOCKED] sudo needs your password, but there is no terminal to ask for it."
+        echo "          Run this in a terminal, or set SUDO_ASKPASS to a program that prints"
+        echo "          the password (sudo -A), or allow sudo without a password for this run"
+        echo "          (a temporary NOPASSWD rule in /etc/sudoers.d/, removed afterwards)."
+        echo "${1:-Cancelled; nothing was changed.}"
+        return 1
+    fi
+
     echo
     echo "You will be asked for your Linux user password once."
     echo

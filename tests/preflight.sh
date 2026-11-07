@@ -211,10 +211,13 @@ echo "sudo $*" >> "$SUDO_CALLS"
 case "$1" in
     -n) [[ "${SUDO_NOPASSWD:-0}" == "1" ]] && exit 0; echo "sudo: a password is required" >&2; exit 1 ;;
     -v) exit "${SUDO_V_RESULT:-0}" ;;
+    -A) exit 0 ;;
 esac
 STUB
     chmod +x "$sudo_bin/sudo"
     export SUDO_CALLS="$sudo_bin/calls"
+    # A terminal for the password (tests may run without one).
+    has_terminal_for_sudo() { return 0; }
 
     : > "$SUDO_CALLS"
     output="$(SUDO_NOPASSWD=1 PATH="$sudo_bin:$PATH" require_sudo)"
@@ -233,6 +236,21 @@ STUB
     status=0
     output="$(SUDO_V_RESULT=1 PATH="$sudo_bin:$PATH" require_sudo)" || status=$?
     check "wrong password: refused" "1|yes" "$status|$([[ "$output" == *"Administrator authentication failed."*"Cancelled; nothing was changed."* ]] && echo yes)"
+
+    # No terminal (answers piped by a script): blocked before anything,
+    # unless SUDO_ASKPASS gives the password.
+    has_terminal_for_sudo() { return 1; }
+    : > "$SUDO_CALLS"
+    status=0
+    output="$(PATH="$sudo_bin:$PATH" require_sudo)" || status=$?
+    check "no terminal: blocked, sudo -v not run" "1|yes|sudo -n true" \
+        "$status|$([[ "$output" == *"[BLOCKED] sudo needs your password, but there is no terminal to ask for it."*"Cancelled; nothing was changed."* ]] && echo yes)|$(paste -sd ' ' "$SUDO_CALLS")"
+
+    : > "$SUDO_CALLS"
+    output="$(SUDO_ASKPASS=/usr/local/bin/askpass PATH="$sudo_bin:$PATH" require_sudo)"
+    check "no terminal, SUDO_ASKPASS: sudo -A" "sudo -n true sudo -A -v|yes" \
+        "$(paste -sd ' ' "$SUDO_CALLS")|$([[ "$output" == *"(SUDO_ASKPASS)"* ]] && echo yes)"
+    has_terminal_for_sudo() { return 0; }
 
     status=0
     output="$(SUDO_V_RESULT=1 PATH="$sudo_bin:$PATH" require_sudo "Installation cancelled; nothing was changed.")" || status=$?

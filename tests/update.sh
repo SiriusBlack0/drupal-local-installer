@@ -544,7 +544,7 @@ if output="$(printf '2\nalpha\n' | NEW_ERROR="Update notifications" run_update_p
       "$output" == *"Back to Drupal 11.3.10 later: ./install.sh --restore alpha $work_dir/backups/alpha-update-"* &&
       "$output" == *"[WARNING] New errors in the Drupal status report"* &&
       "$output" == *"- Update notifications"* && "$output" != *"- Cron"* &&
-      "$output" == *"git add -A && git commit -m \"Drupal core 11.4.2\""* ]]; then
+      "$output" == *"git add -A -- "*"composer.lock"*" && git commit -m \"Drupal core 11.4.2\""* ]]; then
     pass "Minor update: code, database update, registry version, new status errors (DONE WITH PROBLEMS), commit shown (git)"
 else
     fail "update: $output / $(cat "$CALLS_FILE")"
@@ -933,6 +933,7 @@ fi
 
 if output="$(printf 'rho\n' | run_update_project rho)" &&
    [[ "$(version_of rho)" == "11.4.2" ]] &&
+   [[ "$output" == *"Only one target: 11.4.2 (minor update); no choice to make."* ]] &&
    ! grep -q "^accepted_advisories=" "$(record_of rho)" &&
    grep -q "^drupal_version=11.4.2$" "$(record_of rho)"; then
     pass "A later update without advisories removes the old note from the registry"

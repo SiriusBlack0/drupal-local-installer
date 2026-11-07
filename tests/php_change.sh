@@ -422,7 +422,8 @@ make_installer_project epsilon
 if output="$(printf 'epsilon\n' | run_change_php epsilon 8.4)" &&
    [[ "$output" == *"[DONE] epsilon: PHP 8.3 -> 8.4"* &&
       "$output" == *"Composer cleared sudo's cached password"* ]] &&
-   grep -q "apt-get install --no-remove -- php8.4-fpm php8.4-cli" "$CALLS_FILE" &&
+   grep -q "apt-get install -y --no-remove -- php8.4-fpm php8.4-cli" "$CALLS_FILE" &&
+   [[ "$output" == *"(8 packages with their dependencies; the system's"*"default php command stays as it is)"* ]] &&
    [[ "$(grep -c sudo-asked "$CALLS_FILE")" -eq 2 ]] &&
    [[ "$(calls_line 'apt-get install')" -lt "$(calls_line 'check-platform-reqs')" ]] &&
    [[ "$(calls_line 'check-platform-reqs')" -lt "$(grep -n sudo-asked "$CALLS_FILE" | tail -n 1 | cut -d: -f1)" ]]; then

@@ -95,6 +95,12 @@ add_upgrade_status() {
         run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" pm:install upgrade_status --yes
 }
 
+# Is the code of Upgrade Status in the project (where Composer puts
+# Drupal modules)?
+upgrade_status_code_present() {
+    [[ -d "$UPDATE_WEB_ROOT/modules/contrib/upgrade_status" || -d "$RECORD_PROJECT_PATH/vendor/drupal/upgrade_status" ]]
+}
+
 # "For this scan only": uninstall the module, then composer.json,
 # composer.lock and the code as before. Prints what to do by hand when
 # that fails; returns 1 then.
@@ -110,7 +116,12 @@ remove_temporary_upgrade_status() {
     fi
 
     if [[ "$failed" -eq 0 && "$UPGRADE_STATUS_WAS_IN_COMPOSER" -eq 0 && -n "$UPGRADE_STATUS_SAVED_DIR" ]]; then
-        if ! cp --preserve=timestamps -- "$UPGRADE_STATUS_SAVED_DIR/composer.json" "$UPGRADE_STATUS_SAVED_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
+        if cmp -s "$UPGRADE_STATUS_SAVED_DIR/composer.json" "$RECORD_PROJECT_PATH/composer.json" &&
+           cmp -s "$UPGRADE_STATUS_SAVED_DIR/composer.lock" "$RECORD_PROJECT_PATH/composer.lock" &&
+           ! upgrade_status_code_present; then
+            # Adding it failed and Composer put everything back itself.
+            echo "[OK] composer.json, composer.lock and the code are unchanged (Upgrade Status was not added)"
+        elif ! cp --preserve=timestamps -- "$UPGRADE_STATUS_SAVED_DIR/composer.json" "$UPGRADE_STATUS_SAVED_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
            ! run_logged_retrying_network "Removing Upgrade Status from the code (composer install)" - \
                 run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
             failed=1
@@ -343,6 +354,19 @@ run_upgrade_status_check() {
         UPGRADE_STATUS_MODE="installed"
         echo
         echo "Upgrade Status is installed and enabled: scanning with it."
+    elif [[ "$state" == "missing" ]] && is_composer_lock_outdated "$RECORD_PROJECT_PATH"; then
+        # composer require would have to resolve the changes that wait in
+        # composer.json too (e.g. "drupal/gin:^5" for the new core): it fails.
+        echo
+        echo "  [SKIPPED] Upgrade Status cannot be added now: composer.json has changes that"
+        echo "            are not in composer.lock yet (for example composer require ..."
+        echo "            --no-update), and adding a module would have to install them too."
+        echo "            To scan: run --upgrade before those changes (git stash, or commit"
+        echo "            them after the scan), or add Upgrade Status yourself once."
+        # Read in lib/upgrade/upgrade.sh (the plan).
+        # shellcheck disable=SC2034
+        UPGRADE_STATUS_SUMMARY="skipped (composer.json ahead of composer.lock)"
+        return 0
     else
         choose_upgrade_status_mode "$to_major" "$state"
 
