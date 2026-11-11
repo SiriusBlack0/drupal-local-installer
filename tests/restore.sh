@@ -482,6 +482,67 @@ else
 fi
 
 rm -rf "$pending"
+
+# Changes made after the backup: a contrib module added (composer
+# require) and custom code changed. Warned in the plan; the module's
+# folder is offered for removal; custom code stays as it is.
+
+make_project gamma
+# shellcheck disable=SC2016  # {$name} is Composer's, not shell code.
+printf '{"name": "new", "extra": {"installer-paths": {"web/core": ["type:drupal-core"], "web/modules/contrib/{$name}": ["type:drupal-module"]}}}\n' > "$PROJECT_PATH/composer.json"
+printf '{\n    "packages": [\n        {"name": "drupal/core", "version": "11.4.11"},\n        {"name": "drupal/newmod", "version": "2.0.0", "type": "drupal-module"}\n    ]\n}\n' > "$PROJECT_PATH/composer.lock"
+mkdir -p "$PROJECT_PATH/web/modules/contrib/newmod" "$PROJECT_PATH/web/modules/custom/shop"
+echo "name: Newmod" > "$PROJECT_PATH/web/modules/contrib/newmod/newmod.info.yml"
+echo "<?php // newer" > "$PROJECT_PATH/web/modules/custom/shop/shop.module"
+later="$(make_backup gamma 20261024-130000)"
+touch -d "2026-10-24 13:00" "$later/database.sql.gz"
+
+if output="$(REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$later" run_restore_project gamma < /dev/null)" &&
+   [[ "$output" == *"[WARNING] Changes made after the backup (2026-10-24 13:00):"* &&
+      "$output" == *"    - drupal/newmod"* &&
+      "$output" == *"restore you decide whether they go: web/modules/contrib/newmod"* &&
+      "$output" == *"Custom code changed since: it stays as it is now"* &&
+      "$output" == *"    - changed: web/modules/custom/shop/shop.module"* &&
+      "$output" == *"README, \"Changes made after the backup\"."* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
+   output="$(printf 'gamma\nn\ny\n' | RESTORE_BACKUP_ARGUMENT="$later" run_restore_project gamma)" &&
+   [[ "$output" == *"These folders belong to packages added after the backup"* &&
+      "$output" == *"[OK] Removed web/modules/contrib/newmod"* &&
+      "$output" == *"Custom code changed after the backup is still the newer one"* &&
+      "$output" == *"[DONE] gamma: Drupal 11.4.11 -> 10.6.20"* ]] &&
+   [[ ! -e "$PROJECT_PATH/web/modules/contrib/newmod" ]] &&
+   [[ "$(cat "$PROJECT_PATH/web/modules/custom/shop/shop.module")" == "<?php // newer" ]]; then
+    pass "Changes after the backup: added module and changed custom code warned; the module's folder removed after 'y'; custom code kept"
+else
+    fail "changes since backup: $output"
+fi
+
+# The same in git: the commits since the backup and uncommitted changes
+# of custom code are named; 'n' keeps the folder.
+
+make_project gamma
+# shellcheck disable=SC2016  # {$name} is Composer's, not shell code.
+printf '{"name": "new", "extra": {"installer-paths": {"web/core": ["type:drupal-core"], "web/modules/contrib/{$name}": ["type:drupal-module"]}}}\n' > "$PROJECT_PATH/composer.json"
+printf '{\n    "packages": [\n        {"name": "drupal/core", "version": "11.4.11"},\n        {"name": "drupal/newmod", "version": "2.0.0", "type": "drupal-module"}\n    ]\n}\n' > "$PROJECT_PATH/composer.lock"
+mkdir -p "$PROJECT_PATH/web/modules/contrib/newmod" "$PROJECT_PATH/web/modules/custom/shop"
+echo "<?php // newer" > "$PROJECT_PATH/web/modules/custom/shop/shop.module"
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Shop: new block"
+echo "// draft" >> "$PROJECT_PATH/web/modules/custom/shop/shop.module"
+
+if output="$(printf 'gamma\nn\nn\n' | RESTORE_BACKUP_ARGUMENT="$later" run_restore_project gamma)" &&
+   [[ "$output" == *"    - commit "*" Shop: new block"* &&
+      "$output" == *"    - not committed:  M web/modules/custom/shop/shop.module"* &&
+      "$output" == *"[INFO] Kept. To use such a module again:"* &&
+      "$output" == *"[DONE] gamma: Drupal 11.4.11 -> 10.6.20"* ]] &&
+   [[ -d "$PROJECT_PATH/web/modules/contrib/newmod" ]]; then
+    pass "In git: commits since the backup and uncommitted custom changes named; 'n' keeps the folder"
+else
+    fail "changes since backup (git): $output"
+fi
+
+rm -rf "$later"
 make_project gamma
 
 if output="$(INSTALL_DRYRUN=network REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)" &&

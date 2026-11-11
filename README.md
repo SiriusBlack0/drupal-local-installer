@@ -742,8 +742,10 @@ own before the run; in the others each file is named. The same goes for
 
 Back to the old major later (for example a week after, when something
 turns out broken): [`--restore`](#restoring-a-backup---restore) with the
-`mysite-upgrade-…` backup; changes made to the site since the upgrade are
-lost then.
+`mysite-upgrade-…` backup. The database changes made since the upgrade
+are lost then, contrib added since leaves composer.json, and custom code
+changed since stays as it is: the plan warns about them, see
+[Changes made after the backup](#changes-made-after-the-backup).
 
 ## Restoring a backup (`--restore`)
 
@@ -817,6 +819,52 @@ database's configuration (`./drush config:export`, review, commit), or
 take the folder from the time of the backup in git
 (`git log -- config/sync`, then `git checkout <commit> -- config/sync`). The
 commit line at the end then reminds you to decide about it first.
+
+### Changes made after the backup
+
+A backup is the state **before** that run. What you did on the updated
+site afterwards is treated like this by `--restore`:
+
+| Made after the backup | After `--restore` |
+|---|---|
+| content, users, configuration in the database | gone: the database is the backup's |
+| a contrib module added with `composer require` | out of composer.json and composer.lock, not installed in the database; its folder (`web/modules/contrib/x`) stays on disk |
+| custom code (`web/modules/custom`, `web/themes/custom`, ...) | **stays as it is now**: Composer does not manage it, and the restore does not touch it |
+| the configuration export (`config/sync`) | stays as it is (see above) |
+
+Before you confirm, the plan warns about the last two kinds: the
+packages added since (from the two composer.lock files), and custom code
+that changed since (in git: the commits since the backup's time and
+uncommitted changes; without git: files newer than the backup). After the
+restore, the folders of the added packages are listed and you decide
+whether they go (default: kept). Nothing is lost for good: the backup of
+the current state (`NAME-restore-...`) keeps the database of then, and
+`--restore` with it undoes the restore.
+
+By hand, in this order:
+
+1. **Before**: commit the custom code (`git add web/modules/custom ...
+   && git commit`), so it can be kept or taken back on purpose. Content
+   you want to keep: note it, or export it (Views data export, a module
+   such as Default Content); it is in the database of now only, which the
+   current-state backup keeps as a dump.
+2. `./install.sh --restore NAME --dry-run`: the versions, what goes, the
+   warning above.
+3. `./install.sh --restore NAME`.
+4. **Custom code**, either:
+   - keep the newer code: check `./drush updatedb:status` (update hooks
+     that ran on the newer database run again: they must be safe to
+     repeat) and the pages it provides, on the older core;
+   - or take it back to the time of the backup:
+     `git log --before="YYYY-MM-DD HH:MM" -1 -- web/modules/custom`
+     (the backup's time is in its name), then
+     `git checkout <commit> -- web/modules/custom`, and
+     `./drush cache:rebuild`.
+5. **Contrib added since**: to use it again, a release for the restored
+   core: `./composer require drupal/x:^N`, `./drush pm:install x`;
+   otherwise remove its folder (the installer offers that).
+6. **Configuration**: `./drush config:status`, then export or take
+   `config/sync` from git (see above); commit.
 
 The registry gets the backup's version and `restored_from` (removed again
 by the next successful `--update` or `--upgrade`, which describe the state

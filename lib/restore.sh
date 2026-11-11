@@ -20,6 +20,13 @@ RESTORE_VERSION=""
 RESTORE_BACKUP_ARGUMENT=""
 # 1 when the configuration export differs from the restored database.
 RESTORE_CONFIG_DIFFERS=0
+# Made after the backup (find_changes_since_backup): packages that the
+# restore takes out of composer.json, their folders outside vendor/, and
+# custom code that changed since. Shown in the plan; the folders are
+# offered for removal afterwards.
+RESTORE_ADDED_PACKAGES=""
+RESTORE_ADDED_DIRS=()
+RESTORE_CUSTOM_CHANGES=""
 
 # Backups of a project that can be restored, newest first: folders
 # NAME-update-*, NAME-upgrade-* and NAME-restore-* with composer.json,
@@ -55,6 +62,216 @@ get_backup_install_json() {
     else
         printf '%s\n' "$1/composer.json"
     fi
+}
+
+# Packages in composer.lock $1 that composer.lock $2 lacks, as
+# "name|type" lines (added after the backup, e.g. composer require).
+list_packages_added_since() {
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    "php${RECORD_PHP_VERSION}" -r '
+$now = json_decode((string) @file_get_contents($argv[1]), true) ?: [];
+$old = json_decode((string) @file_get_contents($argv[2]), true) ?: [];
+$had = [];
+foreach (array_merge($old["packages"] ?? [], $old["packages-dev"] ?? []) as $p) { $had[$p["name"] ?? ""] = true; }
+foreach (array_merge($now["packages"] ?? [], $now["packages-dev"] ?? []) as $p) {
+    $name = (string) ($p["name"] ?? "");
+    if ($name === "" || isset($had[$name])) { continue; }
+    echo $name, "|", (string) ($p["type"] ?? "library"), "\n";
+}
+' "$1" "$2" 2>/dev/null
+}
+
+# The folders those packages (stdin, "name|type") were installed to
+# outside vendor/: the installer-paths of composer.json $1, e.g.
+# web/modules/contrib/{$name}. Relative to the project; only folders
+# that exist and are not links.
+get_added_package_dirs() {
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    "php${RECORD_PHP_VERSION}" -r '
+$c = json_decode((string) @file_get_contents($argv[1]), true) ?: [];
+$root = $argv[2];
+$paths = $c["extra"]["installer-paths"] ?? [];
+foreach (array_filter(explode("\n", stream_get_contents(STDIN))) as $line) {
+    [$name, $type] = array_pad(explode("|", $line, 2), 2, "");
+    [$vendor, $short] = array_pad(explode("/", $name, 2), 2, "");
+    foreach ($paths as $path => $conditions) {
+        if (!is_array($conditions) || !(in_array($name, $conditions, true) || in_array("type:$type", $conditions, true))) { continue; }
+        $dir = rtrim(str_replace(["{\$name}", "{\$vendor}"], [$short, $vendor], $path), "/");
+        if ($dir !== "" && $dir[0] !== "/" && strpos($dir, "..") === false && strpos($dir, "{") === false &&
+            is_dir("$root/$dir") && !is_link("$root/$dir")) { echo $dir, "\n"; }
+        break;
+    }
+}
+' "$1" "$RECORD_PROJECT_PATH" 2>/dev/null
+}
+
+# The folders of custom code (relative): the installer-paths for
+# drupal-custom-* types, and the usual web/modules/custom,
+# web/themes/custom and web/profiles/custom; only those that exist.
+get_custom_code_dirs() {
+    local web_rel
+    local dir
+
+    web_rel="$(get_web_root_relative)"
+
+    if [[ "$web_rel" == "." ]]; then
+        web_rel=""
+    else
+        web_rel="$web_rel/"
+    fi
+
+    {
+        # Single quotes: PHP code, not shell code.
+        # shellcheck disable=SC2016
+        "php${RECORD_PHP_VERSION}" -r '
+$c = json_decode((string) @file_get_contents($argv[1]), true) ?: [];
+foreach ($c["extra"]["installer-paths"] ?? [] as $path => $conditions) {
+    if (!is_array($conditions)) { continue; }
+    foreach ($conditions as $condition) {
+        if (strpos((string) $condition, "type:drupal-custom-") === 0) {
+            $i = strpos($path, "{\$");
+            echo rtrim($i === false ? $path : substr($path, 0, $i), "/"), "\n";
+            break;
+        }
+    }
+}
+' "$RECORD_PROJECT_PATH/composer.json" 2>/dev/null
+        printf '%s\n' "${web_rel}modules/custom" "${web_rel}themes/custom" "${web_rel}profiles/custom"
+    } | while IFS= read -r dir; do
+        if [[ -n "$dir" && "$dir" != /* && "$dir" != *..* && -d "$RECORD_PROJECT_PATH/$dir" ]]; then
+            printf '%s\n' "$dir"
+        fi
+    done | LC_ALL=C sort -u
+}
+
+# What changed after the backup that the restore does not bring back the
+# way one may expect: packages added since (they leave composer.json and
+# the database; their folders stay), and custom code changed since (it
+# stays as it is, while the core and the database go back).
+find_changes_since_backup() {
+    local -a custom_dirs=()
+    local since
+    local commits=""
+    local uncommitted=""
+    local files=""
+    local marker
+
+    RESTORE_ADDED_PACKAGES="$(list_packages_added_since "$RECORD_PROJECT_PATH/composer.lock" "$RESTORE_BACKUP_DIR/composer.lock")"
+    RESTORE_ADDED_DIRS=()
+    RESTORE_CUSTOM_CHANGES=""
+
+    if [[ -n "$RESTORE_ADDED_PACKAGES" ]]; then
+        mapfile -t RESTORE_ADDED_DIRS < <(printf '%s\n' "$RESTORE_ADDED_PACKAGES" |
+            get_added_package_dirs "$RECORD_PROJECT_PATH/composer.json")
+    fi
+
+    mapfile -t custom_dirs < <(get_custom_code_dirs)
+    [[ "${#custom_dirs[@]}" -gt 0 ]] || return 0
+
+    if [[ -d "$RECORD_PROJECT_PATH/.git" ]]; then
+        since="$(get_backup_time "$RESTORE_BACKUP_DIR")"
+
+        if [[ "$since" != "?" ]]; then
+            commits="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" log --since="$since" \
+                --format='%h %ad %s' --date=short -- "${custom_dirs[@]}" 2>/dev/null | head -n 10)"
+        fi
+
+        uncommitted="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" status --porcelain \
+            -- "${custom_dirs[@]}" 2>/dev/null | head -n 10)"
+
+        if [[ -n "$commits" ]]; then
+            RESTORE_CUSTOM_CHANGES+="$(awk '{ print "commit " $0 }' <<< "$commits")"$'\n'
+        fi
+
+        if [[ -n "$uncommitted" ]]; then
+            RESTORE_CUSTOM_CHANGES+="$(awk '{ print "not committed: " $0 }' <<< "$uncommitted")"$'\n'
+        fi
+    else
+        # Without git: files newer than the backup's database.
+        marker="$RESTORE_BACKUP_DIR/database.sql.gz"
+        [[ -f "$marker" ]] || marker="$RESTORE_BACKUP_DIR/database.sqlite"
+        files="$(cd "$RECORD_PROJECT_PATH" && find "${custom_dirs[@]}" -type f -newer "$marker" 2>/dev/null | LC_ALL=C sort | head -n 10)"
+
+        if [[ -n "$files" ]]; then
+            RESTORE_CUSTOM_CHANGES="$(awk '{ print "changed: " $0 }' <<< "$files")"
+        fi
+    fi
+
+    RESTORE_CUSTOM_CHANGES="${RESTORE_CUSTOM_CHANGES%$'\n'}"
+}
+
+# The warning in the plan, when something changed after the backup.
+print_changes_since_backup() {
+    local backup_time="$1"
+    local name
+
+    [[ -n "$RESTORE_ADDED_PACKAGES" || -n "$RESTORE_CUSTOM_CHANGES" ]] || return 0
+
+    echo
+    echo "[WARNING] Changes made after the backup ($backup_time):"
+
+    if [[ -n "$RESTORE_ADDED_PACKAGES" ]]; then
+        echo "  Packages added since: they leave composer.json and composer.lock, and the"
+        echo "  database goes back to before them (they are not installed there then):"
+
+        while IFS='|' read -r name _; do
+            echo "    - $name"
+        done <<< "$RESTORE_ADDED_PACKAGES"
+
+        if [[ "${#RESTORE_ADDED_DIRS[@]}" -gt 0 ]]; then
+            echo "  Their folders stay on disk (Composer no longer knows them); after the"
+            echo "  restore you decide whether they go: ${RESTORE_ADDED_DIRS[*]}"
+        fi
+    fi
+
+    if [[ -n "$RESTORE_CUSTOM_CHANGES" ]]; then
+        echo "  Custom code changed since: it stays as it is now (Composer does not manage"
+        echo "  it), while the core and the database go back. It may not fit them (update"
+        echo "  hooks pending again, APIs of the newer core):"
+        printf '%s\n' "$RESTORE_CUSTOM_CHANGES" | sed 's/^/    - /'
+    fi
+
+    echo "  What to do by hand, before or after: README, \"Changes made after the backup\"."
+    echo "  Nothing is lost: the backup of the current state keeps the database of now."
+}
+
+# After the restore: the folders of packages added after the backup
+# (found before the restore), removed only after "y".
+offer_removing_added_package_folders() {
+    local dir
+    local answer
+
+    [[ "${#RESTORE_ADDED_DIRS[@]}" -gt 0 ]] || return 0
+
+    echo
+    echo "These folders belong to packages added after the backup; Composer no longer"
+    echo "knows them, and Drupal shows them as available, not installed:"
+    printf '  %s\n' "${RESTORE_ADDED_DIRS[@]}"
+
+    if ! read -r -p "Remove them? [y/N]: " answer; then
+        echo
+        answer="n"
+    fi
+
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+        echo "[INFO] Kept. To use such a module again: $(get_project_composer_hint) require <package>"
+        echo "       (a release for Drupal $RESTORE_VERSION), then $(get_project_drush_hint) pm:install <module>."
+        return 0
+    fi
+
+    for dir in "${RESTORE_ADDED_DIRS[@]}"; do
+        # Checked again: inside the project, a real folder, no "..".
+        [[ -n "$dir" && "$dir" != /* && "$dir" != *..* ]] || continue
+        [[ -d "$RECORD_PROJECT_PATH/$dir" && ! -L "$RECORD_PROJECT_PATH/$dir" ]] || continue
+
+        if run_as_project_user "$PROJECT_USER" rm -rf -- "${RECORD_PROJECT_PATH:?}/$dir"; then
+            echo "[OK] Removed $dir"
+        else
+            echo "[WARNING] Could not remove $dir"
+        fi
+    done
 }
 
 # The Drupal core version in a composer.lock.
@@ -478,6 +695,9 @@ run_restore_project() {
         echo "       replaced too (the backup of the current state keeps them)."
     fi
 
+    find_changes_since_backup
+    print_changes_since_backup "$backup_time"
+
     if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
         echo
         echo "[DRY RUN] Nothing was changed."
@@ -552,6 +772,7 @@ perform_restore() {
 
     echo "[OK] Code of the backup installed: Drupal $RESTORE_VERSION"
     offer_removing_newer_scaffold_files
+    offer_removing_added_package_folders
 
     if [[ "$RECORD_DATABASE_ENGINE" != "sqlite" ]]; then
         echo "The database is restored with sudo (it may ask for your password again)."
@@ -601,6 +822,13 @@ perform_restore() {
     echo "[DONE] $machine_name: Drupal ${UPDATE_PREVIOUS_VERSION:-unknown} -> $RESTORE_VERSION (backup of $(get_backup_time "$RESTORE_BACKUP_DIR"))"
     echo "The state before this restore: $UPDATE_BACKUP_DIR"
     echo "  (undo: ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR)"
+
+    if [[ -n "$RESTORE_CUSTOM_CHANGES" ]]; then
+        echo "Custom code changed after the backup is still the newer one: check"
+        echo "  $(get_project_drush_hint) updatedb:status and its pages; to take it back too, see"
+        echo "  README, \"Changes made after the backup\"."
+    fi
+
     if [[ "$RESTORE_CONFIG_DIFFERS" -eq 1 ]]; then
         print_git_commit_hint "Restore backup $(basename "$RESTORE_BACKUP_DIR") (Drupal $RESTORE_VERSION)" \
             "Decide about the configuration export first (see the WARNING above: export or
