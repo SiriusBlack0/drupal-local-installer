@@ -381,6 +381,11 @@ their configuration. Their support level is recorded and shown in
 `--list`: `supported`, `php_missing (…)`, or `unsupported (Drupal 7 is end
 of life)` – a later Docker/DDEV mode is planned for those.
 
+When a registered project's folder is gone (moved, deleted, or on another
+computer), the commands that need it stop and show both ways to tidy up:
+`--remove NAME --dry-run` (what is left: Nginx site, pool, database) or
+`--unregister NAME` (only the registry entry).
+
 `--unregister NAME` forgets one project; `--unregister` without a name
 shows the same kind of list with all registered projects, and after a
 `y` removes the chosen entries from the registry. Only the entries go:
@@ -454,18 +459,25 @@ Before anything changes, the installer checks that:
   a core update may install that change too, or fail because of it. The
   installer explains it, shows how to bring them in line first
   (`./composer update --dry-run`, then `./composer update vendor/name` or
-  undo the change), and you decide whether to continue (default: no).
+  undo the change; without `./composer`, the command names the project's
+  PHP), and you decide whether to continue (default: no).
   When the change prepares the next major (`composer require ...
   --no-update`), it is fine: use `--upgrade` instead, which installs it.
   Whether the backup can be restored later is tested too
-  (`composer install --dry-run` on a copy of the composer files): a
-  changed constraint is fine, because `composer install` restores what
-  composer.lock lists; a package that composer.json requires but
-  composer.lock lacks (`composer require vendor/name --no-update`) makes
-  `composer install` refuse the files, so a later `--restore` of that
-  backup would not work. The installer says so, with Composer's reason.
+  (`composer install --dry-run` on a copy of the composer files). A
+  changed constraint is fine only while the locked version still
+  satisfies it (`^1.2` to `^1.3` with 1.4 locked). A constraint that the
+  locked version does not satisfy (`composer require 'drupal/x:^2'
+  --no-update` with 1.x locked), or a package that composer.lock lacks,
+  makes `composer install` refuse the files. Then, when the project is in
+  git, the installer looks for the composer.json of an earlier commit
+  that matches composer.lock (the last 30 commits that changed it; git is
+  only read) and keeps it in the backup as `composer.locked.json`: a later
+  `--restore` installs the code with it and then puts the newer
+  composer.json back. Without such a commit, a later `--restore` of that
+  backup would not work: the installer says so, with Composer's reason.
   (The automatic restore if the update fails is not affected: it uses an
-  offline copy of the code.);
+  offline copy of the code.) So commit before and after such a change;
 - the site works now (Drush bootstraps it);
 - with one possible target (only a patch, or only a minor update), the
   installer says "Only one target: …" instead of asking;
@@ -599,7 +611,11 @@ afterwards (`drush config:status`): `drush updatedb` often changes
 configuration, so the installer gives the number of differences and says
 to export it (`./drush config:export`, review, commit), and **not** to run
 `drush config:import` before that, which would undo those changes. The
-same check runs after `--upgrade`.
+list of differences is taken before the run too: only the new ones are
+put down to this run; the ones that were there already (an export older
+than the database) are counted apart, and when there are only those, the
+installer says so and leaves the decision to you. The same check runs
+after `--upgrade`.
 
 ## Upgrading to a new major (`--upgrade`)
 
@@ -623,7 +639,7 @@ The steps, their minimum versions and the modules that left core are in
 | PHP | the new major does not support the project's PHP: change it first with `--php`, as its own step, so a problem is easy to trace (the installer names a version both releases run on) |
 | Database | the server is older than the new major needs |
 | Modules removed from core | an enabled module or theme that the new major no longer has in core (for Drupal 11: Actions UI, Activity Tracker, Book, Forum, Statistics, Tour) and composer.json does not require its drupal.org project: `composer require drupal/book`, or uninstall it |
-| composer.json ahead of composer.lock | does not block: changes made with `composer require ... --no-update` (new major releases of contrib) are installed by the upgrade; the Composer trial shows them. Only when such a change adds a package that composer.lock lacks, the backup could not be restored later with `--restore`: the installer says so and you decide (default: no) |
+| composer.json ahead of composer.lock | does not block: changes made with `composer require ... --no-update` (new major releases of contrib) are installed by the upgrade; the Composer trial shows them. When `composer install` refuses those files (a package composer.lock lacks, or a constraint the locked version does not satisfy), the backup keeps the composer.json of an earlier commit that matches composer.lock (git), so `--restore` still works; without one, the backup could not be restored later: the installer says so and you decide (default: no) |
 | Upgrade Status | never blocks; errors in **custom** code (outside `tests/`) ask you before the upgrade |
 | Composer trial | Composer finds no way to install the new core (see below) |
 
@@ -680,10 +696,14 @@ trial finds such plugins first, and you decide before anything changes:
 allow them, install them with the plugin part switched off, or stop. When a drupal.org project has no release for the new major
 that your composer.json allows, the installer names it and you decide:
 
-1. **stop** – nothing changes. Then allow a newer release in composer.json
-   (`composer require 'drupal/gin:^5' --no-update`: `--no-update`, because
-   that release needs the new core; the next `--upgrade` installs it),
-   remove the module if it is unused, or apply a patch from its issue queue;
+1. **stop** – nothing changes. Then, for a newer release that supports
+   the new major: if it supports the current core too, install it now
+   (`./composer require 'drupal/gin:^5' -W`, commit), which keeps the
+   upgrade's backup installable on its own; if it needs the new core,
+   only allow it (`./composer require 'drupal/gin:^5' --no-update`,
+   commit), and the next `--upgrade` installs it (its backup then keeps
+   the earlier composer.json from git, see `--update`). Or remove the
+   module if it is unused, or apply a patch from its issue queue;
 2. **lenient** – the [mglaman/composer-drupal-lenient](https://github.com/mglaman/composer-drupal-lenient)
    plugin is added (after the backup) and lists that project, so Composer
    ignores its `drupal/core` requirement. Its code was not released for the
@@ -714,7 +734,10 @@ modules provide, submit a form. Then commit what changed and the
 configuration export (the installer compares it with the database, as
 after `--update`). The commit line names only what the run changed: the
 installer notes `git status` at the start, so your own files (notes,
-exports) stay out. A new `recipes/` folder is written by Composer like
+exports) stay out. With many files the line names their top folders
+(`web`, `vendor`), but only folders where you had no changes of your
+own before the run; in the others each file is named. The same goes for
+`--restore`. A new `recipes/` folder is written by Composer like
 `vendor/`; the installer asks whether to add it to `.gitignore`.
 
 Back to the old major later (for example a week after, when something
@@ -768,8 +791,12 @@ the database is touched anyway.
 
 A backup whose `composer.lock` does not match its `composer.json`
 (composer.json had changes without `composer update` at that time) is
-restored normally: `composer install` installs what composer.lock lists,
-which is the code of that time. The plan notes it.
+restored normally when `composer install` accepts the files: it installs
+what composer.lock lists, which is the code of that time. When the backup
+has a `composer.locked.json` (the earlier composer.json from git that
+matches its composer.lock, see `--update`), the code is installed with
+that, and then the backup's own composer.json is put back: the project is
+as it was then, including its `--no-update` changes. The plan notes both.
 
 If the code cannot be installed, or Drupal reports another version, the
 database is never touched. If any step fails, the state of before comes
@@ -918,7 +945,12 @@ sudo asks once more.
 pool is never removed (other sites may use it). A pool the installer
 created for it by an earlier `--php` is removed by the next one. The plan says so before
 you confirm. Projects without launchers then run Drush with the new PHP
-by hand, e.g. `php8.4 vendor/bin/drush status`.
+by hand; the installer prints the command for the project's Drush, e.g.
+`php8.4 vendor/bin/drush status`, or `php8.4 vendor/drush/drush/drush.php
+status` when that Drush starts with a shell script (which PHP would only
+print). `./install.sh --launchers NAME` writes `./drush` and `./composer`
+instead. Messages elsewhere (configuration export, Upgrade Status,
+manual restore steps) also name `./drush` only when the project has it.
 
 Settings in the new version's `fpm/php.ini` that differ from the old one
 (`memory_limit`, `upload_max_filesize`, ...) are listed at the end.

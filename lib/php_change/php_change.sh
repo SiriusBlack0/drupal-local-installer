@@ -241,7 +241,7 @@ run_change_php() {
     fi
 
     if [[ ! -d "$RECORD_PROJECT_PATH" ]]; then
-        echo "[ERROR] Project folder not found: $RECORD_PROJECT_PATH"
+        print_missing_project_folder "$machine_name"
         return 1
     fi
 
@@ -606,7 +606,8 @@ perform_php_change() {
     if [[ "$PHP_CHANGE_HAS_LAUNCHERS" -eq 1 ]]; then
         echo "Use ./drush and ./composer: they run with PHP $new."
     else
-        echo "Run Drush and Composer with PHP $new, e.g.: php$new vendor/bin/drush status"
+        echo "Run Drush and Composer with PHP $new, e.g.: $(get_drush_with_php "$new") status"
+        print_launchers_tip "$machine_name"
     fi
 
     echo

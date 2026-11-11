@@ -200,4 +200,19 @@ else
     fail "unknown: $output"
 fi
 
+# Test 6: A registered project whose folder is gone: the two ways to tidy up.
+
+project="$(make_adopted gone)"
+rm -rf "$project"
+
+if output="$(run_launchers_project gone < /dev/null)"; then
+    fail "Missing folder accepted"
+elif [[ "$output" == *"[ERROR] Project folder not found: $project"* &&
+        "$output" == *"./install.sh --remove gone --dry-run"* &&
+        "$output" == *"./install.sh --unregister gone"* ]]; then
+    pass "Missing project folder: --remove --dry-run and --unregister shown"
+else
+    fail "missing folder: $output"
+fi
+
 echo "[SUCCESS] Launcher tests passed."

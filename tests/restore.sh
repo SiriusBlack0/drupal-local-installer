@@ -110,6 +110,12 @@ case "${args[0]}" in
         fi
         ;;
     install)
+        # composer.json with drupal/pending, which composer.lock lacks
+        # (added with --no-update): Composer refuses it.
+        if grep -q "drupal/pending" "$dir/composer.json"; then
+            echo "- Required package \"drupal/pending\" is not present in the lock file."
+            exit 4
+        fi
         # The check before the restore: a dry run on a copy.
         if [[ " ${args[*]} " == *" --dry-run "* ]]; then
             case "${INSTALL_DRYRUN:-ok}" in
@@ -451,6 +457,31 @@ else
     fail "outdated lock in backup: $output"
 fi
 
+# A backup whose composer.json was ahead of composer.lock, with the
+# matching composer.json from git (composer.locked.json): installed with
+# that, then the backup's composer.json goes back.
+
+make_project gamma
+pending="$(make_backup gamma 20261024-120000)"
+cp "$pending/composer.json" "$pending/composer.locked.json"
+printf '{"name": "old", "require": {"drupal/pending": "^2"}, "extra": {"installer-paths": {"web/core": ["type:drupal-core"]}}}\n' > "$pending/composer.json"
+
+if output="$(REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$pending" run_restore_project gamma < /dev/null)" &&
+   [[ "$output" == *"Check:        the backup's packages can be installed (composer install --dry-run)."* &&
+      "$output" == *"composer.json that matches composer.lock (composer.locked.json, from git),"* &&
+      "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
+   output="$(printf 'gamma\nn\n' | RESTORE_BACKUP_ARGUMENT="$pending" run_restore_project gamma)" &&
+   [[ "$output" == *"[OK] Code of the backup installed: Drupal 10.6.20"* &&
+      "$output" == *"[OK] composer.json of the backup put back (its changes are not in composer.lock yet, as then)"* &&
+      "$output" == *"[DONE] gamma: Drupal 11.4.11 -> 10.6.20"* ]] &&
+   [[ "$(version_of gamma)" == "10.6.20" ]] && cmp -s "$PROJECT_PATH/composer.json" "$pending/composer.json" &&
+   cmp -s "$PROJECT_PATH/composer.lock" "$pending/composer.lock"; then
+    pass "Backup with composer.json ahead of the lock: installed with composer.locked.json, then its composer.json put back"
+else
+    fail "locked composer.json restore: $output"
+fi
+
+rm -rf "$pending"
 make_project gamma
 
 if output="$(INSTALL_DRYRUN=network REMOVE_DRY_RUN=1 RESTORE_BACKUP_ARGUMENT="$newer" run_restore_project gamma < /dev/null)" &&

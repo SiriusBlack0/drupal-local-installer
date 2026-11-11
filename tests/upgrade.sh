@@ -125,7 +125,10 @@ blocked_by_contrib() {
 }
 case "${args[0]}" in
     validate)
-        if [[ "${LOCK_OUTDATED:-0}" == "1" ]]; then
+        # LOCK_OUTDATED=mark: only a composer.json with drupal/pending
+        # (added with --no-update) is ahead of the lock.
+        if [[ "${LOCK_OUTDATED:-0}" == "1" ]] ||
+           { [[ "${LOCK_OUTDATED:-0}" == "mark" ]] && grep -q "drupal/pending" "$dir/composer.json"; }; then
             echo "- The lock file is not up to date with the latest changes in composer.json, it is recommended that you run \`composer update\` or \`composer update <package name>\`."
             exit 1
         fi
@@ -212,7 +215,7 @@ case "${args[0]}" in
     install)
         # The test install of composer files (a dry run on a copy).
         if [[ " ${args[*]} " == *" --dry-run "* ]]; then
-            if [[ "${INSTALL_DRYRUN_FAILS:-0}" == "1" ]]; then
+            if [[ "${INSTALL_DRYRUN_FAILS:-0}" == "1" ]] || grep -q "drupal/pending" "$dir/composer.json"; then
                 echo "Installing dependencies from lock file (including require-dev)"
                 echo "Verifying lock file contents can be installed on current platform."
                 echo "- Required package \"drupal/token\" is not present in the lock file."
@@ -310,7 +313,12 @@ case "$1" in
         ;;
     config:status)
         # After updatedb the database has configuration the export lacks.
-        if grep -q "'11\." "$web/core/lib/Drupal.php"; then
+        # CONFIG_OLD=1: system.site differed before already.
+        if [[ "${CONFIG_OLD:-0}" == "1" ]] && ! grep -q "'11\." "$web/core/lib/Drupal.php"; then
+            echo '{"system.site":{"name":"system.site","state":"Different"}}'
+        elif [[ "${CONFIG_OLD:-0}" == "2" ]]; then
+            echo '{"system.site":{"name":"system.site","state":"Different"}}'
+        elif grep -q "'11\." "$web/core/lib/Drupal.php"; then
             echo '{"system.site":{"name":"system.site","state":"Different"},"core.extension":{"name":"core.extension","state":"Different"}}'
         else
             echo '[]'
@@ -864,6 +872,26 @@ else
     fail "config after upgrade: $output"
 fi
 
+# Differences of before the run are not put down to drush updatedb.
+
+make_project chi2
+mkdir -p "$PROJECT_PATH/config/sync"
+echo "name: Chi" > "$PROJECT_PATH/config/sync/system.site.yml"
+
+if output="$(printf '3\nchi2\n' | CONFIG_OLD=1 CONFIG_SYNC="$PROJECT_PATH/config/sync" run_upgrade_project chi2)" &&
+   [[ "$output" == *"differs from the database in 2 item(s):"* &&
+      "$output" == *"1 new after this run:"* && "$output" == *"- core.extension (Different)"* &&
+      "$output" != *"- system.site (Different)"* &&
+      "$output" == *"1 differed before this run already (the export was older than the database)."* ]] &&
+   make_project chi2 && mkdir -p "$PROJECT_PATH/config/sync" && echo "name: Chi" > "$PROJECT_PATH/config/sync/system.site.yml" &&
+   output="$(printf '3\nchi2\n' | CONFIG_OLD=2 CONFIG_SYNC="$PROJECT_PATH/config/sync" run_upgrade_project chi2)" &&
+   [[ "$output" == *"the same ones as before this run: the export was older than the database"* &&
+      "$output" != *"drush updatedb changed configuration"* ]]; then
+    pass "Configuration differences of before the run: told apart, not put down to drush updatedb"
+else
+    fail "config before/after: $output"
+fi
+
 # The same, but a package that composer.lock lacks: the backup of the
 # upgrade could not be restored later; the developer decides.
 
@@ -877,6 +905,33 @@ elif [[ "$output" == *"[WARNING] The backup of this upgrade could NOT be restore
     pass "Upgrade whose backup could not be restored later: explained; 'n' changes nothing"
 else
     fail "upgrade unrestorable: $output"
+fi
+
+# The same, in git: the composer.json of the commit before the
+# --no-update change matches composer.lock. The backup keeps it, so it
+# can be restored later: no question.
+
+make_project omicron3
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Drupal 10.6.19"
+cp "$PROJECT_PATH/composer.json" "$work_dir/omicron3.locked.json"
+sed -i 's|"drupal/pathauto": "^1.12",|"drupal/pathauto": "^1.12",\n        "drupal/pending": "^2",|' "$PROJECT_PATH/composer.json"
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -am "Allow drupal/pending 2"
+cp "$PROJECT_PATH/composer.json" "$work_dir/omicron3.json"
+
+if output="$(printf 'omicron3\n' | LOCK_OUTDATED=mark run_upgrade_project omicron3)" &&
+   [[ "$output" == *"[OK] The backup can still be restored later: composer.json of commit"* &&
+      "$output" == *"(\"Drupal 10.6.19\") matches composer.lock. The backup keeps it"* &&
+      "$output" != *"could NOT be restored"* && "$output" != *"Continue with the upgrade anyway"* &&
+      "$output" == *"[DONE] omicron3: Drupal 10.6.19 -> 11.4.2"* ]] &&
+   backup="$(find "$work_dir/backups" -maxdepth 1 -name 'omicron3-upgrade-*' | head -n 1)" &&
+   cmp -s "$backup/composer.locked.json" "$work_dir/omicron3.locked.json" &&
+   cmp -s "$backup/composer.json" "$work_dir/omicron3.json" &&
+   [[ "$(stat -c '%a' "$backup/composer.locked.json")" == "600" ]]; then
+    pass "composer.json ahead of the lock, in git: the matching composer.json of the commit before kept in the backup; no question"
+else
+    fail "locked composer.json: $output / $(ls "${backup:-/nonexistent}" 2>&1)"
 fi
 
 # Test 9: A Composer plugin that composer.json does not mention yet: the

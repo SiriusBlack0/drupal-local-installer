@@ -50,7 +50,7 @@ choose_upgrade_status_mode() {
     echo "1) For this scan only: add it, scan, then remove it again"
     echo "   (composer.json, composer.lock and the database as before)"
     echo "2) Keep it: add it and leave it installed (scan again any time:"
-    echo "   ./drush upgrade_status:analyze --all, or Reports > Upgrade status)"
+    echo "   $(get_project_drush_hint) upgrade_status:analyze --all, or Reports > Upgrade status)"
     echo "3) Skip the scan"
 
     while true; do
@@ -138,7 +138,7 @@ remove_temporary_upgrade_status() {
 
     echo "[ERROR] Upgrade Status could not be removed again. Remove it by hand:"
     echo "          cd $RECORD_PROJECT_PATH"
-    [[ "$UPGRADE_STATUS_ENABLED_BY_US" -eq 1 ]] && echo "          ./drush pm:uninstall upgrade_status"
+    [[ "$UPGRADE_STATUS_ENABLED_BY_US" -eq 1 ]] && echo "          $(get_project_drush_hint) pm:uninstall upgrade_status"
 
     if [[ "$UPGRADE_STATUS_WAS_IN_COMPOSER" -eq 0 && -n "$UPGRADE_STATUS_SAVED_DIR" ]]; then
         echo "          cp $UPGRADE_STATUS_SAVED_DIR/composer.json $UPGRADE_STATUS_SAVED_DIR/composer.lock ."
@@ -296,7 +296,7 @@ print_upgrade_status_report() {
         done < <(tail -n +2 <<< "$report")
     fi
 
-    echo "            Full report: ./drush upgrade_status:analyze --all (while it is installed)."
+    echo "            Full report: $(get_project_drush_hint) upgrade_status:analyze --all (while it is installed)."
 }
 
 # The most common finding in custom code: an .info.yml that allows only
@@ -415,7 +415,7 @@ run_upgrade_status_check() {
 
     if [[ "$UPGRADE_STATUS_MODE" == "keep" ]]; then
         echo "[NOTE] Upgrade Status stays installed (your choice). To remove it later:"
-        echo "         ./drush pm:uninstall upgrade_status && composer remove --dev drupal/upgrade_status"
+        echo "         $(get_project_drush_hint) pm:uninstall upgrade_status && $(get_project_composer_hint) remove --dev drupal/upgrade_status"
 
         if [[ -d "$RECORD_PROJECT_PATH/.git" ]]; then
             echo "       composer.json and composer.lock changed: commit them before the real"

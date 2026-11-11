@@ -273,7 +273,7 @@ run_php_compat_checks() {
         echo "  [OK]      Trial run: Drush bootstraps the site with PHP $new (every enabled module is loaded)"
     else
         echo "  [FAILED]  Trial run: Drush cannot bootstrap the site with PHP $new."
-        echo "            To see why: cd $RECORD_PROJECT_PATH && php$new vendor/bin/drush status"
+        echo "            To see why: cd $RECORD_PROJECT_PATH && $(get_drush_with_php "$new") status"
         result=1
     fi
 
@@ -349,7 +349,7 @@ foreach ($d as $k => $row) {
     if [[ -n "$found" ]]; then
         echo "[WARNING] Drupal logged new errors with PHP $PHP_CHANGE_NEW:"
         printf '%s\n' "$found" | sed 's/^/            - /'
-        echo "          Details: ./drush watchdog:show --severity=Error"
+        echo "          Details: $(get_project_drush_hint "$PHP_CHANGE_NEW") watchdog:show --severity=Error"
     else
         echo "[OK] No new errors in the Drupal log"
     fi
@@ -361,6 +361,9 @@ print_manual_php_checks() {
 
     echo "Check it yourself (the installer only opened the front page):"
     echo "  - log in, open the pages your custom and contrib modules provide, submit a form"
-    echo "  - ./drush cron, then ./drush watchdog:show --severity=Error"
+    local drush
+
+    drush="$(get_project_drush_hint "$PHP_CHANGE_NEW")"
+    echo "  - $drush cron, then $drush watchdog:show --severity=Error"
     echo "  - back to PHP $PHP_CHANGE_OLD if something breaks: ./install.sh --php $machine_name $PHP_CHANGE_OLD"
 }

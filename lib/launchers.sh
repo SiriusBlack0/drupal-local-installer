@@ -201,7 +201,7 @@ create_launchers_for_project() {
     load_project_record "$machine_name" "$record" || return 1
 
     if [[ ! -d "$RECORD_PROJECT_PATH" ]]; then
-        echo "[ERROR] Project folder not found: $RECORD_PROJECT_PATH"
+        print_missing_project_folder "$machine_name"
         return 1
     fi
 

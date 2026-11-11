@@ -486,3 +486,13 @@ list_registered_projects() {
         echo "No projects registered yet."
     fi
 }
+
+# A registered project whose folder is gone (moved, deleted, or on
+# another computer): said, with the two ways to tidy the registry.
+print_missing_project_folder() {
+    echo "[ERROR] Project folder not found: $RECORD_PROJECT_PATH"
+    echo "        If the project was moved or deleted, see what is left of it:"
+    echo "          ./install.sh --remove $1 --dry-run   (Nginx site, pool, database)"
+    echo "        or take only the registry entry away, leaving everything else:"
+    echo "          ./install.sh --unregister $1"
+}

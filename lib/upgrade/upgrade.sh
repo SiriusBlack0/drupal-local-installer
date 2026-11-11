@@ -229,6 +229,7 @@ run_upgrade_project() {
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
     log_before="$(get_last_log_error_id)"
+    remember_config_differences
 
     if ! confirm_upgrade "$machine_name"; then
         echo "Name does not match. Upgrade cancelled; nothing was changed."
@@ -338,7 +339,7 @@ perform_upgrade() {
 
     if [[ "$UPGRADE_STATUS_MODE" == "keep" ]]; then
         echo "  - Upgrade Status is still installed; remove it when you no longer need it:"
-        echo "    ./drush pm:uninstall upgrade_status && composer remove --dev drupal/upgrade_status"
+        echo "    $(get_project_drush_hint) pm:uninstall upgrade_status && $(get_project_composer_hint) remove --dev drupal/upgrade_status"
     fi
 
     echo "Back to Drupal $current later (the site's changes since now are lost then):"

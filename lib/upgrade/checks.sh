@@ -183,7 +183,7 @@ run_upgrade_prechecks() {
 
         while IFS= read -r name; do
             echo "              - $name: composer require drupal/$name (the drupal.org project that"
-            echo "                replaces it), or uninstall it if unused: ./drush pm:uninstall $name"
+            echo "                replaces it), or uninstall it if unused: $(get_project_drush_hint) pm:uninstall $name"
         done <<< "$in_use"
 
         result=1

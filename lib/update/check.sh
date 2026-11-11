@@ -38,19 +38,22 @@ is_composer_lock_outdated() {
 }
 
 # Can the composer files in $1 be installed with the project's PHP?
+# $2: another composer.json to use with $1/composer.lock (optional).
 # "composer install --dry-run" on a copy in an empty temporary folder:
 # it checks what the real install checks (PHP and extensions, plugins,
 # conflicts) and installs nothing. Prints Composer's reason when it
 # fails. Returns 0: installable, 1: not, 2: could not check.
 check_composer_files_installable() {
     local dir="$1"
+    local json="${2:-$1/composer.json}"
     local temp
     local output
     local status=0
 
     temp="$(run_as_project_user "$PROJECT_USER" mktemp -d)" || return 2
 
-    if ! run_as_project_user "$PROJECT_USER" cp -- "$dir/composer.json" "$dir/composer.lock" "$temp/"; then
+    if ! run_as_project_user "$PROJECT_USER" cp -- "$json" "$temp/composer.json" ||
+       ! run_as_project_user "$PROJECT_USER" cp -- "$dir/composer.lock" "$temp/composer.lock"; then
         run_as_project_user "$PROJECT_USER" rm -rf -- "$temp"
         return 2
     fi
@@ -68,6 +71,95 @@ check_composer_files_installable() {
 
     printf '%s\n' "$output" | summarize_composer_problem
     return 1
+}
+
+# composer.json ahead of composer.lock ("composer require ... --no-update",
+# committed before the run): "composer install" of these files fails, so
+# a backup of them could not be restored. The composer.json of an earlier
+# commit that matches composer.lock can be installed: it is the code that
+# runs now. Prints that commit (the newest of the last 30 commits that
+# changed composer.json). git is only read. Returns 1 when there is none
+# (no git, or the matching composer.json was never committed).
+find_locked_composer_json_commit() {
+    local project="$1"
+    local temp
+    local commit
+    local output
+    local found=""
+
+    [[ -d "$project/.git" ]] || return 1
+    temp="$(run_as_project_user "$PROJECT_USER" mktemp -d)" || return 1
+
+    if run_as_project_user "$PROJECT_USER" cp -- "$project/composer.lock" "$temp/composer.lock"; then
+        while IFS= read -r commit; do
+            write_composer_json_of_commit "$project" "$commit" "$temp/composer.json" || continue
+            output="$(run_project_composer "$temp" "$RECORD_PHP_VERSION" \
+                validate --no-check-publish --no-check-all 2>&1)" || true
+
+            if ! grep -qi 'lock file is not up to date' <<< "$output"; then
+                found="$commit"
+                break
+            fi
+        done < <(run_as_project_user "$PROJECT_USER" git -C "$project" log -n 30 --format=%H -- composer.json 2>/dev/null)
+    fi
+
+    run_as_project_user "$PROJECT_USER" rm -rf -- "$temp"
+    [[ -n "$found" ]] || return 1
+    printf '%s\n' "$found"
+}
+
+# The composer.json of a commit, written to $3 (a valid JSON object only).
+write_composer_json_of_commit() {
+    local project="$1"
+    local commit="$2"
+    local out="$3"
+
+    [[ "$commit" =~ ^[0-9a-f]{7,64}$ ]] || return 1
+    run_as_project_user "$PROJECT_USER" git -C "$project" show "$commit:composer.json" 2>/dev/null |
+        run_as_project_user "$PROJECT_USER" tee "$out" > /dev/null
+    [[ -s "$out" ]] || return 1
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    "php${RECORD_PHP_VERSION}" -r 'exit(is_array(json_decode(file_get_contents($argv[1]), true)) ? 0 : 1);' "$out" 2>/dev/null
+}
+
+# The commit for the backup of this run (UPDATE_LOCKED_JSON_COMMIT),
+# looked up once; empty when composer.json and composer.lock match.
+# Returns 0 when the backup can be installed with it.
+prepare_locked_composer_json() {
+    local temp
+    local status=0
+
+    if [[ "$UPDATE_LOCKED_JSON_SEARCHED" -eq 1 ]]; then
+        [[ -n "$UPDATE_LOCKED_JSON_COMMIT" ]] && return 0
+        return 1
+    fi
+
+    UPDATE_LOCKED_JSON_SEARCHED=1
+    UPDATE_LOCKED_JSON_COMMIT="$(find_locked_composer_json_commit "$RECORD_PROJECT_PATH")" || return 1
+
+    # The same test install as for the backup itself.
+    temp="$(run_as_project_user "$PROJECT_USER" mktemp)" || { UPDATE_LOCKED_JSON_COMMIT=""; return 1; }
+    write_composer_json_of_commit "$RECORD_PROJECT_PATH" "$UPDATE_LOCKED_JSON_COMMIT" "$temp" &&
+        check_composer_files_installable "$RECORD_PROJECT_PATH" "$temp" > /dev/null || status=$?
+    run_as_project_user "$PROJECT_USER" rm -f -- "$temp"
+
+    # 2 (network): not known, kept; the restore checks it again.
+    if [[ "$status" -eq 1 ]]; then
+        UPDATE_LOCKED_JSON_COMMIT=""
+        return 1
+    fi
+}
+
+# Said when the backup keeps the composer.json of an earlier commit.
+explain_locked_composer_json() {
+    local subject
+
+    subject="$(run_as_project_user "$PROJECT_USER" git -C "$RECORD_PROJECT_PATH" log -1 --format=%s "$UPDATE_LOCKED_JSON_COMMIT" 2>/dev/null)" || subject=""
+    echo "[OK] The backup can still be restored later: composer.json of commit"
+    echo "     ${UPDATE_LOCKED_JSON_COMMIT:0:10}${subject:+ (\"$subject\")} matches composer.lock. The backup keeps it"
+    echo "     (composer.locked.json); --restore installs the code with it, then puts"
+    echo "     the newer composer.json back."
 }
 
 # The part of Composer's output that says why it failed: from the first

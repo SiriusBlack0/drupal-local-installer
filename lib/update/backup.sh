@@ -101,6 +101,21 @@ copy_registry_record() {
     cp -- "$record" "$2"
 }
 
+# composer.json ahead of composer.lock: the earlier composer.json that
+# matches the lock goes into the backup too (composer.locked.json), so
+# --restore can install it. Never a reason for the backup to fail.
+save_locked_composer_json() {
+    if [[ "$UPDATE_LOCKED_JSON_SEARCHED" -ne 1 ]]; then
+        is_composer_lock_outdated "$RECORD_PROJECT_PATH" || return 0
+        prepare_locked_composer_json || return 0
+    fi
+
+    [[ -n "$UPDATE_LOCKED_JSON_COMMIT" ]] || return 0
+    write_composer_json_of_commit "$RECORD_PROJECT_PATH" "$UPDATE_LOCKED_JSON_COMMIT" \
+        "$UPDATE_BACKUP_DIR/composer.locked.json" || rm -f -- "$UPDATE_BACKUP_DIR/composer.locked.json"
+    return 0
+}
+
 create_update_backup() {
     local machine_name="$1"
     local old_umask
@@ -134,7 +149,8 @@ create_update_backup() {
         # were (upgraded_from, accepted_advisories, ...).
         if cp --preserve=timestamps -- "$RECORD_PROJECT_PATH/composer.json" "$RECORD_PROJECT_PATH/composer.lock" "$UPDATE_BACKUP_DIR/" &&
            get_scaffold_files "$(get_web_root_relative)" > "$UPDATE_BACKUP_DIR/scaffold-files.list" &&
-           copy_registry_record "$machine_name" "$UPDATE_BACKUP_DIR/registry.conf"; then
+           copy_registry_record "$machine_name" "$UPDATE_BACKUP_DIR/registry.conf" &&
+           save_locked_composer_json; then
             echo "OK"
         else
             echo "FAILED"

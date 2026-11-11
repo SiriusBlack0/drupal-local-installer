@@ -447,7 +447,7 @@ fi
 
 if output="$(printf '1\n' | LOCK_OUTDATED=1 REMOVE_DRY_RUN=1 run_update_project alpha)" &&
    [[ "$output" == *"[WARNING] composer.json has changes that are not in composer.lock yet"* &&
-      "$output" == *"./composer update --dry-run   (what differs)"* &&
+      "$output" == *"composer update --dry-run   (what differs)"* &&
       "$output" == *"(Dry run: a real run asks whether to continue.)"* &&
       "$output" == *"[DRY RUN] Nothing was changed."* ]] &&
    [[ "$output" == *"it is fine as it is: run ./install.sh --upgrade alpha instead."* ]] &&
@@ -678,7 +678,7 @@ if output="$(printf '1\nchi\n' | UPDATE_FAILS=1 INSTALL_FAILS=1 run_update_proje
 elif [[ "$output" == *"[ERROR] Automatic restore did not complete. The site stays in maintenance mode"* &&
         "$output" == *"  1. The code:"* &&
         "$output" == *"     cd $PROJECT_PATH && chmod u+w $PROJECT_PATH/web/sites/default"* &&
-        "$output" == *"     rm -rf vendor && ./composer install && chmod 555 $PROJECT_PATH/web/sites/default"* &&
+        "$output" == *"     rm -rf vendor && "*"composer install && chmod 555 $PROJECT_PATH/web/sites/default"* &&
         "$output" == *"(must say 11.3.10)"* &&
         "$output" != *"The database"* ]] &&
      [[ "$(tail -n 1 < <(grep "maintenance_mode" "$CALLS_FILE"))" == *"maintenance_mode 1"* ]] &&
@@ -975,6 +975,47 @@ if [[ "$summary" == "  Problem 1"*"drupal/gin_toolbar 2.1.0 requires drupal/core
     pass "Composer's reason shown from \"Problem 1\" on, without the general advice"
 else
     fail "composer summary: $summary / $no_problem"
+fi
+
+# Test: The commit line with many files: folders are shortened only when
+# the developer had no changes in them before the run.
+
+GIT_STATUS_BEFORE=$'?? web/notes.docx\n?? docs/\n M README.md'
+collapsed="$(collapse_commit_paths web/index.php web/.htaccess vendor/a/b.php vendor/c.php composer.json docs/new.md README.md)"
+
+if [[ "$collapsed" == $'README.md\ncomposer.json\ndocs/new.md\nvendor\nweb/.htaccess\nweb/index.php' ]]; then
+    pass "Many files: only folders without the developer's own changes are shortened (web/, docs/ kept file by file)"
+else
+    fail "collapse: $collapsed"
+fi
+
+GIT_STATUS_BEFORE=""
+
+# Test: Drush and Composer commands in messages: ./drush when the project
+# has it; otherwise the PHP named, and drush.php when Drush starts with a
+# shell script.
+
+hint_dir="$work_dir/hints"
+mkdir -p "$hint_dir/vendor/drush/drush"
+# shellcheck disable=SC2016  # the stub's own code.
+printf '#!/usr/bin/env sh\nexec php "$0.php" "$@"\n' > "$hint_dir/vendor/drush/drush/drush"
+echo "<?php" > "$hint_dir/vendor/drush/drush/drush.php"
+first="$(get_project_drush_hint 8.4 "$hint_dir")"
+printf '#!/usr/bin/env php\n<?php\n' > "$hint_dir/vendor/drush/drush/drush"
+second="$(get_project_drush_hint 8.4 "$hint_dir")"
+printf '#!/usr/bin/env bash\n' > "$hint_dir/drush"
+chmod +x "$hint_dir/drush"
+third="$(get_project_drush_hint 8.4 "$hint_dir")"
+tip="$(print_launchers_tip shop "$hint_dir")"
+rm -f "$hint_dir/drush"
+
+if [[ "$first" == "php8.4 vendor/drush/drush/drush.php" && "$second" == "php8.4 vendor/bin/drush" &&
+      "$third" == "./drush" && -z "$tip" &&
+      "$(get_project_composer_hint 8.4 "$hint_dir")" == "php8.4 $(command -v composer)" &&
+      "$(print_launchers_tip shop "$hint_dir")" == *"./install.sh --launchers shop writes ./drush"* ]]; then
+    pass "Drush hints: ./drush, else the PHP named (drush.php when Drush starts with a shell script)"
+else
+    fail "drush hints: $first / $second / $third / $tip"
 fi
 
 echo "[SUCCESS] Update tests passed."

@@ -48,6 +48,14 @@ GIT_STATUS_BEFORE=""
 GIT_STATUS_CAPTURED=0
 # The target that was not chosen (patch or minor), for advice.
 UPDATE_ALTERNATIVE=""
+# composer.json ahead of composer.lock: the earlier commit whose
+# composer.json matches the lock (prepare_locked_composer_json), kept in
+# the backup as composer.locked.json.
+UPDATE_LOCKED_JSON_COMMIT=""
+UPDATE_LOCKED_JSON_SEARCHED=0
+# Configuration items that differed before the run (remember_config_differences).
+UPDATE_CONFIG_BEFORE=""
+UPDATE_CONFIG_BEFORE_KNOWN=0
 # "update" or "upgrade" (--upgrade reuses the backup and the restore).
 UPDATE_KIND="update"
 
@@ -83,8 +91,7 @@ rollback_update() {
     elif restore_code_snapshot; then
         say "[OK] Code restored (from the offline copy)"
     elif { [[ "$UPDATE_KIND" == "update" ]] || remove_project_vendor; } &&
-         run_logged "Restoring the previous code (composer install)" \
-            run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
+         install_backup_code_with_composer; then
         say "[OK] Code restored"
     else
         say "[FAILED] Code"
@@ -135,6 +142,26 @@ rollback_update() {
     return 1
 }
 
+# "composer install" of the backup's code during the rollback. A backup
+# whose composer.json was ahead of composer.lock is installed with
+# composer.locked.json, then its own composer.json goes back.
+install_backup_code_with_composer() {
+    local locked="$UPDATE_BACKUP_DIR/composer.locked.json"
+
+    # An explicit status: a bare "return" in a trap handler (Ctrl+C)
+    # would return the status of before the trap.
+    if [[ ! -f "$locked" ]]; then
+        run_logged "Restoring the previous code (composer install)" \
+            run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install || return 1
+        return 0
+    fi
+
+    cp --preserve=timestamps -- "$locked" "$RECORD_PROJECT_PATH/composer.json" &&
+    run_logged "Restoring the previous code (composer install)" \
+        run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install &&
+    cp --preserve=timestamps -- "$UPDATE_BACKUP_DIR/composer.json" "$RECORD_PROJECT_PATH/composer.json"
+}
+
 # Notes in the backup folder how the run that made it ended, for the list
 # of --restore ("run failed, restored automatically").
 mark_backup_result() {
@@ -171,9 +198,15 @@ print_manual_restore() {
     if [[ "$code_ok" -eq 0 ]]; then
         say "  1. The code:"
         say "     cd $RECORD_PROJECT_PATH && chmod u+w $UPDATE_WEB_ROOT/sites/default"
-        say "     cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock ."
-        say "     rm -rf vendor && ./composer install && chmod 555 $UPDATE_WEB_ROOT/sites/default"
-        say "     Check: ./drush status --field=drupal-version  (must say ${UPDATE_PREVIOUS_VERSION:-the old version})"
+        if [[ -f "$UPDATE_BACKUP_DIR/composer.locked.json" ]]; then
+            say "     cp $UPDATE_BACKUP_DIR/composer.locked.json composer.json && cp $UPDATE_BACKUP_DIR/composer.lock ."
+            say "     rm -rf vendor && $(get_project_composer_hint) install && cp $UPDATE_BACKUP_DIR/composer.json ."
+            say "     chmod 555 $UPDATE_WEB_ROOT/sites/default"
+        else
+            say "     cp $UPDATE_BACKUP_DIR/composer.json $UPDATE_BACKUP_DIR/composer.lock ."
+            say "     rm -rf vendor && $(get_project_composer_hint) install && chmod 555 $UPDATE_WEB_ROOT/sites/default"
+        fi
+        say "     Check: $(get_project_drush_hint) status --field=drupal-version  (must say ${UPDATE_PREVIOUS_VERSION:-the old version})"
     else
         say "  The code is back (Drupal ${UPDATE_PREVIOUS_VERSION:-as before}); only the database is missing."
     fi
@@ -183,7 +216,7 @@ print_manual_restore() {
         say "     $(get_manual_database_restore_command)"
     fi
 
-    say "  Last: cd $RECORD_PROJECT_PATH && ./drush cache:rebuild && ./drush state:set system.maintenance_mode 0"
+    say "  Last: cd $RECORD_PROJECT_PATH && $(get_project_drush_hint) cache:rebuild && $(get_project_drush_hint) state:set system.maintenance_mode 0"
 
     if [[ -n "$UPDATE_SNAPSHOT_DIR" && -d "$UPDATE_SNAPSHOT_DIR" ]]; then
         say "  The offline copy of the old code is kept: $UPDATE_SNAPSHOT_DIR"
@@ -259,6 +292,8 @@ check_core_change_project() {
     local with_args=()
 
     machine_name="$(get_project_machine_name "$1")"
+    UPDATE_LOCKED_JSON_COMMIT=""
+    UPDATE_LOCKED_JSON_SEARCHED=0
 
     if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
         echo "[ERROR] Invalid project name: '$1'"
@@ -280,7 +315,7 @@ check_core_change_project() {
 
     # ---- Checks (read only) ----
     if [[ ! -d "$RECORD_PROJECT_PATH" ]]; then
-        echo "[ERROR] Project folder not found: $RECORD_PROJECT_PATH"
+        print_missing_project_folder "$machine_name"
         return 1
     fi
 
@@ -371,11 +406,18 @@ explain_outdated_lock() {
     # during the run is not affected: it uses an offline copy of the code.
     reason="$(check_composer_files_installable "$RECORD_PROJECT_PATH")" || status=$?
 
+    # An earlier commit's composer.json that matches composer.lock: the
+    # backup keeps it, so a --restore can install the code of now.
+    if [[ "$status" -eq 1 ]] && prepare_locked_composer_json; then
+        status=3
+    fi
+
     if [[ "$UPDATE_KIND" == "upgrade" ]]; then
         echo "[INFO] composer.json has changes that are not in composer.lock yet (for example"
         echo "       \"composer require ... --no-update\"). The upgrade installs them together"
         echo "       with the new core; the Composer trial below shows what changes."
 
+        [[ "$status" -eq 3 ]] && explain_locked_composer_json
         [[ "$status" -eq 1 ]] || return 0
 
         explain_unrestorable_backup "$reason"
@@ -397,12 +439,13 @@ explain_outdated_lock() {
     echo "          changed without \"composer update\". A core update may install those"
     echo "          changes too, or fail because of them. Usually it is better to bring them"
     echo "          in line first, commit, and update then:"
-    echo "            cd $RECORD_PROJECT_PATH && ./composer update --dry-run   (what differs)"
-    echo "            ./composer update vendor/name   (or undo the change in composer.json)"
+    echo "            cd $RECORD_PROJECT_PATH && $(get_project_composer_hint) update --dry-run   (what differs)"
+    echo "            $(get_project_composer_hint) update vendor/name   (or undo the change in composer.json)"
 
     case "$status" in
         0) echo "          The backup can be restored later: composer install accepts these files." ;;
         1) explain_unrestorable_backup "$reason" ;;
+        3) explain_locked_composer_json ;;
         *) echo "          Whether a later --restore of the backup works could not be checked (network?)." ;;
     esac
 
@@ -555,6 +598,7 @@ run_update_project() {
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
     log_before="$(get_last_log_error_id)"
+    remember_config_differences
 
     if ! confirm_update "$machine_name"; then
         echo "Name does not match. Update cancelled; nothing was changed."
@@ -706,9 +750,11 @@ print_git_commit_hint() {
         [[ -n "$path" ]] && paths+=("$path")
     done <<< "$own"
 
-    # Many files: their top folders (git add -A -- web composer.json ...).
+    # Many files: their top folders (git add -A -- web composer.json ...),
+    # but only folders without changes of before this run: git add of such
+    # a folder would take the developer's own files in it too.
     if [[ "${#paths[@]}" -gt 20 ]]; then
-        mapfile -t paths < <(printf '%s\n' "${paths[@]}" | sed -E 's|^"?([^/"]+).*|\1|' | sort -u)
+        mapfile -t paths < <(collapse_commit_paths "${paths[@]}")
     fi
 
     for path in "${paths[@]}"; do
@@ -727,6 +773,38 @@ print_git_commit_hint() {
     fi
 
     echo "  cd $RECORD_PROJECT_PATH && git add -A -- ${words[*]} && git commit -m \"$message\""
+}
+
+# The paths for the commit line, with folders of only this run's changes
+# shortened to the top folder. Files in a top folder that had changes
+# before the run (GIT_STATUS_BEFORE) stay listed one by one.
+collapse_commit_paths() {
+    local -A mixed=()
+    local line
+    local path
+    local top
+
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        path="${line:3}"
+
+        for path in "${path%% -> *}" "${path##* -> }"; do
+            path="${path#\"}"
+            [[ "$path" == */* ]] && mixed["${path%%/*}"]=1
+            mixed["${path%/}"]=1
+        done
+    done <<< "$GIT_STATUS_BEFORE"
+
+    for path in "$@"; do
+        top="${path#\"}"
+        top="${top%%/*}"
+
+        if [[ "$path" == */* && -z "${mixed[$top]:-}" ]]; then
+            printf '%s\n' "$top"
+        else
+            printf '%s\n' "$path"
+        fi
+    done | LC_ALL=C sort -u
 }
 
 # git status of the project, as the project user.
@@ -780,10 +858,11 @@ echo $d !== "" ? (realpath($d) ?: "") : "";
 ' 2>/dev/null
 }
 
-# Number of configuration items in which the export folder $1 and the
-# database differ (drush config:status). Returns 1 when there is no export
-# to compare with (no folder, or no .yml files in it).
-count_config_differences() {
+# The configuration items in which the export folder $1 and the database
+# differ (drush config:status), one "name (state)" per line, sorted.
+# Returns 1 when there is no export to compare with (no folder, or no
+# .yml files in it).
+list_config_differences() {
     local sync_dir="$1"
     local json
 
@@ -797,8 +876,32 @@ count_config_differences() {
     # shellcheck disable=SC2016
     printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
 $d = json_decode(stream_get_contents(STDIN), true);
-echo is_array($d) ? count($d) : 0, "\n";
-' 2>/dev/null || echo 0
+if (!is_array($d)) { exit(0); }
+foreach ($d as $key => $row) {
+    $name = is_array($row) && isset($row["name"]) ? $row["name"] : $key;
+    $state = is_array($row) && isset($row["state"]) ? $row["state"] : "";
+    echo $name, $state !== "" ? " ($state)" : "", "\n";
+}
+' 2>/dev/null | LC_ALL=C sort -u
+}
+
+# Their number (0 when the list is empty).
+count_config_differences() {
+    local list
+
+    list="$(list_config_differences "$1")" || return 1
+    grep -c . <<< "$list" || true
+}
+
+# Before the run: which items differ already, so that afterwards only the
+# ones this run brought are put down to drush updatedb.
+remember_config_differences() {
+    UPDATE_CONFIG_BEFORE=""
+    UPDATE_CONFIG_BEFORE_KNOWN=0
+
+    if UPDATE_CONFIG_BEFORE="$(list_config_differences "$(get_config_sync_dir 2>/dev/null)")"; then
+        UPDATE_CONFIG_BEFORE_KNOWN=1
+    fi
 }
 
 # After an update or upgrade the database is the right one: drush
@@ -814,7 +917,7 @@ report_config_after_update() {
 
     if ! count="$(count_config_differences "$sync_dir")"; then
         echo "If the project keeps configuration in git, export it now:"
-        echo "  ./drush config:export   (then review and commit the changes)"
+        echo "  $(get_project_drush_hint) config:export   (then review and commit the changes)"
         return 0
     fi
 
@@ -825,9 +928,41 @@ report_config_after_update() {
         return 0
     fi
 
+    local after
+    local new_items=""
+    local new_count
+    local old_count=0
+
+    after="$(list_config_differences "$sync_dir")" || after=""
+
+    if [[ "$UPDATE_CONFIG_BEFORE_KNOWN" -eq 1 ]]; then
+        new_items="$(grep -vxF -f <(printf '%s\n' "$UPDATE_CONFIG_BEFORE") <<< "$after" || true)"
+        [[ -n "$UPDATE_CONFIG_BEFORE" ]] && old_count="$(grep -c . <<< "$UPDATE_CONFIG_BEFORE")"
+    else
+        new_items="$after"
+    fi
+
+    new_count="$(grep -c . <<< "$new_items" || true)"
+
+    if [[ "$new_count" -eq 0 ]]; then
+        echo "[INFO] The configuration export ($rel) differs from the database in $count item(s),"
+        echo "       the same ones as before this run: the export was older than the database"
+        echo "       already, not because of drush updatedb. Nothing new to export for this run;"
+        echo "       $(get_project_drush_hint) config:status lists them, you decide what to keep."
+        return 0
+    fi
+
     echo "[INFO] The configuration export ($rel) differs from the database in $count item(s):"
+
+    if [[ "$UPDATE_CONFIG_BEFORE_KNOWN" -eq 1 ]]; then
+        echo "       $new_count new after this run:"
+        head -n 10 <<< "$new_items" | sed 's/^/         - /'
+        [[ "$new_count" -gt 10 ]] && echo "         ... ($((new_count - 10)) more: $(get_project_drush_hint) config:status)"
+        [[ "$old_count" -gt 0 ]] && echo "       $old_count differed before this run already (the export was older than the database)."
+    fi
+
     echo "       drush updatedb changed configuration. Export it, review, commit:"
-    echo "         ./drush config:export"
+    echo "         $(get_project_drush_hint) config:export"
     echo "       Not \"drush config:import\" before that: it would undo those changes."
 }
 
@@ -935,10 +1070,10 @@ report_update_results() {
 
         if [[ "$UPDATE_KIND" == "upgrade" ]]; then
             echo "          Upgrade Status listed what to change in custom code (see above, or the"
-            echo "          log). Fix the code, then: ./drush cache:rebuild"
+            echo "          log). Fix the code, then: $(get_project_drush_hint) cache:rebuild"
         else
             echo "          Fix core_version_requirement in their .info.yml (custom code) or update"
-            echo "          them with Composer (contrib), then: ./drush cache:rebuild"
+            echo "          them with Composer (contrib), then: $(get_project_drush_hint) cache:rebuild"
         fi
     fi
 

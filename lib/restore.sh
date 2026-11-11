@@ -46,6 +46,17 @@ is_restorable_backup() {
     [[ -s "$dir/database.sql.gz" || -s "$dir/database.sqlite" ]]
 }
 
+# The composer.json to install a backup with: composer.locked.json when
+# the backup has one (composer.json was ahead of composer.lock), else its
+# composer.json.
+get_backup_install_json() {
+    if [[ -f "$1/composer.locked.json" ]]; then
+        printf '%s\n' "$1/composer.locked.json"
+    else
+        printf '%s\n' "$1/composer.json"
+    fi
+}
+
 # The Drupal core version in a composer.lock.
 get_lock_core_version() {
     # Single quotes: PHP code, not shell code.
@@ -301,10 +312,10 @@ report_config_sync_differences() {
     echo
     echo "[WARNING] The configuration export (${sync_dir#"$RECORD_PROJECT_PATH/"}) differs from the restored"
     echo "          database in $count item(s): the restore does not change that folder, so it is"
-    echo "          still the newer configuration (./drush config:status lists them)."
+    echo "          still the newer configuration ($(get_project_drush_hint) config:status lists them)."
     echo "          Do NOT run \"drush config:import\" now: it would load the newer configuration"
     echo "          into this older database. Instead, either:"
-    echo "            - keep the database's configuration: ./drush config:export, review, commit;"
+    echo "            - keep the database's configuration: $(get_project_drush_hint) config:export, review, commit;"
     echo "            - or, in git, take the folder from the time of the backup:"
     echo "              git log -- ${sync_dir#"$RECORD_PROJECT_PATH/"}   (then git checkout <commit> -- that folder)"
 }
@@ -322,6 +333,8 @@ run_restore_project() {
     machine_name="$(get_project_machine_name "$1")"
     RESTORE_BACKUP_DIR=""
     RESTORE_VERSION=""
+    UPDATE_LOCKED_JSON_COMMIT=""
+    UPDATE_LOCKED_JSON_SEARCHED=0
 
     if [[ ! "$machine_name" =~ ^[a-z0-9_]+$ ]]; then
         echo "[ERROR] Invalid project name: '$1'"
@@ -345,7 +358,7 @@ run_restore_project() {
     # ---- Checks (read only). The site itself may be broken: that is
     # often why it is restored, so Drush is not required to work. ----
     if [[ ! -d "$RECORD_PROJECT_PATH" ]]; then
-        echo "[ERROR] Project folder not found: $RECORD_PROJECT_PATH"
+        print_missing_project_folder "$machine_name"
         return 1
     fi
 
@@ -383,7 +396,7 @@ run_restore_project() {
 
     local installable
     local install_status=0
-    installable="$(check_composer_files_installable "$RESTORE_BACKUP_DIR")" || install_status=$?
+    installable="$(check_composer_files_installable "$RESTORE_BACKUP_DIR" "$(get_backup_install_json "$RESTORE_BACKUP_DIR")")" || install_status=$?
 
     if [[ "$install_status" -eq 1 ]]; then
         echo "[BLOCKED] The backup's packages cannot be installed (composer install --dry-run):"
@@ -443,7 +456,12 @@ run_restore_project() {
         echo "Check:        the backup's packages can be installed (composer install --dry-run)."
     fi
 
-    if is_composer_lock_outdated "$RESTORE_BACKUP_DIR"; then
+    if [[ -f "$RESTORE_BACKUP_DIR/composer.locked.json" ]]; then
+        echo "[NOTE] In this backup composer.json has changes that were not in composer.lock"
+        echo "       yet (\"composer require ... --no-update\"). The code is installed with the"
+        echo "       composer.json that matches composer.lock (composer.locked.json, from git),"
+        echo "       then the backup's composer.json is put back: as it was then."
+    elif is_composer_lock_outdated "$RESTORE_BACKUP_DIR"; then
         echo "[NOTE] In this backup composer.json has changes that were not in composer.lock"
         echo "       yet. The restore installs what composer.lock lists: the code of that time."
     fi
@@ -502,13 +520,26 @@ perform_restore() {
 
     echo
 
-    if ! cp --preserve=timestamps -- "$RESTORE_BACKUP_DIR/composer.json" "$RESTORE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
+    if ! cp --preserve=timestamps -- "$(get_backup_install_json "$RESTORE_BACKUP_DIR")" "$RECORD_PROJECT_PATH/composer.json" ||
+       ! cp --preserve=timestamps -- "$RESTORE_BACKUP_DIR/composer.lock" "$RECORD_PROJECT_PATH/" ||
        ! remove_project_vendor ||
        ! run_logged_retrying_network "Installing the code of the backup (composer install)" - \
             run_project_composer "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" install; then
         echo "[ERROR] The code of the backup could not be installed; the database was not touched."
         rollback_update
         return 1
+    fi
+
+    # Installed with composer.locked.json: the backup's own composer.json
+    # (with its --no-update changes) goes back, as it was then.
+    if [[ -f "$RESTORE_BACKUP_DIR/composer.locked.json" ]]; then
+        if cp --preserve=timestamps -- "$RESTORE_BACKUP_DIR/composer.json" "$RECORD_PROJECT_PATH/composer.json"; then
+            echo "[OK] composer.json of the backup put back (its changes are not in composer.lock yet, as then)"
+        else
+            echo "[ERROR] composer.json of the backup could not be put back; the database was not touched."
+            rollback_update
+            return 1
+        fi
     fi
 
     version="$(get_drupal_version_in "$UPDATE_WEB_ROOT" 2>/dev/null)" || version=""
