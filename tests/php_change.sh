@@ -691,7 +691,7 @@ fi
 
 if output="$(printf 'y\nnu\n' | PHPCOMPAT_TOOL_DIR="$tool" WATCHDOG_NEW=1 run_change_php nu 8.4)" &&
    [[ "$output" == *"[DONE] nu: PHP 8.3 -> 8.4"* &&
-      "$output" == *"[WARNING] Drupal logged new errors with PHP 8.4:"* &&
+      "$output" == *"[WARNING] Drupal logged new kinds of errors with PHP 8.4:"* &&
       "$output" == *"php: Deprecated function: old_call() in custom_module_page()"* &&
       "$output" != *"old error"* &&
       "$output" == *"back to PHP 8.3 if something breaks: ./install.sh --php nu 8.3"* ]]; then

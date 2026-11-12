@@ -22,6 +22,8 @@ UPGRADE_LENIENT=()
 UPGRADE_NEW_PLUGINS=()
 UPGRADE_PLUGIN_DECISION=""
 
+# Releases found for the blocking projects: "package<TAB>version<TAB>both|new".
+UPGRADE_BLOCKER_RELEASES=""
 LENIENT_PLUGIN="mglaman/composer-drupal-lenient"
 
 # Fills UPGRADE_REQUIRE, UPGRADE_REQUIRE_DEV, UPGRADE_UPDATE_PACKAGES and
@@ -156,6 +158,121 @@ try_upgrade_with_composer() {
     return "$status"
 }
 
+# The newest stable release of drupal.org project $1 whose drupal/core
+# requirement allows release $2 (the target): prints
+# "version<TAB>both" when it allows the current release $3 too, else
+# "version<TAB>new". Asks Composer (drupal.org's repository); looks at
+# the 8 newest stable releases. Returns 1 when there is none or it
+# cannot tell (network, no composer/semver).
+find_release_for_new_core() {
+    local package="$1"
+    local target="$2"
+    local current="$3"
+    local json
+    local version
+    local requires
+    local -a versions=()
+
+    [[ -f "$RECORD_PROJECT_PATH/vendor/autoload.php" ]] || return 1
+    json="$(run_real_composer show "$package" --all --format=json 2>/dev/null)" || return 1
+
+    # Single quotes: PHP code, not shell code.
+    # shellcheck disable=SC2016
+    mapfile -t versions < <(printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true) ?: [];
+$v = array_values(array_filter((array) ($d["versions"] ?? []), fn($x) => preg_match("/^[0-9]+\\.[0-9]+\\.[0-9]+$/", (string) $x)));
+usort($v, fn($a, $b) => version_compare($b, $a));
+echo implode("\n", array_slice($v, 0, 8)), "\n";
+' 2>/dev/null)
+
+    for version in "${versions[@]}"; do
+        [[ -n "$version" ]] || continue
+
+        # Single quotes: PHP code, not shell code.
+        # shellcheck disable=SC2016
+        requires="$(run_real_composer show "$package" "$version" --all --format=json 2>/dev/null |
+            "php${RECORD_PHP_VERSION}" -r '
+$d = json_decode(stream_get_contents(STDIN), true) ?: [];
+echo (string) ($d["requires"]["drupal/core"] ?? ""), "\n";
+' 2>/dev/null)"
+        [[ -n "$requires" ]] || continue
+
+        if project_semver_satisfies "$target" "$requires"; then
+            if project_semver_satisfies "$current" "$requires"; then
+                printf '%s\tboth\n' "$version"
+            else
+                printf '%s\tnew\n' "$version"
+            fi
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# "^2.1" for release 2.1.3.
+get_caret_constraint() {
+    local major="${1%%.*}"
+    local rest="${1#*.}"
+
+    printf '^%s.%s\n' "$major" "${rest%%.*}"
+}
+
+# Option 3: the composer require commands for the releases found, run
+# now. The ones that work on the current core first (-W installs them),
+# then the ones that only allow the new release (--no-update): Composer
+# could not resolve the others after those. Then the run stops, for a
+# commit and a new --upgrade.
+run_blocker_requires() {
+    local machine_name="$1"
+    local package
+    local version
+    local mode
+    local m
+    local -a done_packages=()
+
+    for mode in both new; do
+        while IFS=$'\t' read -r package version m; do
+            [[ "$m" == "$mode" ]] || continue
+
+            if [[ "$mode" == "both" ]]; then
+                run_logged "Installing $package $(get_caret_constraint "$version") (composer require -W)" \
+                    run_real_composer require "$package:$(get_caret_constraint "$version")" -W || {
+                    echo "[FAILED] $package was not changed (Composer put composer.json back)."
+                    break 2
+                }
+            else
+                run_logged "Allowing $package $(get_caret_constraint "$version") (composer require --no-update)" \
+                    run_real_composer require "$package:$(get_caret_constraint "$version")" --no-update || {
+                    echo "[FAILED] $package was not changed."
+                    break 2
+                }
+            fi
+
+            done_packages+=("$package $(get_caret_constraint "$version")")
+        done <<< "$UPGRADE_BLOCKER_RELEASES"
+    done
+
+    echo
+
+    if [[ "${#done_packages[@]}" -eq 0 ]]; then
+        echo "Upgrade stopped; nothing was changed."
+        return 1
+    fi
+
+    echo "[OK] Changed: $(printf '%s, ' "${done_packages[@]}" | sed 's/, $//')"
+
+    if grep -q $'\tboth$' <<< "$UPGRADE_BLOCKER_RELEASES"; then
+        echo "     Releases installed now (-W) can bring database updates: run"
+        echo "     $(get_project_drush_hint) updatedb, and check the site."
+    fi
+
+    echo "Upgrade stopped here, so these changes get their own commit. Then run the"
+    echo "upgrade again: ./install.sh --upgrade $machine_name"
+    print_git_commit_hint "Allow $(printf '%s, ' "${done_packages[@]}" | sed 's/, $//') for Drupal $(cut -d. -f1 <<< "$UPDATE_TARGET")"
+    return 1
+}
+
 # drupal.org projects without a release for the new major that the
 # constraints in composer.json allow: the developer decides. Returns 0
 # when the upgrade goes on with the lenient plugin (UPGRADE_LENIENT set),
@@ -163,8 +280,15 @@ try_upgrade_with_composer() {
 choose_blocking_projects_handling() {
     local blockers="$1"
     local to_major="$2"
+    local machine_name="${3:-}"
     local project
+    local found
+    local version
+    local mode
     local answer
+    local choices="1-2"
+
+    UPGRADE_BLOCKER_RELEASES=""
 
     echo
     echo "[BLOCKED] Composer cannot install Drupal $UPDATE_TARGET: these drupal.org projects"
@@ -172,7 +296,24 @@ choose_blocking_projects_handling() {
 
     while IFS= read -r project; do
         echo "            - $project   (https://www.drupal.org/project/${project#drupal/})"
+
+        if found="$(find_release_for_new_core "$project" "$UPDATE_TARGET" "$UPDATE_PREVIOUS_VERSION")"; then
+            IFS=$'\t' read -r version mode <<< "$found"
+            UPGRADE_BLOCKER_RELEASES+="$project"$'\t'"$version"$'\t'"$mode"$'\n'
+
+            if [[ "$mode" == "both" ]]; then
+                echo "              release $version supports Drupal $to_major and $UPDATE_PREVIOUS_VERSION:"
+                echo "                composer require '$project:$(get_caret_constraint "$version")' -W"
+            else
+                echo "              release $version supports Drupal $to_major, not $UPDATE_PREVIOUS_VERSION:"
+                echo "                composer require '$project:$(get_caret_constraint "$version")' --no-update"
+            fi
+        elif [[ -f "$RECORD_PROJECT_PATH/vendor/autoload.php" ]]; then
+            echo "              no stable release for Drupal $to_major found (newest 8 looked at)"
+        fi
     done <<< "$blockers"
+
+    UPGRADE_BLOCKER_RELEASES="${UPGRADE_BLOCKER_RELEASES%$'\n'}"
 
     echo
     echo "1) Stop here; nothing is changed. Then, for each of them, one of:"
@@ -193,6 +334,13 @@ choose_blocking_projects_handling() {
     echo "   are added to composer.json (remove them once real releases exist). If the"
     echo "   upgrade fails anyway, everything is restored."
 
+    if [[ -n "$UPGRADE_BLOCKER_RELEASES" ]]; then
+        choices="1-3"
+        echo "3) Run the composer require commands shown above now, then stop: you check"
+        echo "   the site and commit, and run --upgrade again. Composer changes composer.json"
+        echo "   (and with -W composer.lock and the code, on the current core)."
+    fi
+
     if [[ "$REMOVE_DRY_RUN" -eq 1 ]]; then
         echo
         echo "(Dry run: a real run asks here.)"
@@ -200,7 +348,7 @@ choose_blocking_projects_handling() {
     fi
 
     while true; do
-        if ! read -r -p "Select [1-2]: " answer; then
+        if ! read -r -p "Select [$choices]: " answer; then
             echo
             return 1
         fi
@@ -208,6 +356,13 @@ choose_blocking_projects_handling() {
         case "$answer" in
             1) return 1 ;;
             2) mapfile -t UPGRADE_LENIENT <<< "$blockers"; return 0 ;;
+            3)
+                if [[ "$choices" == "1-3" ]]; then
+                    run_blocker_requires "$machine_name"
+                    return 2
+                fi
+                echo "Invalid selection."
+                ;;
             *) echo "Invalid selection." ;;
         esac
     done

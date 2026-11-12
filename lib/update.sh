@@ -11,5 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/update/backup.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/update/snapshot.sh"
 # shellcheck source=lib/update/advisories.sh
 source "$(dirname "${BASH_SOURCE[0]}")/update/advisories.sh"
+# shellcheck source=lib/update/log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/update/log.sh"
 # shellcheck source=lib/update/update.sh
 source "$(dirname "${BASH_SOURCE[0]}")/update/update.sh"

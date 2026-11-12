@@ -5,6 +5,8 @@
 
 # shellcheck source=lib/upgrade/checks.sh
 source "$(dirname "${BASH_SOURCE[0]}")/upgrade/checks.sh"
+# shellcheck source=lib/upgrade/custom_code.sh
+source "$(dirname "${BASH_SOURCE[0]}")/upgrade/custom_code.sh"
 # shellcheck source=lib/upgrade/upgrade_status.sh
 source "$(dirname "${BASH_SOURCE[0]}")/upgrade/upgrade_status.sh"
 # shellcheck source=lib/upgrade/composer.sh

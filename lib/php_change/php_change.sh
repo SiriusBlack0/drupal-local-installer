@@ -478,6 +478,9 @@ run_change_php() {
         echo "       choosing packages for PHP $platform_php until you change it."
     fi
 
+    remember_log_errors "$PHP_CHANGE_OLD" run_drush_with_php
+    print_repeating_log_errors
+
     echo
     echo "Not changed:  code, database, the system's default \"php\" command."
     echo "After:        Drush and the front page are checked with PHP $new, and new"
@@ -559,10 +562,6 @@ run_change_php() {
 
 # The changing part of --php. Uses the variables of run_change_php.
 perform_php_change() {
-    local watchdog_since
-
-    watchdog_since="$(get_last_watchdog_error_id "$PHP_CHANGE_OLD")"
-
     if ! install_new_pool "$machine_name" "$new" ||
        ! wait_for_socket "$PHP_CHANGE_NEW_SOCKET" ||
        ! switch_nginx_site; then
@@ -596,7 +595,7 @@ perform_php_change() {
         set_project_field "$record" support "$(get_project_support "$current" "$new")" || true
     fi
 
-    report_new_watchdog_errors "$watchdog_since"
+    report_new_log_errors "$new" run_drush_with_php "with PHP $new" || true
     report_php_setting_differences "$PHP_CHANGE_OLD" "$new"
 
     echo

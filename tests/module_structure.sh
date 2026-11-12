@@ -59,8 +59,8 @@ loaders = {
     "database": ["common", "mysql", "postgresql", "sqlite"],
     "system": ["checks", "services", "apt"],
     "ui": ["project", "drupal", "php", "database", "admin", "git", "confirm"],
-    "update": ["check", "backup", "snapshot", "advisories", "update"],
-    "upgrade": ["checks", "upgrade_status", "composer", "upgrade"],
+    "update": ["check", "backup", "snapshot", "advisories", "log", "update"],
+    "upgrade": ["checks", "custom_code", "upgrade_status", "composer", "upgrade"],
     "php_change": ["pool", "launchers", "checks", "php_change"],
 }
 

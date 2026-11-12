@@ -490,7 +490,6 @@ run_update_project() {
     local package
     local dry_output
     local errors_before=""
-    local log_before=""
     local security_status
     local blocked
 
@@ -582,6 +581,8 @@ run_update_project() {
         echo "New:          $(paste -sd ',' - <<< "$UPDATE_NEW_PACKAGES" | sed 's/,/, /g') (from composer.json)"
     fi
     print_pending_database_updates
+    remember_log_errors "$RECORD_PHP_VERSION"
+    print_repeating_log_errors
     if [[ -n "$UPDATE_ACCEPTED_ADVISORIES" ]]; then
         echo "Advisories:   accepted for this update (see [SECURITY] above)"
     fi
@@ -597,7 +598,6 @@ run_update_project() {
     fi
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
-    log_before="$(get_last_log_error_id)"
     remember_config_differences
 
     if ! confirm_update "$machine_name"; then
@@ -655,7 +655,7 @@ perform_update() {
         return 1
     fi
 
-    report_update_results "$errors_before" "$log_before"
+    report_update_results "$errors_before"
 
     update_record_version "$record" "$UPDATE_TARGET" || true
 
@@ -824,28 +824,6 @@ remember_git_status() {
     fi
 }
 
-# The highest id of an error in the Drupal log (empty without dblog), so
-# that errors logged during the update can be told apart from old ones.
-get_last_log_error_id() {
-    local json
-
-    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
-        watchdog:show --severity=Error --count=1 --format=json 2>/dev/null)" || return 0
-    [[ -n "$json" ]] || return 0
-
-    # Single quotes: PHP code, not shell code.
-    # shellcheck disable=SC2016
-    printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
-$d = json_decode(stream_get_contents(STDIN), true);
-if (!is_array($d)) { exit(0); }
-$max = 0;
-foreach ($d as $k => $row) { $max = max($max, (int) ($row["wid"] ?? $k)); }
-echo $max, "\n";
-' 2>/dev/null || true
-}
-
-# Errors Drupal logged after id $1 (first 5): only what the update brought,
-# not the old ones.
 # The configuration export folder (config_sync_directory) of the site, as
 # an absolute path; empty when there is none.
 get_config_sync_dir() {
@@ -1036,7 +1014,6 @@ foreach ($lists as $type => $list) {
 # log, and modules or themes that no longer fit the new core.
 report_update_results() {
     local errors_before="$1"
-    local log_before="$2"
     local errors_after
     local new_errors
     local incompatible
@@ -1077,7 +1054,9 @@ report_update_results() {
         fi
     fi
 
-    report_new_log_errors "$log_before"
+    if ! report_new_log_errors "$RECORD_PHP_VERSION" run_project_drush "during the ${UPDATE_KIND}"; then
+        UPDATE_PROBLEMS+=("new kinds of errors in the Drupal log")
+    fi
 }
 
 # The last line: [DONE], or [DONE WITH PROBLEMS] and what they are.
@@ -1095,38 +1074,6 @@ print_update_done() {
     echo "[DONE WITH PROBLEMS] $machine_name: Drupal $current -> $UPDATE_TARGET"
     printf '  - %s\n' "${UPDATE_PROBLEMS[@]}"
     echo "The $UPDATE_KIND is installed, but check these before you work on the site."
-}
-
-report_new_log_errors() {
-    local since="$1"
-    local json
-    local found
-
-    [[ -n "$since" ]] || return 0
-
-    json="$(run_project_drush "$RECORD_PROJECT_PATH" "$RECORD_PHP_VERSION" \
-        watchdog:show --severity=Error --count=50 --format=json 2>/dev/null)" || return 0
-
-    # Single quotes: PHP code, not shell code.
-    # shellcheck disable=SC2016
-    found="$(printf '%s' "$json" | "php${RECORD_PHP_VERSION}" -r '
-$d = json_decode(stream_get_contents(STDIN), true) ?: [];
-$n = 0;
-foreach ($d as $k => $row) {
-    if ((int) ($row["wid"] ?? $k) <= (int) $argv[1]) { continue; }
-    if ($n++ >= 5) { break; }
-    echo strip_tags((string) ($row["type"] ?? "")), ": ", mb_substr(preg_replace("/\s+/", " ", strip_tags((string) ($row["message"] ?? ""))), 0, 160), "\n";
-}
-' "$since" 2>/dev/null)" || return 0
-
-    if [[ -n "$found" ]]; then
-        UPDATE_PROBLEMS+=("new errors in the Drupal log")
-        echo "[WARNING] Drupal logged new errors during the ${UPDATE_KIND}:"
-        printf '%s\n' "$found" | sed 's/^/            - /'
-        echo "          Details: drush watchdog:show --severity=Error"
-    else
-        echo "[OK] No new errors in the Drupal log (older ones are not counted)"
-    fi
 }
 
 # "Lock file operations: 0 installs, 5 updates, 0 removals" from the

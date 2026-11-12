@@ -107,45 +107,6 @@ foreach (array_filter(explode("\n", stream_get_contents(STDIN))) as $line) {
 ' "$1" "$RECORD_PROJECT_PATH" 2>/dev/null
 }
 
-# The folders of custom code (relative): the installer-paths for
-# drupal-custom-* types, and the usual web/modules/custom,
-# web/themes/custom and web/profiles/custom; only those that exist.
-get_custom_code_dirs() {
-    local web_rel
-    local dir
-
-    web_rel="$(get_web_root_relative)"
-
-    if [[ "$web_rel" == "." ]]; then
-        web_rel=""
-    else
-        web_rel="$web_rel/"
-    fi
-
-    {
-        # Single quotes: PHP code, not shell code.
-        # shellcheck disable=SC2016
-        "php${RECORD_PHP_VERSION}" -r '
-$c = json_decode((string) @file_get_contents($argv[1]), true) ?: [];
-foreach ($c["extra"]["installer-paths"] ?? [] as $path => $conditions) {
-    if (!is_array($conditions)) { continue; }
-    foreach ($conditions as $condition) {
-        if (strpos((string) $condition, "type:drupal-custom-") === 0) {
-            $i = strpos($path, "{\$");
-            echo rtrim($i === false ? $path : substr($path, 0, $i), "/"), "\n";
-            break;
-        }
-    }
-}
-' "$RECORD_PROJECT_PATH/composer.json" 2>/dev/null
-        printf '%s\n' "${web_rel}modules/custom" "${web_rel}themes/custom" "${web_rel}profiles/custom"
-    } | while IFS= read -r dir; do
-        if [[ -n "$dir" && "$dir" != /* && "$dir" != *..* && -d "$RECORD_PROJECT_PATH/$dir" ]]; then
-            printf '%s\n' "$dir"
-        fi
-    done | LC_ALL=C sort -u
-}
-
 # What changed after the backup that the restore does not bring back the
 # way one may expect: packages added since (they leave composer.json and
 # the database; their folders stay), and custom code changed since (it

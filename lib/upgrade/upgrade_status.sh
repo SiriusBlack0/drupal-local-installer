@@ -328,6 +328,8 @@ print_info_yml_fixes() {
     done <<< "$report"
 
     [[ "${#commands[@]}" -gt 0 ]] || return 0
+    # Shown (and offered) before the scan already.
+    [[ "$UPGRADE_INFO_YML_SHOWN" -eq 1 ]] && return 0
 
     echo "            .info.yml files that allow only the current major: allow Drupal $to_major too"
     echo "            (in $RECORD_PROJECT_PATH, then commit; the site keeps working on the current major):"

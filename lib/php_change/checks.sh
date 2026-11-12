@@ -303,58 +303,6 @@ run_php_compat_checks() {
     return "$result"
 }
 
-# The highest watchdog id of an error before the change, so that errors
-# logged with the new PHP can be told apart. Empty without dblog.
-get_last_watchdog_error_id() {
-    local php_version="$1"
-    local json
-
-    json="$(run_drush_with_php "$RECORD_PROJECT_PATH" "$php_version" \
-        watchdog:show --severity=Error --count=1 --format=json 2>/dev/null)" || return 0
-
-    # Single quotes: PHP code, not shell code.
-    # shellcheck disable=SC2016
-    printf '%s' "$json" | "php${php_version}" -r '
-$d = json_decode(stream_get_contents(STDIN), true);
-if (!is_array($d)) { exit(1); }
-$max = 0;
-foreach ($d as $k => $row) { $max = max($max, (int) ($row["wid"] ?? $k)); }
-echo $max, "\n";
-' 2>/dev/null || true
-}
-
-# Errors Drupal logged since the change (first 5), as a warning.
-report_new_watchdog_errors() {
-    local since="$1"
-    local json
-    local found
-
-    [[ -n "$since" ]] || return 0
-
-    json="$(run_drush_with_php "$RECORD_PROJECT_PATH" "$PHP_CHANGE_NEW" \
-        watchdog:show --severity=Error --count=50 --format=json 2>/dev/null)" || return 0
-
-    # Single quotes: PHP code, not shell code.
-    # shellcheck disable=SC2016
-    found="$(printf '%s' "$json" | "php${PHP_CHANGE_NEW}" -r '
-$d = json_decode(stream_get_contents(STDIN), true) ?: [];
-$n = 0;
-foreach ($d as $k => $row) {
-    if ((int) ($row["wid"] ?? $k) <= (int) $argv[1]) { continue; }
-    if ($n++ >= 5) { break; }
-    echo strip_tags((string) ($row["type"] ?? "")), ": ", mb_substr(strip_tags((string) ($row["message"] ?? "")), 0, 160), "\n";
-}
-' "$since" 2>/dev/null)" || return 0
-
-    if [[ -n "$found" ]]; then
-        echo "[WARNING] Drupal logged new errors with PHP $PHP_CHANGE_NEW:"
-        printf '%s\n' "$found" | sed 's/^/            - /'
-        echo "          Details: $(get_project_drush_hint "$PHP_CHANGE_NEW") watchdog:show --severity=Error"
-    else
-        echo "[OK] No new errors in the Drupal log"
-    fi
-}
-
 # What only a person can check: the installer opens the front page only.
 print_manual_php_checks() {
     local machine_name="$1"

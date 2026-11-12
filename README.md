@@ -597,8 +597,14 @@ The registry keeps the newer `drupal_version` after a manual restore
 (the installer itself reads the version from the code, so `--update` and
 `--upgrade` work correctly).
 
-Errors in the Drupal log are compared too: only errors logged **during**
-the update are reported, not older ones.
+Errors in the Drupal log (dblog) are compared by **kind**: the type and
+the message without numbers, ids and HTML, so "Indexing item 77 failed"
+and "Indexing item 912 failed" are one kind. Before the run the installer
+reads the last 200 errors; kinds that are there three times or more
+already are shown in the plan ("errors that repeat already"). Afterwards
+only kinds that were not in the log before count as new (a warning, and
+`[DONE WITH PROBLEMS]`); more of the old kinds are only counted. The same
+comparison runs after `--upgrade` and `--php`.
 
 If the project is in git, the installer lists what changed (composer
 files, and the files the core scaffold writes, such as `web/index.php` and
@@ -674,9 +680,20 @@ installed.
 
 The most common finding in custom code is an `.info.yml` that allows only
 the current major (`core_version_requirement: ^10`): Drupal 11 refuses
-such a module or theme. The installer prints the exact one-line fix
-(`^10 || ^11`, which keeps the site working on Drupal 10 until the
-upgrade); commit it, then run the upgrade. Twig deprecations such as
+such a module or theme. The installer looks for these itself, before the
+scan and also without Upgrade Status: in the custom folders
+(`web/modules/custom`, `web/themes/custom`, `web/profiles/custom` and the
+`drupal-custom-*` installer-paths; not `tests/`), checked with the
+project's own `composer/semver`. It shows each line and its change
+(`^10` → `^10 || ^11`, which keeps the site working on Drupal 10) and,
+in the real run, asks whether to change them (default: no). Only that
+line changes, and only when the project is in git and these files have
+no uncommitted changes, so `git diff` shows the change and `git checkout`
+undoes it; otherwise the lines are only shown. The change is in the
+commit line at the end. When one of them is the site's **default or
+admin theme**, a warning says so: if that theme's code does not work on
+the new major, every page fails; check it first or switch to a core
+theme for the upgrade. Contrib is never changed (it needs a release). Twig deprecations such as
 the `spaceless` filter are shown as warnings: they still work with Twig 3,
 which Drupal 11 uses, and break only with Twig 4.
 
@@ -694,7 +711,12 @@ neither allows nor refuses yet (`allow-plugins`; for example
 `symfony/runtime`), Composer would stop in the middle of the install. The
 trial finds such plugins first, and you decide before anything changes:
 allow them, install them with the plugin part switched off, or stop. When a drupal.org project has no release for the new major
-that your composer.json allows, the installer names it and you decide:
+that your composer.json allows, the installer names it and looks on
+drupal.org (`composer show --all`; the 8 newest stable releases) for the
+newest release whose `drupal/core` requirement allows the new release.
+When it finds one, it shows the command: `-W` when that release supports
+the current core too, `--no-update` when it needs the new core. You
+decide:
 
 1. **stop** – nothing changes. Then, for a newer release that supports
    the new major: if it supports the current core too, install it now
@@ -709,7 +731,14 @@ that your composer.json allows, the installer names it and you decide:
    ignores its `drupal/core` requirement. Its code was not released for the
    new major and may break pages or the site: test it, and remove it from
    `extra.drupal-lenient.allowed-list` once a real release exists. The
-   registry notes it (`lenient_packages`).
+   registry notes it (`lenient_packages`);
+3. **run the commands** (only when releases were found) – the
+   `composer require` commands run now, the `-W` ones first (they install
+   the release on the current core and may need `./drush updatedb`), then
+   the `--no-update` ones (composer.json only). Then the run **stops**:
+   check the site, commit (the commit line is printed), and run
+   `--upgrade` again. A failed command changes nothing (Composer puts
+   composer.json back) and stops the rest.
 
 ### The upgrade
 
@@ -961,8 +990,8 @@ advice: with errors you are asked whether to go on.
 what packages declare. A custom module can still call something the new
 PHP removed on a page that is only opened later, or contrib can declare
 a loose `php` requirement. So after the change the installer checks Drush
-and the front page with the new PHP, reports **new errors in the Drupal
-log** (dblog), and lists what to try yourself: log in, open the pages your
+and the front page with the new PHP, reports **new kinds of errors in the
+Drupal log** (dblog; compared by kind, as for `--update`), and lists what to try yourself: log in, open the pages your
 modules provide, submit a form, `./drush cron`,
 `./drush watchdog:show --severity=Error`. Going back is one command,
 `./install.sh --php mysite <old version>`, because the old PHP stays

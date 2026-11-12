@@ -70,10 +70,10 @@ run_upgrade_project() {
     local target
     local dry_output
     local dry_status
+    local choice_status
     local blocked
     local blockers
     local errors_before=""
-    local log_before=""
 
     # Read in lib/update/ (restore, backup and advisories messages).
     # shellcheck disable=SC2034
@@ -121,6 +121,7 @@ run_upgrade_project() {
         return 1
     fi
 
+    offer_info_yml_fixes "$to_major" "$target"
     run_upgrade_status_check "$to_major" "$upgrade_status_constraint" || return 1
 
     prepare_upgrade_requirements "$target" "$drush_constraint"
@@ -157,7 +158,13 @@ run_upgrade_project() {
         blockers="$(get_upgrade_blocking_projects "$dry_output")"
 
         if [[ -n "$blockers" ]]; then
-            if ! choose_blocking_projects_handling "$blockers" "$to_major"; then
+            choice_status=0
+            choose_blocking_projects_handling "$blockers" "$to_major" "$machine_name" || choice_status=$?
+
+            # 2: composer require ran (option 3); it said what changed.
+            if [[ "$choice_status" -eq 2 ]]; then
+                return 1
+            elif [[ "$choice_status" -ne 0 ]]; then
                 echo
                 echo "Upgrade stopped; nothing was changed."
                 return 1
@@ -208,6 +215,8 @@ run_upgrade_project() {
 
     echo "Upgrade Status: $UPGRADE_STATUS_SUMMARY"
     print_pending_database_updates | sed 's/^Pending:      /Pending:       /; s/^              /               /'
+    remember_log_errors "$RECORD_PHP_VERSION"
+    print_repeating_log_errors | sed 's/^Log:          /Log:           /; s/^              /               /'
     echo
     echo "Steps: backup -> maintenance mode -> composer -> drush updatedb -> cache -> checks"
     echo "On failure: code, composer.json and database are restored automatically."
@@ -228,7 +237,6 @@ run_upgrade_project() {
     fi
 
     errors_before="$(get_project_requirement_errors)" || errors_before=""
-    log_before="$(get_last_log_error_id)"
     remember_config_differences
 
     if ! confirm_upgrade "$machine_name"; then
@@ -302,7 +310,7 @@ perform_upgrade() {
         return 1
     fi
 
-    report_update_results "$errors_before" "$log_before"
+    report_update_results "$errors_before"
 
     update_record_version "$record" "$UPDATE_TARGET" || true
     set_project_field "$record" upgraded_from "$(date +%F) $current" || true
@@ -342,7 +350,8 @@ perform_upgrade() {
         echo "    $(get_project_drush_hint) pm:uninstall upgrade_status && $(get_project_composer_hint) remove --dev drupal/upgrade_status"
     fi
 
-    echo "Back to Drupal $current later (the site's changes since now are lost then):"
+    echo "Back to Drupal $current later (database changes since now are lost then; the"
+    echo "restore's plan warns about contrib added and custom code changed since):"
     echo "  ./install.sh --restore $machine_name $UPDATE_BACKUP_DIR"
     echo
     report_config_after_update

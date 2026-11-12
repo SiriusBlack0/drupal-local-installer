@@ -134,6 +134,16 @@ case "${args[0]}" in
         fi
         ;;
     show)
+        # drupal.org releases of drupal/pathauto: 2.0.0 requires
+        # PATHAUTO_REQ (default: both majors), 1.13.0 only Drupal 10.
+        if [[ "${args[1]}" == "drupal/pathauto" ]]; then
+            case "${args[2]}" in
+                2.0.0) echo "{\"name\":\"drupal/pathauto\",\"requires\":{\"drupal/core\":\"${PATHAUTO_REQ:-^10.3 || ^11}\"}}" ;;
+                1.13.0) echo '{"name":"drupal/pathauto","requires":{"drupal/core":"^9.4 || ^10"}}' ;;
+                *) echo '{"name":"drupal/pathauto","versions":["dev-2.x","2.0.0-beta1","1.13.0","2.0.0"]}' ;;
+            esac
+            exit 0
+        fi
         echo "{\"name\":\"${args[-1]}\",\"versions\":${COMPOSER_VERSIONS:-[]}}"
         ;;
     config)
@@ -327,9 +337,21 @@ case "$1" in
     core:requirements)
         echo '[{"title":"Cron"}]'
         ;;
+    config:get)
+        echo '{"default":"acme","admin":"claro"}'
+        ;;
     watchdog:show)
         # WATCHDOG_NEW=1: Drupal 11 logs a new error; entry 5 is old.
-        if [[ "${WATCHDOG_NEW:-0}" == "1" ]] && grep -q "'11\." "$web/core/lib/Drupal.php"; then
+        # WATCHDOG_REPEAT=1: a search index error repeats (other numbers
+        # each time) before and after; nothing new.
+        if [[ "${WATCHDOG_REPEAT:-0}" == "1" ]]; then
+            old='"4":{"wid":"4","type":"search_api","message":"Indexing item 77 of <em>Project Financial</em> failed"},"3":{"wid":"3","type":"search_api","message":"Indexing item 76 of <em>Project Financial</em> failed"},"2":{"wid":"2","type":"search_api","message":"Indexing item 75 of <em>Project Financial</em> failed"},"1":{"wid":"1","type":"smtp","message":"old SMTP error"}'
+            if grep -q "'11\." "$web/core/lib/Drupal.php"; then
+                echo '{"7":{"wid":"7","type":"search_api","message":"Indexing item 912 of <em>Project Financial</em> failed"},"6":{"wid":"6","type":"search_api","message":"Indexing item 911 of <em>Project Financial</em> failed"},'"$old"'}'
+            else
+                echo "{$old}"
+            fi
+        elif [[ "${WATCHDOG_NEW:-0}" == "1" ]] && grep -q "'11\." "$web/core/lib/Drupal.php"; then
             echo '{"6":{"wid":"6","type":"php","message":"Error: Call to undefined function old_api() in shop_page()"},"5":{"wid":"5","type":"smtp","message":"old SMTP error"}}'
         else
             echo '{"5":{"wid":"5","type":"smtp","message":"old SMTP error"}}'
@@ -627,6 +649,25 @@ fi
 # Test 5: drupal.org projects without a Drupal 11 release: the developer
 # decides (stop, or the lenient plugin).
 
+# The project's composer/semver (vendor/autoload.php), for the checks
+# that compare versions with constraints.
+make_semver_stub() {
+    mkdir -p "$PROJECT_PATH/vendor"
+    # A small stand-in for composer/semver: ^N and || only.
+    cat > "$PROJECT_PATH/vendor/autoload.php" <<'PHP'
+<?php
+namespace Composer\Semver;
+class Semver {
+    public static function satisfies($version, $constraint) {
+        foreach (explode('||', $constraint) as $part) {
+            if (preg_match('/^\s*\^(\d+)/', $part, $m) && (int) $m[1] === (int) $version) { return true; }
+        }
+        return false;
+    }
+}
+PHP
+}
+
 make_project theta
 
 if output="$(printf '3\n' | BLOCK_CONTRIB=1 REMOVE_DRY_RUN=1 run_upgrade_project theta)"; then
@@ -665,6 +706,57 @@ if output="$(printf '3\n2\ntheta\n' | BLOCK_CONTRIB=1 run_upgrade_project theta)
     pass "Choice 2 (lenient): plugin and list added after the backup; upgraded; noted in the registry"
 else
     fail "contrib lenient: $output / $(cat "$CALLS_FILE")"
+fi
+
+# A release for Drupal 11 found on drupal.org: shown with its command;
+# choice 3 runs it (-W when it supports Drupal 10 too, --no-update when
+# it needs Drupal 11), then the run stops for a commit.
+
+make_project theta
+make_semver_stub
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Before"
+: > "$CALLS_FILE"
+
+if output="$(printf '3\n' | BLOCK_CONTRIB=1 REMOVE_DRY_RUN=1 run_upgrade_project theta)"; then
+    fail "Blocking contrib with a release accepted in the dry run"
+elif [[ "$output" == *"release 2.0.0 supports Drupal 11 and 10.6.19:"* &&
+        "$output" == *"composer require 'drupal/pathauto:^2.0' -W"* &&
+        "$output" == *"3) Run the composer require commands shown above now, then stop"* &&
+        "$output" == *"(Dry run: a real run asks here.)"* ]] && composer_unchanged theta &&
+     ! grep -q "composer require drupal/pathauto" "$CALLS_FILE"; then
+    pass "Blocking project with a release for both majors: found on drupal.org, its command shown (newest stable, not beta)"
+else
+    fail "release lookup: $output"
+fi
+
+if output="$(printf '3\n3\n' | BLOCK_CONTRIB=1 run_upgrade_project theta)"; then
+    fail "Choice 3 went on with the upgrade"
+elif [[ "$output" == *"[OK] Changed: drupal/pathauto ^2.0"* &&
+        "$output" == *"updatedb, and check the site."* &&
+        "$output" == *"upgrade again: ./install.sh --upgrade theta"* &&
+        "$output" == *"git commit -m \"Allow drupal/pathauto ^2.0 for Drupal 11\""* ]] &&
+     grep -q "composer require drupal/pathauto:^2.0 -W" "$CALLS_FILE" &&
+     grep -q '"drupal/pathauto": "^2.0"' "$PROJECT_PATH/composer.json" &&
+     ! grep -q "sudo-asked" "$CALLS_FILE" && [[ "$(version_of theta)" == "10.6.19" ]]; then
+    pass "Choice 3: composer require -W ran, then stopped with the commit line; no sudo, core unchanged"
+else
+    fail "choice 3: $output / $(cat "$CALLS_FILE")"
+fi
+
+make_project theta
+make_semver_stub
+: > "$CALLS_FILE"
+
+if output="$(printf '3\n3\n' | PATHAUTO_REQ='^11' BLOCK_CONTRIB=1 run_upgrade_project theta)"; then
+    fail "Choice 3 (--no-update) went on"
+elif [[ "$output" == *"release 2.0.0 supports Drupal 11, not 10.6.19:"* &&
+        "$output" == *"[OK] Changed: drupal/pathauto ^2.0"* && "$output" != *"updatedb, and check"* ]] &&
+     grep -q "composer require drupal/pathauto:^2.0 --no-update" "$CALLS_FILE"; then
+    pass "Release only for Drupal 11: --no-update (composer.json only)"
+else
+    fail "choice 3 no-update: $output"
 fi
 
 make_project iota
@@ -726,7 +818,7 @@ echo "draft" > "$PROJECT_PATH/web/index.php.notes"
 
 if output="$(printf '3\nrho\ny\n' | WITH_RECIPES=1 WATCHDOG_NEW=1 run_upgrade_project rho)" &&
    [[ "$output" == *"[DONE WITH PROBLEMS] rho: Drupal 10.6.19 -> 11.4.2"* &&
-      "$output" == *"  - new errors in the Drupal log"* &&
+      "$output" == *"  - new kinds of errors in the Drupal log"* &&
       "$output" == *"Changed in git by this run ("* &&
       "$output" == *" M composer.json"* && "$output" == *" M web/core/lib/Drupal.php"* &&
       "$output" == *"recipes/ is written by Composer (like vendor/), so it usually stays out of git."* &&
@@ -734,7 +826,7 @@ if output="$(printf '3\nrho\ny\n' | WITH_RECIPES=1 WATCHDOG_NEW=1 run_upgrade_pr
       "$output" == *"Other changes in the folder were there before this run; they are left out."* &&
       "$output" == *"git add -A -- "*"composer.json"*".gitignore"*" && git commit -m \"Drupal core 11.4.2 (upgrade from 10.6.19)\""* &&
       "$output" != *"notes.csv"* && "$output" != *"recipes/ &&"* &&
-      "$output" == *"[WARNING] Drupal logged new errors during the upgrade:"* &&
+      "$output" == *"[WARNING] Drupal logged new kinds of errors during the upgrade:"* &&
       "$output" == *"php: Error: Call to undefined function old_api() in shop_page()"* &&
       "$output" != *"old SMTP error"* ]]; then
     pass "Project in git: only the run's changes in the commit line (not the developer's files); recipes/ to .gitignore on 'y'; only new log errors"
@@ -870,6 +962,98 @@ if output="$(printf '3\nchi\n' | CONFIG_SYNC="$PROJECT_PATH/config/sync" run_upg
     pass "After the upgrade: configuration export compared with the database; export, not import"
 else
     fail "config after upgrade: $output"
+fi
+
+# Custom code with "core_version_requirement: ^10": found with the
+# project's composer/semver, shown (the default theme warned about), and
+# changed after 'y' when git has no other changes in those files.
+
+make_custom_code() {
+    mkdir -p "$PROJECT_PATH/web/modules/custom/shop" "$PROJECT_PATH/web/themes/custom/acme" \
+        "$PROJECT_PATH/web/modules/custom/ready" "$PROJECT_PATH/web/modules/contrib/pathauto"
+    make_semver_stub
+    printf 'name: Shop\ntype: module\ncore_version_requirement: ^10\npackage: Custom\n' > "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"
+    printf "name: Acme\ntype: theme\ncore_version_requirement: '^9 || ^10'\nbase theme: false\n" > "$PROJECT_PATH/web/themes/custom/acme/acme.info.yml"
+    printf 'name: Ready\ntype: module\ncore_version_requirement: ^10 || ^11\n' > "$PROJECT_PATH/web/modules/custom/ready/ready.info.yml"
+    printf 'name: Pathauto\ntype: module\ncore_version_requirement: ^10\n' > "$PROJECT_PATH/web/modules/contrib/pathauto/pathauto.info.yml"
+}
+
+make_project tau
+make_custom_code
+
+if output="$(printf '3\n' | REMOVE_DRY_RUN=1 run_upgrade_project tau)" &&
+   [[ "$output" == *"Custom code that allows only the current major (core_version_requirement);"* &&
+      "$output" == *"  web/modules/custom/shop/shop.info.yml: ^10  ->  ^10 || ^11"* &&
+      "$output" == *"  web/themes/custom/acme/acme.info.yml: ^9 || ^10  ->  ^9 || ^10 || ^11"* &&
+      "$output" != *"ready.info.yml"* && "$output" != *"pathauto.info.yml:"* &&
+      "$output" == *"[WARNING] acme is the site's default theme: if its templates or code do not work on Drupal 11,"* &&
+      "$output" == *"[DRY RUN] Not changed; the real run offers it."* ]] &&
+   grep -qx 'core_version_requirement: ^10' "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"; then
+    pass "core_version_requirement of custom code: found with semver, shown with the default theme warned; dry run changes nothing"
+else
+    fail "info.yml offer dry run: $output"
+fi
+
+# Not in git: only shown.
+if output="$(printf '3\ntau\n' | run_upgrade_project tau)" &&
+   [[ "$output" == *"[INFO] Not changed by the installer: the project is not in git"* &&
+      "$output" != *"[OK] web/modules/custom/shop/shop.info.yml"* ]] &&
+   grep -qx 'core_version_requirement: ^10' "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"; then
+    pass "Not in git: the lines are shown, not changed"
+else
+    fail "info.yml no git: $output"
+fi
+
+make_project tau
+make_custom_code
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Before"
+
+if output="$(printf 'y\n3\ntau\n' | run_upgrade_project tau)" &&
+   [[ "$output" == *"[OK] web/modules/custom/shop/shop.info.yml"* &&
+      "$output" == *"[OK] web/themes/custom/acme/acme.info.yml"* &&
+      "$output" == *"[DONE] tau: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" == *"git add -A -- "*"web/modules/custom/shop/shop.info.yml"* ]] &&
+   [[ "$(cat "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml")" == $'name: Shop\ntype: module\ncore_version_requirement: ^10 || ^11\npackage: Custom' ]] &&
+   grep -qx 'core_version_requirement: ^9 || ^10 || ^11' "$PROJECT_PATH/web/themes/custom/acme/acme.info.yml" &&
+   grep -qx 'core_version_requirement: ^10' "$PROJECT_PATH/web/modules/contrib/pathauto/pathauto.info.yml"; then
+    pass "In git, 'y': only that line changed in custom code (contrib untouched); in the commit line"
+else
+    fail "info.yml change: $output"
+fi
+
+make_project tau
+make_custom_code
+git -C "$PROJECT_PATH" init -q
+git -C "$PROJECT_PATH" add -A
+git -C "$PROJECT_PATH" -c user.email=t@t -c user.name=t commit -q -m "Before"
+echo "description: work in progress" >> "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"
+
+output="$(printf '3\nn\n' | run_upgrade_project tau)" || true
+
+if [[ "$output" == *"[INFO] Not changed by the installer: these files have changes that are not"* &&
+      "$output" != *"[OK] web/modules/custom/shop/shop.info.yml"* ]] &&
+   grep -qx 'core_version_requirement: ^10' "$PROJECT_PATH/web/modules/custom/shop/shop.info.yml"; then
+    pass "Uncommitted changes in those files: shown, not changed"
+else
+    fail "info.yml dirty: $output"
+fi
+
+# Errors that repeat in the log (a search index) are shown in the plan
+# and not counted as new afterwards, though their ids and numbers differ.
+
+make_project sigma2
+
+if output="$(printf '3\nsigma2\n' | WATCHDOG_REPEAT=1 run_upgrade_project sigma2)" &&
+   [[ "$output" == *"Log:           errors that repeat already (last 200 errors); afterwards they are"* &&
+      "$output" == *"- search_api: Indexing item 77 of Project Financial failed (x3)"* &&
+      "$output" == *"[OK] No new kinds of errors in the Drupal log: 2 more of the kinds that"* &&
+      "$output" == *"[DONE] sigma2: Drupal 10.6.19 -> 11.4.2"* &&
+      "$output" != *"  - new kinds of errors in the Drupal log"* ]]; then
+    pass "Repeating log errors: shown in the plan, not counted as new afterwards (other ids and numbers)"
+else
+    fail "repeating log errors: $output"
 fi
 
 # Differences of before the run are not put down to drush updatedb.
