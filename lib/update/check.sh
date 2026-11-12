@@ -340,6 +340,11 @@ run_check_updates() {
         web_root="$(read_project_field "$record" web_root)"
         [[ -n "$web_root" ]] || web_root="$path/web"
 
+        if [[ "$(read_project_field "$record" runtime)" == "ddev" ]]; then
+            printf '%-20s %s\n' "$name" "skipped: DDEV project (ddev composer outdated drupal/*)"
+            continue
+        fi
+
         if [[ ! -f "$path/composer.json" || ! -f "$path/composer.lock" ]]; then
             printf '%-20s %s\n' "$name" "skipped: not a Composer project"
             continue

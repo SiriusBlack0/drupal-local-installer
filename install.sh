@@ -175,6 +175,15 @@ main() {
 
     print_banner
 
+    # Native (system services) or DDEV (containers); DDEV only when the
+    # computer is ready for it.
+    prompt_project_runtime
+
+    if [[ "$PROJECT_RUNTIME" == "ddev" ]]; then
+        run_ddev_project
+        return
+    fi
+
     # Phase 1: questions only, no system changes.
     run_configuration_ui
 
@@ -211,6 +220,29 @@ main() {
     fi
 
     print_project_summary
+}
+
+# A new DDEV project: questions, then the project folder (the only sudo
+# step), DDEV and Drupal.
+run_ddev_project() {
+    run_ddev_configuration_ui
+    init_log "$PROJECT_MACHINE_NAME"
+    STEP_TOTAL=5
+    [[ "${GIT_SETUP:-no}" == "yes" ]] && STEP_TOTAL=6
+
+    if ! require_sudo "Installation cancelled; nothing was changed."; then
+        exit 1
+    fi
+
+    [[ -n "$LOG_FILE" ]] && { echo; echo "Full output is written to: $LOG_FILE"; }
+
+    if ! run_ddev_installation_workflow; then
+        echo "[ERROR] Installation failed; what it created was removed."
+        [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
+        exit 1
+    fi
+
+    print_ddev_project_summary
 }
 
 print_project_summary() {

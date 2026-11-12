@@ -127,7 +127,10 @@ never executed.
 shows all registered projects and marks those whose directory is gone.
 The DRUPAL column is read from the code itself (the registry may be older,
 for example after a restore by hand); a version followed by `?` comes
-from the registry because the code could not be read.
+from the registry because the code could not be read. The RUNTIME
+column says how the project runs: `native` (the system's PHP-FPM, Nginx
+and database) or `ddev` (containers, see below); records written before
+DDEV support have no such field and are native.
 
 ## MariaDB and MySQL
 
@@ -1080,6 +1083,59 @@ Windows as well and point WSL to its certificate authority, as described
 in [DDEV's WSL2 guide](https://ddev.com/ddev-local/ddev-wsl2-getting-started/);
 until then the browser warns about `https://` (the site works).
 
+## New projects with DDEV
+
+When the computer is ready for DDEV (`--ddev-setup` says `[OK] Ready for
+DDEV projects.`), `./install.sh` asks first:
+
+```
+How should the project run?
+  1) Native: the system's PHP-FPM, Nginx and database (http://<name>.localhost)
+  2) DDEV:   containers with their own PHP and database
+             (https://<name>.ddev.site:8444)
+```
+
+Enter keeps the native way. When the computer is not ready, the question
+is not asked (with Docker or DDEV installed, a line points to
+`--ddev-setup`).
+
+With DDEV the questions are the same, except:
+
+- **PHP**: every version the compatibility table allows for the Drupal
+  release (Enter = the newest): it runs in the container, nothing is
+  installed on the system;
+- **database**: MariaDB 11.8 (DDEV's default) or 10.11, MySQL 8.4 or 8.0,
+  PostgreSQL 17 or 16, as far as the Drupal major supports them; it runs
+  in its own container (database, user and password `db`, which DDEV
+  manages: not a secret, never on the system);
+- no database name, user or password questions.
+
+Then, as you: the project folder in `/var/www/<name>` (the only step with
+sudo, like native projects), `ddev config` (type `drupal11`/`drupal10`,
+docroot `web`, the PHP and database chosen), `ddev start`, `ddev composer
+create-project` and `ddev composer require drush/drush` (Composer in the
+container), `./drush`, `./composer` and `./start` (they call `ddev drush`,
+`ddev composer` and `ddev start`, from any folder), `drush site:install`.
+The administrator password reaches the container through a file in the
+project folder (mode 600, removed right after), never through a command
+line or the log. The site must answer through DDEV's router as an
+installed Drupal site. If anything fails, `ddev delete --omit-snapshot`
+removes the containers and the database, and the folder is removed.
+
+No package, Nginx site, PHP-FPM pool or system database is created. The
+registry records `runtime=ddev` and DDEV's URL
+(`https://<name>.ddev.site:<https port>`; `_` in the name becomes `-`,
+as host names need). With git, `.ddev/` is committed (the project's DDEV
+configuration, useful to anyone who clones it); `settings.ddev.php`,
+which DDEV writes for this computer, is not.
+
+Afterwards, in the project folder: `./drush`, `./composer`, `./start`
+(after a reboot), and DDEV's own `ddev describe`, `ddev stop`,
+`ddev logs`. For now `--update`, `--upgrade`, `--restore`, `--php`,
+`--remove` and `--launchers` say that they support native projects only
+(`ddev delete` removes a DDEV project; `--unregister` takes it out of the
+list); `--check-updates` skips DDEV projects.
+
 ## Tab completion (`--install-completion`)
 
 ```bash
@@ -1150,7 +1206,7 @@ temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
 - [x] Launchers for adopted projects (`--launchers`, offered after `--scan`)
 - [x] New projects git ready (`settings.local.php`, `.gitignore`, initial commit)
 - [x] DDEV readiness: Docker, DDEV, mkcert, router ports (`--ddev-setup`)
-- [ ] New projects with DDEV
+- [x] New projects with DDEV (`runtime=ddev`, RUNTIME in `--list`)
 - [ ] Move a native project to DDEV
 - [ ] `--list`, `--remove`, `--launchers` for DDEV projects
 - [ ] `--update`, `--upgrade`, `--restore`, `--php` for DDEV projects

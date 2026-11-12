@@ -99,6 +99,17 @@ load_project_record() {
         return 1
     fi
 
+    # DDEV projects have no Nginx site, pool or system database: the
+    # commands that change those (and --update, --php, --restore,
+    # --launchers) do not support them yet.
+    if [[ "$(read_project_field "$record" runtime)" == "ddev" ]]; then
+        echo "[NOT YET] $machine_name runs with DDEV; this command supports native projects only"
+        echo "          so far. In the project folder, DDEV's own commands work:"
+        echo "          ./drush, ./composer, ddev describe, ddev delete (removes containers"
+        echo "          and database). --unregister takes it out of the list."
+        return 1
+    fi
+
     RECORD_PROJECT_PATH="$(read_project_field "$record" project_path)" || RECORD_PROJECT_PATH=""
     RECORD_PHP_VERSION="$(read_project_field "$record" php_version)" || RECORD_PHP_VERSION=""
     RECORD_DATABASE_ENGINE="$(read_project_field "$record" database_engine)" || RECORD_DATABASE_ENGINE=""

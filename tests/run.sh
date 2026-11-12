@@ -51,6 +51,7 @@ SUITES=(
     "Git Repository Tests|bash tests/git.sh"
     "Launcher Tests|bash tests/launchers.sh"
     "DDEV Setup Tests|bash tests/ddev_setup.sh"
+    "DDEV Project Tests|bash tests/ddev_project.sh"
 )
 
 echo "======================================"

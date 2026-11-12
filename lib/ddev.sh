@@ -9,3 +9,5 @@ source "$(dirname "${BASH_SOURCE[0]}")/ddev/checks.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/ddev/sources.sh"
 # shellcheck source=lib/ddev/setup.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ddev/setup.sh"
+# shellcheck source=lib/ddev/project.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ddev/project.sh"

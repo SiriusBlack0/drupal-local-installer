@@ -63,7 +63,7 @@ loaders = {
     "update": ["check", "backup", "snapshot", "advisories", "log", "update"],
     "upgrade": ["checks", "custom_code", "upgrade_status", "composer", "upgrade"],
     "php_change": ["pool", "launchers", "checks", "php_change"],
-    "ddev": ["checks", "sources", "setup"],
+    "ddev": ["checks", "sources", "setup", "project"],
 }
 
 loaded = set(modules)

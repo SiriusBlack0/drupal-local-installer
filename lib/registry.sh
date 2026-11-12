@@ -17,6 +17,7 @@ declare -gA REGISTRY_VALUES=()
 REGISTRY_FIELDS=(
     format
     managed_by
+    runtime
     support
     name
     machine_name
@@ -206,6 +207,7 @@ get_registry_value() {
     case "$1" in
         format) echo "$REGISTRY_FORMAT" ;;
         managed_by) echo "installer" ;;
+        runtime) echo "native" ;;
         support) echo "supported" ;;
         web_root) echo "$PROJECT_PATH/web" ;;
         name) echo "$PROJECT_NAME" ;;
@@ -455,7 +457,7 @@ list_registered_projects() {
         [[ -f "$record" ]] || continue
 
         if [[ "$found" -eq 0 ]]; then
-            printf '%-20s %-34s %-5s %-9s %-11s %-9s %s\n' "PROJECT" "URL" "PHP" "DRUPAL" "DATABASE" "TYPE" "STATE"
+            printf '%-20s %-36s %-5s %-9s %-11s %-7s %-9s %s\n' "PROJECT" "URL" "PHP" "DRUPAL" "DATABASE" "RUNTIME" "TYPE" "STATE"
             found=1
         fi
 
@@ -472,12 +474,14 @@ list_registered_projects() {
             esac
         fi
 
-        printf '%-20s %-34s %-5s %-9s %-11s %-9s %s\n' \
+        # Records written before DDEV support have no runtime: native.
+        printf '%-20s %-36s %-5s %-9s %-11s %-7s %-9s %s\n' \
             "$machine_name" \
             "$(read_project_field "$record" url)" \
             "$(read_project_field "$record" php_version | grep . || echo "?")" \
             "$(get_listed_drupal_version "$record" "$project_path")" \
             "$(read_project_field "$record" database_engine)" \
+            "$(read_project_field "$record" runtime | grep . || echo native)" \
             "$(read_project_field "$record" managed_by || echo installer)" \
             "$state"
     done
