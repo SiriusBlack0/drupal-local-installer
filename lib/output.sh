@@ -210,6 +210,10 @@ Options:
   --php-source
               Add packages.sury.org as a source of other PHP versions
               (asks first; Ubuntu itself has one PHP version per release)
+  --ddev-setup
+              Check that this computer is ready for DDEV projects (Docker,
+              DDEV, mkcert, router ports) and set up what is missing
+              (asks first; --dry-run only checks)
   --install-completion
               Tab completion for options, project names and PHP versions
               (for your user only)
@@ -226,7 +230,7 @@ USAGE
 # Return codes: 0 install, 1 error, 2 help shown, 3 --list, 4 --remove,
 # 5 --scan, 6 --unregister, 7 --check-updates, 8 --update,
 # 9 --php-source, 10 --php, 11 --install-completion, 12 --upgrade,
-# 13 --restore, 14 --launchers.
+# 13 --restore, 14 --launchers, 15 --ddev-setup.
 REMOVE_PROJECT=""
 PHP_TARGET_VERSION=""
 
@@ -241,6 +245,7 @@ parse_options() {
             --scan) action="scan" ;;
             --check-updates) action="check-updates" ;;
             --php-source) action="php-source" ;;
+            --ddev-setup) action="ddev-setup" ;;
             --install-completion) action="install-completion" ;;
             --php)
                 if [[ -z "${2:-}" || "$2" == --* || ! "${3:-}" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -353,8 +358,8 @@ parse_options() {
         shift
     done
 
-    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" && "$action" != "restore" && "$action" != "launchers" ]]; then
-        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade, --restore, --launchers and --php"
+    if [[ "${REMOVE_DRY_RUN:-0}" -eq 1 && "$action" != "remove" && "$action" != "update" && "$action" != "upgrade" && "$action" != "php" && "$action" != "restore" && "$action" != "launchers" && "$action" != "ddev-setup" ]]; then
+        echo "[ERROR] --dry-run only works with --remove, --update, --upgrade, --restore, --launchers, --php and --ddev-setup"
         return 1
     fi
 
@@ -371,6 +376,7 @@ parse_options() {
         upgrade) return 12 ;;
         restore) return 13 ;;
         launchers) return 14 ;;
+        ddev-setup) return 15 ;;
     esac
 
     return 0

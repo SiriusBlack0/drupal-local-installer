@@ -65,7 +65,7 @@ _drupal_local_installer() {
     local name=""
     local word
     local i
-    local options="--list --scan --check-updates --update --upgrade --restore --launchers --php --php-source --remove --unregister --install-completion --verbose --step --help"
+    local options="--list --scan --check-updates --update --upgrade --restore --launchers --php --php-source --ddev-setup --remove --unregister --install-completion --verbose --step --help"
 
     COMPREPLY=()
 
@@ -88,7 +88,7 @@ _drupal_local_installer() {
                 action_index="$i"
                 name="${COMP_WORDS[i + 1]:-}"
                 ;;
-            --list|--scan|--check-updates|--php-source|--install-completion|--help)
+            --list|--scan|--check-updates|--php-source|--ddev-setup|--install-completion|--help)
                 action="${COMP_WORDS[i]}"
                 action_index="$i"
                 ;;
@@ -114,7 +114,7 @@ _drupal_local_installer() {
     fi
 
     case "$action" in
-        --update|--upgrade|--restore|--launchers|--remove|--php)
+        --update|--upgrade|--restore|--launchers|--remove|--php|--ddev-setup)
             for word in "${COMP_WORDS[@]}"; do
                 [[ "$word" == "--dry-run" ]] && return 0
             done

@@ -37,6 +37,7 @@ modules = [
     "lib/restore.sh",
     "lib/php_source.sh",
     "lib/php_change.sh",
+    "lib/ddev.sh",
     "lib/launchers.sh",
     "lib/completion.sh",
     "lib/workflow.sh",
@@ -62,6 +63,7 @@ loaders = {
     "update": ["check", "backup", "snapshot", "advisories", "log", "update"],
     "upgrade": ["checks", "custom_code", "upgrade_status", "composer", "upgrade"],
     "php_change": ["pool", "launchers", "checks", "php_change"],
+    "ddev": ["checks", "sources", "setup"],
 }
 
 loaded = set(modules)

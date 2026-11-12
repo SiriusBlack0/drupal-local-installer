@@ -276,6 +276,15 @@ else
     fail "--launchers: $status/$status2"
 fi
 REMOVE_DRY_RUN=0
+status=0
+parse_options --ddev-setup --dry-run > /dev/null || status=$?
+
+if [[ "$status" -eq 15 && "$REMOVE_DRY_RUN" == "1" ]]; then
+    pass "--ddev-setup [--dry-run] recognised"
+else
+    fail "--ddev-setup: $status"
+fi
+REMOVE_DRY_RUN=0
 
 # Test 9: copy_to_log shows the lines and copies them into the log.
 

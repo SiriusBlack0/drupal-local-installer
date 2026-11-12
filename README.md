@@ -27,6 +27,7 @@ correct PHP version.
 ./install.sh --verbose  # show the full output of every command
 ./install.sh --help
 ./install.sh --install-completion   # Tab completion, once (see below)
+./install.sh --ddev-setup  # is this computer ready for DDEV? (see below)
 ```
 
 The installer works in three phases:
@@ -1032,6 +1033,53 @@ manual restore steps) also name `./drush` only when the project has it.
 Settings in the new version's `fpm/php.ini` that differ from the old one
 (`memory_limit`, `upload_max_filesize`, ...) are listed at the end.
 
+## DDEV: is this computer ready? (`--ddev-setup`)
+
+[DDEV](https://ddev.com) runs a Drupal project in containers (web server
+with PHP, database, router) instead of the system's PHP-FPM, Nginx and
+database. It runs on a Docker engine. Projects with DDEV come in the next
+steps; `--ddev-setup` prepares the computer:
+
+```bash
+./install.sh --ddev-setup --dry-run   # only checks and shows the plan
+./install.sh --ddev-setup             # sets up what is missing, after "y"
+```
+
+It checks, and shows each line as `[OK]`, `[MISSING]` or `[TO SET]`:
+
+| What | Needed for | If missing |
+|---|---|---|
+| Docker engine | the containers | `docker-ce` and its plugins from Docker's own package source ([docs.docker.com](https://docs.docker.com/engine/install/ubuntu/)); what DDEV recommends, also inside WSL2. A Docker that is there already is used as it is: docker-ce, Ubuntu's `docker.io`, or Docker Desktop with its WSL integration |
+| `docker compose` | DDEV | the compose plugin of the same source (`docker-compose-plugin`, or Ubuntu's `docker-compose-v2` next to `docker.io`) |
+| docker service | the engine | started (`systemctl start`, never restarted) |
+| docker group | Docker without sudo, which DDEV needs | you are added (`usermod -aG docker`). **Members can start any container as root, so the group is as much as sudo**; usual on a computer for development. It takes effect after logging in again |
+| systemd (WSL) | the engine in WSL | cannot be switched on from inside: add `[boot]` `systemd=true` to `/etc/wsl.conf`, run `wsl --shutdown` in Windows, open the terminal again |
+| DDEV | the projects | `ddev` from DDEV's package source ([docs.ddev.com](https://docs.ddev.com/en/stable/users/install/ddev-installation/)) |
+| mkcert | trusted `https://` | comes with DDEV (else Ubuntu's `mkcert`); `mkcert -install` sets up a local certificate authority |
+| router ports | DDEV's sites | **8080/8443** (`ddev config global --router-http-port=8080 --router-https-port=8443`): 80/443 stay with the system's Nginx and the native projects. When 8080 or 8443 is in use, the next free pair (8081/8444, 8880/8843) |
+
+As with `--php-source`, each package source gets its own key in
+`/etc/apt/keyrings`, named with `Signed-By`, so apt trusts it for that
+source only; Docker's key is checked against the fingerprint Docker
+publishes. A source that apt cannot use is removed again with its key.
+A Docker or DDEV source that you added yourself (e.g. by following
+docs.docker.com) is found and used; no second one is added. The packages
+are simulated first, and nothing is ever removed for them. All sudo work
+comes first (sources, packages, service, group, `mkcert -install`), then
+DDEV's own configuration as you. Nginx, PHP-FPM, the databases and the
+projects are not touched.
+
+After you are added to the docker group, log out and in (WSL: close every
+terminal, then `wsl --shutdown` in Windows), then run
+`./install.sh --ddev-setup` again: it should say `[OK] Ready for DDEV
+projects.`
+
+**DDEV in WSL**: `mkcert -install` inside WSL makes Linux trust the
+certificates, not the browsers in Windows. For them, install mkcert in
+Windows as well and point WSL to its certificate authority, as described
+in [DDEV's WSL2 guide](https://ddev.com/ddev-local/ddev-wsl2-getting-started/);
+until then the browser warns about `https://` (the site works).
+
 ## Tab completion (`--install-completion`)
 
 ```bash
@@ -1101,4 +1149,8 @@ temporary directories. They need [ShellCheck](https://www.shellcheck.net/)
 - [x] Restore a backup of an update or upgrade (`--restore`)
 - [x] Launchers for adopted projects (`--launchers`, offered after `--scan`)
 - [x] New projects git ready (`settings.local.php`, `.gitignore`, initial commit)
-- [ ] Docker mode
+- [x] DDEV readiness: Docker, DDEV, mkcert, router ports (`--ddev-setup`)
+- [ ] New projects with DDEV
+- [ ] Move a native project to DDEV
+- [ ] `--list`, `--remove`, `--launchers` for DDEV projects
+- [ ] `--update`, `--upgrade`, `--restore`, `--php` for DDEV projects

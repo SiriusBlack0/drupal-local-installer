@@ -34,6 +34,7 @@ source "$SCRIPT_DIR/lib/upgrade.sh"
 source "$SCRIPT_DIR/lib/restore.sh"
 source "$SCRIPT_DIR/lib/php_source.sh"
 source "$SCRIPT_DIR/lib/php_change.sh"
+source "$SCRIPT_DIR/lib/ddev.sh"
 source "$SCRIPT_DIR/lib/launchers.sh"
 source "$SCRIPT_DIR/lib/completion.sh"
 source "$SCRIPT_DIR/lib/workflow.sh"
@@ -153,6 +154,12 @@ main() {
             check_operating_system > /dev/null || exit 1
             PROJECT_USER="$(get_runtime_user)" || exit 1
             run_command run_launchers_project "$REMOVE_PROJECT"
+            ;;
+        15)
+            check_operating_system > /dev/null || exit 1
+            PROJECT_USER="$(get_runtime_user)" || exit 1
+            init_log "ddev-setup"
+            run_command run_ddev_setup
             ;;
         *) exit 1 ;;
     esac
