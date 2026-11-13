@@ -247,6 +247,23 @@ install_ddev_packages() {
     execute_apt_package_installation
 }
 
+# The docker group counts from the next login session. A new terminal of
+# the same desktop session is not enough: it inherits the old groups.
+print_relogin_advice() {
+    echo "[LOG IN AGAIN] $PROJECT_USER is in the docker group, but this login session"
+    echo "               started before that, and a new terminal of the same session"
+    echo "               keeps its old groups. Either:"
+    if is_wsl; then
+        echo "               - close every WSL terminal, run \"wsl --shutdown\" in Windows,"
+        echo "                 open the terminal again;"
+    else
+        echo "               - log out of the desktop and in again (or restart);"
+    fi
+    echo "               - or, for now, in this terminal: su - $PROJECT_USER"
+    echo "                 (a new login with the new groups)."
+    echo "               Then: ./install.sh --ddev-setup"
+}
+
 run_ddev_setup() {
     local answer
 
@@ -273,10 +290,7 @@ run_ddev_setup() {
         fi
 
         if [[ "$DDEV_STATE_GROUP" == "relogin" ]]; then
-            echo "[LOG IN AGAIN] $PROJECT_USER is in the docker group, but this login session"
-            echo "               started before that. Log out and in (WSL: close every"
-            echo "               terminal, then \"wsl --shutdown\" in Windows), then run"
-            echo "               ./install.sh --ddev-setup again."
+            print_relogin_advice
         fi
 
         return 1
@@ -357,9 +371,7 @@ run_ddev_setup() {
     fi
 
     if [[ "$DDEV_STATE_GROUP" == "relogin" || "$DDEV_PLAN_GROUP" -eq 1 ]]; then
-        echo "[LOG IN AGAIN] The docker group takes effect in a new login session: log out"
-        echo "               and in (WSL: close every terminal, then \"wsl --shutdown\" in"
-        echo "               Windows), then check with ./install.sh --ddev-setup"
+        print_relogin_advice
         return 0
     fi
 

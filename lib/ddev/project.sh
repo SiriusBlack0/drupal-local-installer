@@ -243,12 +243,38 @@ run_ddev_configuration_ui() {
 
 DDEV_CREATED=()
 
-# Runs a ddev command in the project folder, as the developer.
+# Runs a ddev command in the project folder, as the developer. Never
+# interactive: its output goes to the log, where a question of DDEV's
+# (usage statistics, for example) would wait unseen.
 run_project_ddev() {
     local project_path="$1"
     shift
 
-    (cd "$project_path" && run_as_developer ddev "$@")
+    (cd "$project_path" && run_as_developer env DDEV_NONINTERACTIVE=true ddev "$@" < /dev/null)
+}
+
+# DDEV's container images, before the first ddev start: the first time
+# about 1 GB, so the progress is shown, not only logged. A failure only
+# warns: ddev start downloads what is missing itself.
+download_ddev_images() {
+    local status
+
+    echo "DDEV's container images (the first time about 1 GB; afterwards only"
+    echo "updates). Progress:"
+
+    if [[ -n "$LOG_FILE" ]]; then
+        run_project_ddev "$1" utility download-images 2>&1 | tee -a "$LOG_FILE" | sed -u 's/^/  /'
+        status="${PIPESTATUS[0]}"
+    else
+        run_project_ddev "$1" utility download-images 2>&1 | sed -u 's/^/  /'
+        status="${PIPESTATUS[0]}"
+    fi
+
+    if [[ "$status" -eq 0 ]]; then
+        echo "[OK] Container images ready"
+    else
+        echo "[WARNING] The images could not all be downloaded now; ddev start tries again."
+    fi
 }
 
 # ./drush, ./composer and ./start: DDEV's commands from any folder.
@@ -434,6 +460,8 @@ perform_ddev_installation_workflow() {
     fi
 
     DDEV_CREATED+=(ddev_project)
+
+    download_ddev_images "$PROJECT_PATH"
 
     if ! run_logged "Starting the containers (ddev start)" run_project_ddev "$PROJECT_PATH" start; then
         rollback_ddev_installation

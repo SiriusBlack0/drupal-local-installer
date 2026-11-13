@@ -1072,10 +1072,12 @@ comes first (sources, packages, service, group, `mkcert -install`), then
 DDEV's own configuration as you. Nginx, PHP-FPM, the databases and the
 projects are not touched.
 
-After you are added to the docker group, log out and in (WSL: close every
-terminal, then `wsl --shutdown` in Windows), then run
-`./install.sh --ddev-setup` again: it should say `[OK] Ready for DDEV
-projects.`
+After you are added to the docker group, log out of the desktop and in
+again, or restart (WSL: close every terminal, then `wsl --shutdown` in
+Windows): **a new terminal of the same desktop session is not enough**, it
+keeps the old groups. For now, `su - $USER` in a terminal starts a new
+login with the new groups. Then run `./install.sh --ddev-setup` again: it
+should say `[OK] Ready for DDEV projects.`
 
 **DDEV in WSL**: `mkcert -install` inside WSL makes Linux trust the
 certificates, not the browsers in Windows. For them, install mkcert in
@@ -1112,10 +1114,15 @@ With DDEV the questions are the same, except:
 
 Then, as you: the project folder in `/var/www/<name>` (the only step with
 sudo, like native projects), `ddev config` (type `drupal11`/`drupal10`,
-docroot `web`, the PHP and database chosen), `ddev start`, `ddev composer
+docroot `web`, the PHP and database chosen), DDEV's container images
+(`ddev utility download-images`; the first time about 1 GB, so its
+progress is shown on screen), `ddev start`, `ddev composer
 create-project` and `ddev composer require drush/drush` (Composer in the
 container), `./drush`, `./composer` and `./start` (they call `ddev drush`,
 `ddev composer` and `ddev start`, from any folder), `drush site:install`.
+DDEV runs without questions (`DDEV_NONINTERACTIVE=true`, no keyboard
+input): its output goes to the log, where a question (such as DDEV's
+first-run question about usage statistics) would wait unseen.
 The administrator password reaches the container through a file in the
 project folder (mode 600, removed right after), never through a command
 line or the log. The site must answer through DDEV's router as an

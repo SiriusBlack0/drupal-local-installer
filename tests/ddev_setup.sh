@@ -308,7 +308,7 @@ if output="$(run_ddev_setup <<< "y")" &&
       "$output" == *"docker group: [LOG IN AGAIN]"* &&
       "$output" == *"Router ports: [OK] 8080/8443 (DDEV's global configuration)"* &&
       "$output" == *"mkcert:       [OK]"* &&
-      "$output" == *"[LOG IN AGAIN] The docker group takes effect in a new login session"* ]] &&
+      "$output" == *"[LOG IN AGAIN] $PROJECT_USER is in the docker group, but this login session"* ]] &&
    grep -qx "Signed-By: $APT_ETC_DIR/keyrings/docker.asc" "$APT_ETC_DIR/sources.list.d/docker.sources" &&
    grep -qx "Architectures: amd64" "$APT_ETC_DIR/sources.list.d/docker.sources" &&
    grep -qx "Suites: noble" "$APT_ETC_DIR/sources.list.d/docker.sources" &&
@@ -479,8 +479,10 @@ reset_state "docker=noaccess compose ddev mkcert-ca groups=docker router"
 if output="$(run_ddev_setup < /dev/null)"; then
     fail "No access counted as ready"
 elif [[ "$output" == *"docker group: [LOG IN AGAIN]"* && "$output" == *"[LOG IN AGAIN] $PROJECT_USER is in the docker group"* &&
+        "$output" == *"a new terminal of the same session"* && "$output" == *"su - $PROJECT_USER"* &&
+        "$output" == *"log out of the desktop and in again (or restart)"* &&
         "$output" != *"What will change"* ]]; then
-    pass "In the group, old session: told to log in again; nothing planned"
+    pass "In the group, old session: log out of the desktop (a new terminal is not enough) or su -; nothing planned"
 else
     fail "relogin: $output"
 fi

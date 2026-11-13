@@ -55,12 +55,13 @@ LOG_FILE="$work_dir/install.log"
 # DDEV_FAIL=<word>: that step fails.
 cat > "$stub_bin/ddev" <<'STUB'
 #!/usr/bin/env bash
-echo "ddev $* (in $PWD)" >> "$CALLS_FILE"
+echo "ddev $* (in $PWD) noninteractive=${DDEV_NONINTERACTIVE:-} stdin=$([[ -t 0 ]] && echo tty || echo other)" >> "$CALLS_FILE"
 [[ -n "${DDEV_FAIL:-}" && " $* " == *" $DDEV_FAIL "* ]] && { echo "Error: $DDEV_FAIL failed"; exit 1; }
 case "$1" in
     config) mkdir -p .ddev && echo "name: x" > .ddev/config.yaml ;;
     start) mkdir -p web/sites/default && echo "<?php // settings.ddev.php" > web/sites/default/settings.ddev.php ;;
     delete) rm -rf .ddev ;;
+    utility) echo "Pulling ddev/ddev-webserver:v1.25.5 ... done" ;;
     composer)
         case "$2" in
             create-project)
@@ -203,6 +204,11 @@ if output="$(run_ddev_installation_workflow)" &&
    grep -q "ddev composer require --no-interaction drush/drush" "$CALLS_FILE" &&
    grep -q "ddev drush site:install standard --yes --site-name=shop" "$CALLS_FILE" &&
    grep -q -- "--resolve shop.ddev.site:8081:127.0.0.1 http://shop.ddev.site:8081/" "$CALLS_FILE" &&
+   [[ "$output" == *"DDEV's container images (the first time about 1 GB"* &&
+      "$output" == *"  Pulling ddev/ddev-webserver:v1.25.5 ... done"* && "$output" == *"[OK] Container images ready"* ]] &&
+   grep -q "Pulling ddev/ddev-webserver" "$LOG_FILE" &&
+   [[ "$(grep -n -m1 "ddev utility download-images" "$CALLS_FILE" | cut -d: -f1)" -lt "$(grep -n -m1 "^ddev start" "$CALLS_FILE" | cut -d: -f1)" ]] &&
+   ! grep "^ddev " "$CALLS_FILE" | grep -v "noninteractive=true" | grep -qv "^ddev drush\|^ddev composer [^c]\|^ddev cr" &&
    ! grep -qF "S3cret-Passw0rd-xyz" "$CALLS_FILE" && ! grep -qF "S3cret-Passw0rd-xyz" "$LOG_FILE" &&
    [[ "$(cat "$CALLS_FILE.password")" == "S3cret-Passw0rd-xyz" && ! -e "$project/.drupal-local-installer/admin-password" ]] &&
    ! grep -q "tEmPoRaRy" "$LOG_FILE" &&
