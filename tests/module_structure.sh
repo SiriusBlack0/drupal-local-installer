@@ -29,6 +29,7 @@ modules = [
     "lib/project.sh",
     "lib/site.sh",
     "lib/composer.sh",
+    "lib/known_bad.sh",
     "lib/git.sh",
     "lib/scan.sh",
     "lib/remove.sh",

@@ -472,16 +472,30 @@ perform_ddev_installation_workflow() {
 
     if ! run_logged_retrying_network "Downloading Drupal $DRUPAL_VERSION (ddev composer create-project)" - \
             run_project_ddev "$PROJECT_PATH" composer create-project --no-interaction \
-            "drupal/recommended-project:$DRUPAL_VERSION" ||
-       ! run_logged_retrying_network "Adding Drush" - \
+            "drupal/recommended-project:$DRUPAL_VERSION"; then
+        say "[ERROR] Drupal could not be downloaded."
+        rollback_ddev_installation
+        return 1
+    fi
+
+    # Releases known to break Drush here stay out (config/known-bad-packages.conf).
+    apply_known_bad_packages "$PROJECT_PATH"
+
+    if ! run_logged_retrying_network "Adding Drush" - \
             run_project_ddev "$PROJECT_PATH" composer require --no-interaction drush/drush; then
-        echo "[ERROR] Drupal could not be downloaded."
+        say "[ERROR] Drush could not be added (composer require drush/drush)."
         rollback_ddev_installation
         return 1
     fi
 
     if ! write_ddev_launchers "$PROJECT_PATH"; then
         echo "[ERROR] ./drush could not be written."
+        rollback_ddev_installation
+        return 1
+    fi
+
+    if ! verify_drush "$PROJECT_PATH" "$PROJECT_USER"; then
+        say "[ERROR] Drush does not work in the new project."
         rollback_ddev_installation
         return 1
     fi

@@ -14,6 +14,7 @@ STEP_MODE="${STEP_MODE:-0}"
 LOG_FILE="${LOG_FILE:-}"
 STEP_INDEX=0
 STEP_TOTAL=0
+STEP_TITLE=""
 
 is_verbose() {
     [[ "$VERBOSE" == "1" ]]
@@ -51,16 +52,48 @@ log_line() {
     fi
 }
 
+# 1 while run_shown_and_logged copies the screen into the log already.
+SCREEN_LOGGED=0
+
 # Prints a line and writes it to the log too (no secrets).
 say() {
     printf '%s\n' "$*"
-    log_line "$*"
+    [[ "$SCREEN_LOGGED" == "1" ]] || log_line "$*"
+}
+
+# Runs a command (a function too, in this shell) with what it prints on
+# screen copied into the log as well: errors and rollback messages of an
+# installation must be in the log, not only on the screen. With
+# --verbose run_logged shows and logs the command output already.
+run_shown_and_logged() {
+    local status=0
+
+    if [[ -z "$LOG_FILE" || "$VERBOSE" == "1" ]]; then
+        "$@" || status=$?
+        return "$status"
+    fi
+
+    SCREEN_LOGGED=1
+    "$@" > >(tee -a "$LOG_FILE") || status=$?
+    SCREEN_LOGGED=0
+    # Let tee write the last lines before anything else is printed.
+    wait "$!" 2> /dev/null || true
+    return "$status"
+}
+
+# The last line of an installation's log: RESULT: OK, or where it failed.
+log_result() {
+    if [[ "$1" -eq 0 ]]; then
+        log_line "RESULT: OK"
+    else
+        log_line "RESULT: FAILED at step $STEP_INDEX/$STEP_TOTAL ($STEP_TITLE)"
+    fi
 }
 
 # Shows what comes through stdin and copies it into the log, for steps
 # that print only short status lines (no secrets).
 copy_to_log() {
-    if [[ -n "$LOG_FILE" ]]; then
+    if [[ -n "$LOG_FILE" && "$SCREEN_LOGGED" != "1" ]]; then
         tee -a "$LOG_FILE"
     else
         cat
@@ -81,6 +114,7 @@ step() {
     fi
 
     STEP_INDEX=$((STEP_INDEX + 1))
+    STEP_TITLE="$title"
 
     echo
     echo "[$STEP_INDEX/$STEP_TOTAL] $title"

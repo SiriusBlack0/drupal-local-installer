@@ -280,6 +280,9 @@ Every installation writes a log file:
 - The full output of long commands (Composer, Drush) goes to the log;
   the screen shows one line per command with its result and duration.
 - If a command fails, the screen shows its last lines and the log path.
+- Everything the installation prints on screen (errors, rollback) is in
+  the log too, and its last line says how it ended: `RESULT: OK`, or
+  `RESULT: FAILED at step 6/9 (Downloading Drupal)`.
 - The log directory is readable only by you (`700`, files `600`).
 - Passwords are never written to the log.
 - `--verbose` shows everything on screen **and** writes it to the log.
@@ -305,7 +308,48 @@ The location follows `XDG_STATE_HOME` if it is set.
 - **One run per project:** `--update`, `--php` and `--remove` lock the
   project; a second run on the same project at the same time stops with
   a message instead of interfering.
+- **Drush does not start in a new project:** the log has Drush's full
+  output and the versions of `drush/drush`, `consolidation/*`,
+  `symfony/console` and `drupal/core`; the screen lists the packages
+  released in the last 14 days (from `composer.lock`): usually the cause
+  is a new release of a dependency that declares a compatibility it does
+  not have (see below).
 - Check the log file shown at the end of the run.
+
+## Releases known to break projects (`config/known-bad-packages.conf`)
+
+Sometimes a new release of a dependency (not Drupal, not Drush) declares
+a compatibility it does not have, and Composer picks it, being the
+newest. Example (November 2026): `consolidation/robo` 5.2.0–5.2.3 calls a
+method that only Symfony Console 7.4+ has, but declares `^6 || ^7 || ^8`;
+Drupal 10.5 has Console 6.4, so Drush 13 does not start and the
+installation is rolled back. (5.2.2 also ships merge conflict markers.)
+
+`config/known-bad-packages.conf` lists such releases, as data:
+
+```
+# package | bad versions | condition | why
+consolidation/robo | >=5.2.0 <5.3 | symfony/console < 7.4 | Robo 5.2 needs Symfony Console 7.4+ ...
+consolidation/robo | 5.2.2 | always | the 5.2.2 release has merge conflict markers ...
+```
+
+- **New projects** (native and DDEV): right after `composer
+  create-project` and before `composer require drush/drush`, each line
+  whose condition holds for the packages just installed (`composer.lock`:
+  the installed version of `symfony/console`, not the Drupal version)
+  becomes a `conflict` in the project's `composer.json`, shown as
+  `[WORKAROUND] ...` and committed with the project. Composer then picks
+  a release that works (here Robo 5.1.x). Remove the conflict once a
+  fixed release is out.
+- **`--check-updates`** warns about projects whose `composer.lock` has
+  such a release, with the way out: add the conflict to `composer.json`,
+  then `./composer update <package>` **without `-W`** (with `-W` Composer
+  would update more, for example Guzzle, which security advisories may
+  block).
+- When a fixed release is out, only the file changes, not the code.
+  Conditions: `always`, or `<package> <op> <version>` (`<`, `<=`, `>`,
+  `>=`, `=`); bad versions: one or more of `>=X >X <=X <X =X X`, all of
+  which must hold.
 
 ## Removing a project
 

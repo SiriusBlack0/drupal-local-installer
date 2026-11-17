@@ -323,6 +323,8 @@ run_check_updates() {
     local found=0
     local vulnerable=()
     local upgradable=()
+    local known_bad=()
+    local line
 
     echo
     echo "Checking for Drupal core updates (this asks Packagist, it may take a while)..."
@@ -339,6 +341,12 @@ run_check_updates() {
         php="$(read_project_field "$record" php_version)"
         web_root="$(read_project_field "$record" web_root)"
         [[ -n "$web_root" ]] || web_root="$path/web"
+
+        # Releases known to break projects (config/known-bad-packages.conf),
+        # for every project with a composer.lock, DDEV ones too.
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && known_bad+=("$name|$line")
+        done < <(find_known_bad_installed "$path/composer.lock")
 
         if [[ "$(read_project_field "$record" runtime)" == "ddev" ]]; then
             printf '%-20s %s\n' "$name" "skipped: DDEV project (ddev composer outdated drupal/*)"
@@ -413,6 +421,24 @@ run_check_updates() {
         echo
         echo "[ACTION] Installed versions with a security advisory. Update them:"
         printf '  ./install.sh --update %s\n' "${vulnerable[@]}"
+    fi
+
+    if [[ "${#known_bad[@]}" -gt 0 ]]; then
+        local package
+        local version
+        local why
+
+        echo
+        echo "[WARNING] Releases known to break projects (config/known-bad-packages.conf):"
+
+        for line in "${known_bad[@]}"; do
+            IFS='|' read -r name package version why <<< "$line"
+            echo "  $name: $package $version: $why"
+        done
+
+        echo "  To keep such a release out: add it to \"conflict\" in the project's"
+        echo "  composer.json (the range of the file), then, in the project folder:"
+        echo "  ./composer update <package>   (without -W, which would update more)"
     fi
 
     if [[ "${#upgradable[@]}" -gt 0 ]]; then

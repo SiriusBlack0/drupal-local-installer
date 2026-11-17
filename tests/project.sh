@@ -7,7 +7,9 @@ source lib/output.sh
 source lib/registry.sh
 source lib/php_fpm.sh
 source lib/nginx.sh
+source lib/compatibility.sh
 source lib/project.sh
+source lib/known_bad.sh
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
@@ -226,7 +228,7 @@ mkdir "$site"
 if output="$(MOCK_COMPOSER_EXIT=1 install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")"; then
     echo "[FAIL] Composer failure ignored"
     exit 1
-elif [[ "$output" == *"[ERROR] Drupal download failed."* ]] &&
+elif [[ "$output" == *"[ERROR] Drupal could not be downloaded (composer create-project)."* ]] &&
      ! grep -q "install_drush\| require " "$mock_log"; then
     echo "[PASS] Composer failure stops before Drush"
 else
@@ -354,7 +356,7 @@ mkdir "$site"
 if output="$(MOCK_REQUIRE_EXIT=1 install_drupal_codebase "11.4.8" "$site" "8.5" "$current_user")"; then
     echo "[FAIL] Drush failure ignored"
     exit 1
-elif [[ "$output" == *"[ERROR] Drupal download failed."* ]]; then
+elif [[ "$output" == *"[ERROR] Drush could not be added (composer require drush/drush)."* ]]; then
     echo "[PASS] Drush failure reported"
 else
     echo "[FAIL] Drush failure handling incorrect"

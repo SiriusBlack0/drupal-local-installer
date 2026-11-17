@@ -26,6 +26,7 @@ source "$SCRIPT_DIR/lib/readiness.sh"
 source "$SCRIPT_DIR/lib/project.sh"
 source "$SCRIPT_DIR/lib/site.sh"
 source "$SCRIPT_DIR/lib/composer.sh"
+source "$SCRIPT_DIR/lib/known_bad.sh"
 source "$SCRIPT_DIR/lib/git.sh"
 source "$SCRIPT_DIR/lib/scan.sh"
 source "$SCRIPT_DIR/lib/remove.sh"
@@ -209,11 +210,17 @@ main() {
 
     if ! run_preflight; then
         echo "Installation stopped."
+        log_result 1
         exit 1
     fi
 
-    # Phase 3: approved installation and project creation.
-    if ! run_installation_workflow; then
+    # Phase 3: approved installation and project creation. What it
+    # prints (errors, rollback) goes to the log too.
+    local status=0
+    run_shown_and_logged run_installation_workflow || status=$?
+    log_result "$status"
+
+    if [[ "$status" -ne 0 ]]; then
         echo "[ERROR] Installation workflow failed."
         [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
         exit 1
@@ -236,7 +243,11 @@ run_ddev_project() {
 
     [[ -n "$LOG_FILE" ]] && { echo; echo "Full output is written to: $LOG_FILE"; }
 
-    if ! run_ddev_installation_workflow; then
+    local status=0
+    run_shown_and_logged run_ddev_installation_workflow || status=$?
+    log_result "$status"
+
+    if [[ "$status" -ne 0 ]]; then
         echo "[ERROR] Installation failed; what it created was removed."
         [[ -n "$LOG_FILE" ]] && echo "Log file: $LOG_FILE"
         exit 1

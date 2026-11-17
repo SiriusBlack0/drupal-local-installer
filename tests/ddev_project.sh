@@ -18,6 +18,7 @@ source lib/php_fpm.sh
 source lib/database.sh
 source lib/registry.sh
 source lib/project.sh
+source lib/known_bad.sh
 source lib/site.sh
 source lib/composer.sh
 source lib/git.sh
@@ -87,6 +88,7 @@ case "$1" in
                 fi
                 ;;
             status) echo "Successful" ;;
+            --version) echo "Drush Commandline Tool 13.8.1.0" ;;
         esac
         ;;
     describe) echo '{"raw":{"primary_url":"https://shop.ddev.site:8444"}}' ;;

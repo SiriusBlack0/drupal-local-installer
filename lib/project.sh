@@ -317,12 +317,13 @@ verify_drush() {
     # Exit code alone is not enough: check that Drush itself answered.
     if ! version="$(run_as_project_user "$run_user" "$project_path/drush" --version 2>&1)" ||
        [[ "$version" != *"Drush Commandline Tool"* ]]; then
-        echo "[ERROR] Drush does not run correctly. Output:"
-        printf '%s\n' "$version" | head -n 5
+        say "[ERROR] Drush does not run correctly. Output:"
+        printf '%s\n' "$version" | grep -v '^[[:space:]]*$' | head -n 5 | sed 's/^/        /' | copy_to_log
+        print_drush_failure_diagnosis "$project_path" "$version"
         return 1
     fi
 
-    echo "[OK] $version"
+    say "[OK] $version"
 }
 
 # Writes ./start in the project root: starts the services the project
@@ -511,11 +512,22 @@ install_drupal_codebase() {
     local run_user="$4"
 
     if ! create_drupal_project \
-            "$drupal_version" "$project_path" "$php_version" "$run_user" ||
-       ! install_drush "$project_path" "$php_version" "$run_user" ||
-       ! create_project_launchers "$project_path" "$php_version" "$run_user" ||
+            "$drupal_version" "$project_path" "$php_version" "$run_user"; then
+        say "[ERROR] Drupal could not be downloaded (composer create-project)."
+        return 1
+    fi
+
+    # Releases known to break Drush here stay out (config/known-bad-packages.conf).
+    apply_known_bad_packages "$project_path" "php${php_version}"
+
+    if ! install_drush "$project_path" "$php_version" "$run_user"; then
+        say "[ERROR] Drush could not be added (composer require drush/drush)."
+        return 1
+    fi
+
+    if ! create_project_launchers "$project_path" "$php_version" "$run_user" ||
        ! verify_drush "$project_path" "$run_user"; then
-        echo "[ERROR] Drupal download failed."
+        say "[ERROR] Drupal download failed: Drush does not work in the new project."
         return 1
     fi
 

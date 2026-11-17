@@ -52,6 +52,7 @@ SUITES=(
     "Launcher Tests|bash tests/launchers.sh"
     "DDEV Setup Tests|bash tests/ddev_setup.sh"
     "DDEV Project Tests|bash tests/ddev_project.sh"
+    "Known Bad Packages Tests|bash tests/known_bad.sh"
 )
 
 echo "======================================"

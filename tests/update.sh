@@ -19,6 +19,7 @@ source lib/compatibility.sh
 source lib/scan.sh
 source lib/remove.sh
 source lib/composer.sh
+source lib/known_bad.sh
 source lib/update.sh
 
 work_dir="$(mktemp -d)"
@@ -366,6 +367,23 @@ if [[ "$output" == *"alpha"*"no known issues"* && "$output" != *"[ACTION]"* ]] &
 else
     fail "check-updates states: $output"
 fi
+
+# A composer.lock with a release from config/known-bad-packages.conf:
+# warned, with how to keep it out.
+
+cp "$PROJECT_PATH/composer.lock" "$work_dir/alpha.lock"
+printf '        {\n            "name": "consolidation/robo",\n            "version": "5.2.3"\n        },\n        {\n            "name": "symfony/console",\n            "version": "v6.4.41"\n        }\n' >> "$PROJECT_PATH/composer.lock"
+
+if output="$(run_check_updates)" &&
+   [[ "$output" == *"[WARNING] Releases known to break projects (config/known-bad-packages.conf):"* &&
+      "$output" == *"  alpha: consolidation/robo 5.2.3: Robo 5.2 needs Symfony Console 7.4+"* &&
+      "$output" == *"./composer update <package>   (without -W"* ]]; then
+    pass "--check-updates: a known bad release in composer.lock is warned about, with the way out"
+else
+    fail "check-updates known bad: $output"
+fi
+
+cp "$work_dir/alpha.lock" "$PROJECT_PATH/composer.lock"
 
 # Test 4: --dry-run: checks and plan only.
 
